@@ -1,0 +1,6 @@
+[submodule "submodules/raspberry-py"]
+	path = submodules/raspberry-py
+	url = git@github.com:MatthewGerber/raspberry-py.git
+[submodule "submodules/rlai"]
+	path = submodules/rlai
+	url = git@github.com:MatthewGerber/rlai.git
