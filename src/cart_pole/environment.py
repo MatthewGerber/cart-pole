@@ -1,9 +1,17 @@
 import time
+from threading import Event
+from typing import List, Tuple, Any
+
 from numpy.random import RandomState
+from smbus2 import SMBus
+
+from raspberry_py.gpio import CkPin
+from raspberry_py.gpio.controls import LimitSwitch
+from raspberry_py.gpio.integrated_circuits import PulseWaveModulatorPCA9685PW
+from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectPCA9685PW
+from raspberry_py.gpio.sensors import RotaryEncoder
 from rlai.core import MdpState, Action, Agent, Reward, Environment
 from rlai.core.environments.mdp import MdpEnvironment
-from threading import Event
-from typing import List, Tuple
 
 
 class CartPole(MdpEnvironment):
@@ -25,6 +33,12 @@ class CartPole(MdpEnvironment):
             inside_limits_motor_pwm_channel: int,
             outside_limits_motor_pwm_channel: int
     ):
+        super().__init__(
+            name=name,
+            random_state=rando_state,
+            T=T
+        )
+
         self.limit_to_limit_distance_mm = limit_to_limit_distance_mm
 
         self.midline_mm = self.limit_to_limit_distance_mm / 2.0
@@ -51,7 +65,7 @@ class CartPole(MdpEnvironment):
 
         self.inside_limits_motor_controller = DcMotor(
             driver=DcMotorDriverIndirectPCA9685PW(
-                pca9685pw=pca9685pw,
+                pca9685pw=self.pca9685pw,
                 pwm_channel=inside_limits_motor_pwm_channel,
                 direction_pin=CkPin.GPIO21
             ),
@@ -60,7 +74,7 @@ class CartPole(MdpEnvironment):
 
         self.outside_limits_motor_controller = DcMotor(
             driver=DcMotorDriverIndirectPCA9685PW(
-                pca9685pw=pca9685pw,
+                pca9685pw=self.pca9685pw,
                 pwm_channel=outside_limits_motor_pwm_channel,
                 direction_pin=CkPin.GPIO21
             ),
@@ -79,7 +93,7 @@ class CartPole(MdpEnvironment):
             input_pin=rotary_encoder_side_limit_switch_input_pin,
             bounce_time_ms=5
         )
-        self.rotary_encoder_side_limit_switch(lambda s: self.rotary_encoder_side_limit_event(s.is_pressed()))
+        self.rotary_encoder_side_limit_switch.event(lambda s: self.rotary_encoder_side_limit_event(s.is_pressed()))
         self.rotary_encoder_side_limit_pressed = Event()
         self.rotary_encoder_side_limit_released = Event()
 
@@ -158,8 +172,16 @@ class CartPole(MdpEnvironment):
         self.cart_rotary_encoder.report_state = False
 
     def reset_for_new_run(
-            self
-    ):
+            self,
+            agent: Any
+    ) -> MdpState:
+        """
+        Reset the environment to a random nonterminal state, if any are specified, or to None.
+
+        :param agent: Agent used to generate on-the-fly state identifiers.
+        :return: Initial state.
+        """
+
         self.center_cart()
 
         previous_pole_phase_changes = self.pole_rotary_encoder.phase_changes
@@ -176,4 +198,3 @@ class CartPole(MdpEnvironment):
     ) -> Tuple[MdpState, Reward]:
 
         pass
-
