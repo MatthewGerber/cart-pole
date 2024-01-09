@@ -1,6 +1,8 @@
 from numpy.random import RandomState
 from raspberry_py.gpio import CkPin
 
+from cart_pole.environment import CartPole
+
 
 def main():
     """
@@ -11,7 +13,7 @@ def main():
         name='test',
         random_state=RandomState(12345),
         T=None,
-        limit_to_limit_distance_mm=990.0,
+        limit_to_limit_mm=990.0,
         motor_pwm_channel=0,
         motor_pwm_direction_pin=CkPin.GPIO21,
         motor_negative_speed_is_left=True,
