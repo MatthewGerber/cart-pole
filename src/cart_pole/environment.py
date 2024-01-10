@@ -1,5 +1,4 @@
 import logging
-import math
 import time
 from argparse import ArgumentParser
 from threading import Event
@@ -7,10 +6,10 @@ from typing import List, Tuple, Any, Optional
 
 import numpy as np
 from numpy.random import RandomState
-from raspberry_py.gpio import CkPin
-from raspberry_py.gpio.controls import LimitSwitch
 from smbus2 import SMBus
 
+from raspberry_py.gpio import CkPin
+from raspberry_py.gpio.controls import LimitSwitch
 from raspberry_py.gpio.integrated_circuits import PulseWaveModulatorPCA9685PW
 from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectPCA9685PW
 from raspberry_py.gpio.sensors import RotaryEncoder
@@ -286,6 +285,7 @@ class CartPole(MdpEnvironment):
             ),
             speed=0
         )
+        self.motor.start()
 
         self.left_limit_switch = LimitSwitch(
             input_pin=self.left_limit_switch_input_pin,
@@ -293,7 +293,7 @@ class CartPole(MdpEnvironment):
         )
         self.left_limit_pressed = Event()
         self.left_limit_released = Event()
-        self.left_limit_switch.event(lambda s: self.left_limit_event(s.is_pressed()))
+        self.left_limit_switch.event(lambda s: self.left_limit_event(s.pressed))
 
         self.right_limit_switch = LimitSwitch(
             input_pin=self.right_limit_switch_input_pin,
@@ -301,9 +301,11 @@ class CartPole(MdpEnvironment):
         )
         self.right_limit_pressed = Event()
         self.right_limit_released = Event()
-        self.right_limit_switch.event(lambda s: self.right_limit_event(s.is_pressed()))
+        self.right_limit_switch.event(lambda s: self.right_limit_event(s.pressed))
 
-        self.non_episodic_motor_speed = 5
+        self.move_to_limit_motor_speed = 20
+        self.move_away_from_limit_motor_speed = 15
+        self.center_reached = Event()
 
         # calibration values to be determined
         self.midline_mm = self.limit_to_limit_mm / 2.0
@@ -322,12 +324,12 @@ class CartPole(MdpEnvironment):
         """
 
         if not self.left_limit_pressed.is_set():
-            self.motor.set_speed(-self.non_episodic_motor_speed)
-            logging.debug('Moving cart to the left and waiting for limit switch.')
+            self.motor.set_speed(-self.move_to_limit_motor_speed)
+            logging.info('Moving cart to the left and waiting for limit switch.')
             self.left_limit_pressed.wait()
 
-        logging.debug('Moving cart away from left limit switch.')
-        self.motor.set_speed(math.ceil(self.non_episodic_motor_speed / 5.0))
+        logging.info('Moving cart away from left limit switch.')
+        self.motor.set_speed(self.move_away_from_limit_motor_speed)
         self.left_limit_released.wait()
         self.motor.set_speed(0)
 
@@ -344,11 +346,11 @@ class CartPole(MdpEnvironment):
         if is_pressed:
             self.left_limit_released.clear()
             self.left_limit_pressed.set()
-            logging.debug('Left limit pressed.')
+            logging.info('Left limit pressed.')
         else:
             self.left_limit_pressed.clear()
             self.left_limit_released.set()
-            logging.debug('Left limit released.')
+            logging.info('Left limit released.')
 
     def move_cart_to_right_limit(
             self
@@ -358,12 +360,12 @@ class CartPole(MdpEnvironment):
         """
 
         if not self.right_limit_pressed.is_set():
-            logging.debug('Moving cart to the right and waiting for limit switch.')
-            self.motor.set_speed(self.non_episodic_motor_speed)
+            logging.info('Moving cart to the right and waiting for limit switch.')
+            self.motor.set_speed(self.move_to_limit_motor_speed)
             self.right_limit_pressed.wait()
 
-        logging.debug('Moving cart away from left limit switch.')
-        self.motor.set_speed(-math.ceil(self.non_episodic_motor_speed / 5.0))
+        logging.info('Moving cart away from left limit switch.')
+        self.motor.set_speed(-self.move_away_from_limit_motor_speed)
         self.right_limit_released.wait()
         self.motor.set_speed(0)
 
@@ -380,11 +382,11 @@ class CartPole(MdpEnvironment):
         if is_pressed:
             self.right_limit_released.clear()
             self.right_limit_pressed.set()
-            logging.debug('Right limit pressed.')
+            logging.info('Right limit pressed.')
         else:
             self.right_limit_pressed.clear()
             self.right_limit_released.set()
-            logging.debug('Right limit released.')
+            logging.info('Right limit released.')
 
     def calibrate(
             self
@@ -393,7 +395,7 @@ class CartPole(MdpEnvironment):
         Calibrate the cart-pole apparatus.
         """
 
-        logging.debug('Calibrating.')
+        logging.info('Calibrating.')
 
         self.move_cart_to_left_limit()
         self.left_limit_degrees = self.cart_rotary_encoder.net_total_degrees
@@ -406,8 +408,10 @@ class CartPole(MdpEnvironment):
         self.cart_degrees_per_mm = self.limit_to_limit_degrees / self.limit_to_limit_mm
         self.midline_degrees = (self.left_limit_degrees + self.right_limit_degrees) / 2.0
 
-        logging.debug(
+        logging.info(
             f'Calibrated:\n'
+            f'\tLeft limit degrees:  {self.left_limit_degrees}\n'
+            f'\tRight limit degrees:  {self.right_limit_degrees}\n'
             f'\tLimit to limit degrees:  {self.limit_to_limit_degrees}\n'
             f'\tCart mm/deg:  {self.cart_mm_per_degree}\n'
             f'\tCart deg/mm:  {self.cart_degrees_per_mm}\n'
@@ -421,20 +425,23 @@ class CartPole(MdpEnvironment):
         Center the cart.
         """
 
-        logging.debug('Centering cart.')
+        logging.info('Centering cart.')
 
         self.move_cart_to_left_limit()
+        self.center_reached.clear()
         self.cart_rotary_encoder.report_state = True
-        self.motor.set_speed(self.non_episodic_motor_speed)
+        self.motor.set_speed(self.move_to_limit_motor_speed)
         self.cart_rotary_encoder.event(lambda s: (
-            self.motor.set_speed(0) if (
+            self.center_reached.set() if (
                 abs(s.net_total_degrees - self.left_limit_degrees) / self.cart_degrees_per_mm >= self.midline_mm
             )
             else None
         ))
+        self.center_reached.wait()
         self.cart_rotary_encoder.report_state = False
+        self.motor.set_speed(0)
 
-        logging.debug('Cart centered.\n')
+        logging.info('Cart centered.\n')
 
     def wait_for_stationary_pole(
             self
@@ -443,17 +450,17 @@ class CartPole(MdpEnvironment):
         Wait for the pole to become stationary.
         """
 
-        logging.debug('Waiting for stationary pole.')
+        logging.info('Waiting for stationary pole.')
 
         previous_pole_num_phase_changes = self.pole_rotary_encoder.num_phase_changes
         time.sleep(1.0)
         while self.pole_rotary_encoder.num_phase_changes != previous_pole_num_phase_changes:
             time.sleep(1.0)
-            logging.debug('Waiting for stationary pole.')
+            logging.info('Waiting for stationary pole.')
 
         self.pole_rotary_encoder_degrees_at_bottom = self.pole_rotary_encoder.net_total_degrees
 
-        logging.debug(f'Pole is stationary at degrees:  {self.pole_rotary_encoder_degrees_at_bottom}\n')
+        logging.info(f'Pole is stationary at degrees:  {self.pole_rotary_encoder_degrees_at_bottom}\n')
 
     def reset_for_new_run(
             self,

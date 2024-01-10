@@ -1,13 +1,19 @@
+import logging
+
 from numpy.random import RandomState
-from raspberry_py.gpio import CkPin
 
 from cart_pole.environment import CartPole
+from raspberry_py.gpio import CkPin, setup, cleanup
 
 
 def main():
     """
     Demonstrate the cart-pole environment.
     """
+
+    logging.getLogger().setLevel(logging.INFO)
+
+    setup()
 
     env = CartPole(
         name='test',
@@ -16,7 +22,7 @@ def main():
         limit_to_limit_mm=990.0,
         motor_pwm_channel=0,
         motor_pwm_direction_pin=CkPin.GPIO21,
-        motor_negative_speed_is_left=True,
+        motor_negative_speed_is_left=False,
         cart_rotary_encoder_phase_a_pin=CkPin.GPIO22,
         cart_rotary_encoder_phase_b_pin=CkPin.GPIO26,
         pole_rotary_encoder_phase_a_pin=CkPin.GPIO17,
@@ -27,6 +33,8 @@ def main():
 
     env.calibrate()
     env.center_cart()
+
+    cleanup()
 
 
 if __name__ == '__main__':
