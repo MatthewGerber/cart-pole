@@ -16,6 +16,7 @@ from raspberry_py.gpio.sensors import RotaryEncoder
 from rlai.core import MdpState, Action, Agent, Reward, Environment, MdpAgent, ContinuousMultiDimensionalAction
 from rlai.core.environments.mdp import MdpEnvironment
 from rlai.utils import parse_arguments
+from raspberry_py.gpio import Event as RpyEvent
 
 
 class CartPoleState(MdpState):
@@ -257,7 +258,7 @@ class CartPole(MdpEnvironment):
             phase_a_pin=self.cart_rotary_encoder_phase_a_pin,
             phase_b_pin=self.cart_rotary_encoder_phase_b_pin,
             phase_changes_per_rotation=2400,
-            report_state=False,
+            report_state=lambda e: False,
             degrees_per_second_smoothing=0.75
         )
 
@@ -265,7 +266,7 @@ class CartPole(MdpEnvironment):
             phase_a_pin=self.pole_rotary_encoder_phase_a_pin,
             phase_b_pin=self.pole_rotary_encoder_phase_b_pin,
             phase_changes_per_rotation=2400,
-            report_state=False,
+            report_state=lambda e: False,
             degrees_per_second_smoothing=0.75
         )
         self.pole_rotary_encoder_degrees_at_bottom: Optional[float] = None
@@ -307,20 +308,24 @@ class CartPole(MdpEnvironment):
         self.move_away_from_limit_motor_speed = 15
         self.center_reached = Event()
 
-        # calibration values to be determined
         self.midline_mm = self.limit_to_limit_mm / 2.0
-        self.left_limit_degrees: Optional[int] = None
-        self.right_limit_degrees: Optional[int] = None
+        self.soft_limit_mm_from_midline = self.midline_mm - 20.0
+        self.calibration_tolerance_mm = 5.0
+
+        # calibration values to be determined
+        self.left_limit_degrees: Optional[float] = None
+        self.right_limit_degrees: Optional[float] = None
         self.limit_to_limit_degrees: Optional[float] = None
         self.cart_mm_per_degree: Optional[float] = None
-        self.cart_degrees_per_mm: Optional[float] = None
         self.midline_degrees: Optional[float] = None
 
     def move_cart_to_left_limit(
             self
-    ):
+    ) -> Optional[float]:
         """
         Move the cart to the left limit.
+
+        :return: Distance (mm) by which the cart is out of calibration, or None if the cart has not been calibrated.
         """
 
         if not self.left_limit_pressed.is_set():
@@ -333,6 +338,15 @@ class CartPole(MdpEnvironment):
         self.left_limit_released.wait()
         self.motor.set_speed(0)
 
+        if self.left_limit_degrees is None:
+            cart_mm_from_calibration_point = None
+        else:
+            cart_mm_from_calibration_point = (
+                abs(self.cart_rotary_encoder.net_total_degrees - self.left_limit_degrees) * self.cart_mm_per_degree
+            )
+
+        return cart_mm_from_calibration_point
+
     def left_limit_event(
             self,
             is_pressed: bool
@@ -344,9 +358,10 @@ class CartPole(MdpEnvironment):
         """
 
         if is_pressed:
+            logging.info('Left limit pressed.')
+            self.motor.set_speed(0)
             self.left_limit_released.clear()
             self.left_limit_pressed.set()
-            logging.info('Left limit pressed.')
         else:
             self.left_limit_pressed.clear()
             self.left_limit_released.set()
@@ -354,9 +369,11 @@ class CartPole(MdpEnvironment):
 
     def move_cart_to_right_limit(
             self
-    ):
+    ) -> Optional[float]:
         """
         Move the cart to the right limit.
+
+        :return: Distance (mm) by which the cart is out of calibration, or None if the cart has not been calibrated.
         """
 
         if not self.right_limit_pressed.is_set():
@@ -364,10 +381,19 @@ class CartPole(MdpEnvironment):
             self.motor.set_speed(self.move_to_limit_motor_speed)
             self.right_limit_pressed.wait()
 
-        logging.info('Moving cart away from left limit switch.')
+        logging.info('Moving cart away from right limit switch.')
         self.motor.set_speed(-self.move_away_from_limit_motor_speed)
         self.right_limit_released.wait()
         self.motor.set_speed(0)
+
+        if self.right_limit_degrees is None:
+            cart_mm_from_calibration_point = None
+        else:
+            cart_mm_from_calibration_point = (
+                abs(self.cart_rotary_encoder.net_total_degrees - self.right_limit_degrees) * self.cart_mm_per_degree
+            )
+
+        return cart_mm_from_calibration_point
 
     def right_limit_event(
             self,
@@ -380,9 +406,10 @@ class CartPole(MdpEnvironment):
         """
 
         if is_pressed:
+            logging.info('Right limit pressed.')
+            self.motor.set_speed(0)
             self.right_limit_released.clear()
             self.right_limit_pressed.set()
-            logging.info('Right limit pressed.')
         else:
             self.right_limit_pressed.clear()
             self.right_limit_released.set()
@@ -405,7 +432,6 @@ class CartPole(MdpEnvironment):
 
         self.limit_to_limit_degrees = abs(self.left_limit_degrees - self.right_limit_degrees)
         self.cart_mm_per_degree = self.limit_to_limit_mm / self.limit_to_limit_degrees
-        self.cart_degrees_per_mm = self.limit_to_limit_degrees / self.limit_to_limit_mm
         self.midline_degrees = (self.left_limit_degrees + self.right_limit_degrees) / 2.0
 
         logging.info(
@@ -414,7 +440,6 @@ class CartPole(MdpEnvironment):
             f'\tRight limit degrees:  {self.right_limit_degrees}\n'
             f'\tLimit to limit degrees:  {self.limit_to_limit_degrees}\n'
             f'\tCart mm/deg:  {self.cart_mm_per_degree}\n'
-            f'\tCart deg/mm:  {self.cart_degrees_per_mm}\n'
             f'\tMidline deg:  {self.midline_degrees}\n'
         )
 
@@ -427,19 +452,25 @@ class CartPole(MdpEnvironment):
 
         logging.info('Centering cart.')
 
-        self.move_cart_to_left_limit()
+        out_of_calibration_mm = self.move_cart_to_left_limit()
+        if out_of_calibration_mm is None or out_of_calibration_mm > self.calibration_tolerance_mm:
+            print('Cart is out of calibration. Forcing a calibration.')
+            self.calibrate()
+            if self.move_cart_to_left_limit() > self.calibration_tolerance_mm:
+                raise ValueError('Calibration failed.')
+
         self.center_reached.clear()
-        self.cart_rotary_encoder.report_state = True
+        self.cart_rotary_encoder.report_state = lambda e: (
+            abs(e.net_total_degrees - self.left_limit_degrees) * self.cart_mm_per_degree >= self.midline_mm
+        )
+        centering_rpy_event = RpyEvent(lambda s: self.center_reached.set())
+        self.cart_rotary_encoder.events.append(centering_rpy_event)
         self.motor.set_speed(self.move_to_limit_motor_speed)
-        self.cart_rotary_encoder.event(lambda s: (
-            self.center_reached.set() if (
-                abs(s.net_total_degrees - self.left_limit_degrees) / self.cart_degrees_per_mm >= self.midline_mm
-            )
-            else None
-        ))
         self.center_reached.wait()
-        self.cart_rotary_encoder.report_state = False
         self.motor.set_speed(0)
+        self.cart_rotary_encoder.report_state = lambda e: False
+        self.cart_rotary_encoder.events.remove(centering_rpy_event)
+        self.center_reached.clear()
 
         logging.info('Cart centered.\n')
 
@@ -479,8 +510,9 @@ class CartPole(MdpEnvironment):
         self.wait_for_stationary_pole()
         self.pole_rotary_encoder.degrees_per_second = 0.0
         self.pole_rotary_encoder.update_state()
+        self.state = self.get_state(agent)
 
-        return self.get_state(agent)
+        return self.state
 
     def advance(
             self,
@@ -499,11 +531,18 @@ class CartPole(MdpEnvironment):
         :return: 2-tuple of the new state and a reward.
         """
 
+        if self.state.terminal:
+            raise ValueError('Episode has terminated. Must reset the environment before advancing.')
+
         assert isinstance(a, ContinuousMultiDimensionalAction)
         assert a.value.shape == (1,)
         speed_change = round(float(a.value[0]))
         self.motor.set_speed(self.motor.get_speed() + speed_change)
+
         self.state = self.get_state(agent)
+        if self.state.terminal:
+            self.motor.set_speed(0)
+
         reward = 1.0
 
         return self.state, Reward(None, reward)
@@ -519,15 +558,19 @@ class CartPole(MdpEnvironment):
         :return: State.
         """
 
+        mm_from_midline = (
+            abs(self.cart_rotary_encoder.net_total_degrees - self.left_limit_degrees) * self.cart_mm_per_degree
+        ) - self.limit_to_limit_mm / 2.0
+
         return CartPoleState(
             environment=self,
             observation=np.array([
-                (self.cart_rotary_encoder.net_total_degrees - self.left_limit_degrees) * self.cart_mm_per_degree,
+                mm_from_midline,
                 self.cart_rotary_encoder.degrees_per_second * self.cart_mm_per_degree,
                 (self.pole_rotary_encoder.net_total_degrees - self.pole_rotary_encoder_degrees_at_bottom) % 360.0,
                 self.pole_rotary_encoder.degrees_per_second
             ]),
             agent=agent,
-            terminal=False,
+            terminal=abs(mm_from_midline) > self.soft_limit_mm_from_midline,
             truncated=False
         )
