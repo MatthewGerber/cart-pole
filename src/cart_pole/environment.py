@@ -318,6 +318,10 @@ class CartPole(MdpEnvironment):
         self.limit_to_limit_degrees: Optional[float] = None
         self.cart_mm_per_degree: Optional[float] = None
         self.midline_degrees: Optional[float] = None
+        self.cart_rotary_encoder_calibrated_phase_change_index: Optional[int] = None
+        self.cart_rotary_encoder_calibrated_num_phase_changes: Optional[int] = None
+        self.cart_rotary_encoder_calibrated_net_total_degrees: Optional[float] = None
+        self.cart_rotary_encoder_calibrated_degrees: Optional[float] = None
 
     def move_cart_to_left_limit(
             self
@@ -434,6 +438,13 @@ class CartPole(MdpEnvironment):
         self.cart_mm_per_degree = self.limit_to_limit_mm / self.limit_to_limit_degrees
         self.midline_degrees = (self.left_limit_degrees + self.right_limit_degrees) / 2.0
 
+        self.center_cart()
+        self.cart_rotary_encoder.bookmark_state()
+
+        self.wait_for_stationary_pole()
+        self.pole_rotary_encoder.bookmark_state()
+        self.pole_rotary_encoder_degrees_at_bottom = self.pole_rotary_encoder.net_total_degrees
+
         logging.info(
             f'Calibrated:\n'
             f'\tLeft limit degrees:  {self.left_limit_degrees}\n'
@@ -452,20 +463,24 @@ class CartPole(MdpEnvironment):
 
         logging.info('Centering cart.')
 
-        out_of_calibration_mm = self.move_cart_to_left_limit()
-        if out_of_calibration_mm is None or out_of_calibration_mm > self.calibration_tolerance_mm:
-            print('Cart is out of calibration. Forcing a calibration.')
-            self.calibrate()
-            if self.move_cart_to_left_limit() > self.calibration_tolerance_mm:
-                raise ValueError('Calibration failed.')
+        originally_left_of_center = CartPole.is_left_of_center(self, self.cart_rotary_encoder)
 
         self.center_reached.clear()
         self.cart_rotary_encoder.report_state = lambda e: (
-            abs(e.net_total_degrees - self.left_limit_degrees) * self.cart_mm_per_degree >= self.midline_mm
+            (
+                originally_left_of_center and not CartPole.is_left_of_center(self, e)
+            )
+            or
+            (
+                not originally_left_of_center and CartPole.is_left_of_center(self, e)
+            )
         )
         centering_rpy_event = RpyEvent(lambda s: self.center_reached.set())
         self.cart_rotary_encoder.events.append(centering_rpy_event)
-        self.motor.set_speed(self.move_to_limit_motor_speed)
+        self.motor.set_speed(
+            self.move_to_limit_motor_speed if originally_left_of_center
+            else -self.move_to_limit_motor_speed
+        )
         self.center_reached.wait()
         self.motor.set_speed(0)
         self.cart_rotary_encoder.report_state = lambda e: False
@@ -473,6 +488,23 @@ class CartPole(MdpEnvironment):
         self.center_reached.clear()
 
         logging.info('Cart centered.\n')
+
+    @staticmethod
+    def is_left_of_center(
+            cart_pole: 'CartPole',
+            cart_rotary_encoder: RotaryEncoder
+    ) -> bool:
+        """
+        Check whether the cart is left of the midline.
+
+        :param cart_pole: Cart pole.
+        :param cart_rotary_encoder: Cart rotary encoder.
+        :return: True if the cart is left of the midline and False otherwise.
+        """
+
+        return abs(
+            cart_rotary_encoder.net_total_degrees - cart_pole.left_limit_degrees
+        ) * cart_pole.cart_mm_per_degree < cart_pole.midline_mm
 
     def wait_for_stationary_pole(
             self
@@ -489,9 +521,7 @@ class CartPole(MdpEnvironment):
             time.sleep(1.0)
             logging.info('Waiting for stationary pole.')
 
-        self.pole_rotary_encoder_degrees_at_bottom = self.pole_rotary_encoder.net_total_degrees
-
-        logging.info(f'Pole is stationary at degrees:  {self.pole_rotary_encoder_degrees_at_bottom}\n')
+        logging.info(f'Pole is stationary at degrees:  {self.pole_rotary_encoder.net_total_degrees}\n')
 
     def reset_for_new_run(
             self,
@@ -504,13 +534,18 @@ class CartPole(MdpEnvironment):
         :return: Initial state.
         """
 
-        self.center_cart()
-        self.cart_rotary_encoder.degrees_per_second = 0.0
-        self.cart_rotary_encoder.update_state()
-        self.wait_for_stationary_pole()
-        self.pole_rotary_encoder.degrees_per_second = 0.0
-        self.pole_rotary_encoder.update_state()
+        if self.num_resets == 0:
+            self.calibrate()
+        else:
+            self.center_cart()
+            self.cart_rotary_encoder.reset_state_to_bookmark()
+            self.wait_for_stationary_pole()
+            self.pole_rotary_encoder.reset_state_to_bookmark()
+            self.pole_rotary_encoder_degrees_at_bottom = self.pole_rotary_encoder.net_total_degrees
+
         self.state = self.get_state(agent)
+
+        super().reset_for_new_run(agent)
 
         return self.state
 
