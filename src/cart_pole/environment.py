@@ -299,6 +299,7 @@ class CartPole(MdpEnvironment):
             degrees_per_second_smoothing=0.75
         )
         self.cart_rotary_encoder_centered_state: Optional[Dict[str, float]] = None
+        self.center_reached = Event()
 
         self.pole_rotary_encoder = RotaryEncoder(
             phase_a_pin=self.pole_rotary_encoder_phase_a_pin,
@@ -333,8 +334,6 @@ class CartPole(MdpEnvironment):
         else:
             self.right_limit_released.set()
         self.right_limit_switch.event(lambda s: self.right_limit_event(s.pressed))
-
-        self.center_reached = Event()
 
         # calibration state and values
         self.has_calibrated = False
@@ -425,6 +424,8 @@ class CartPole(MdpEnvironment):
                     self.state = self.get_state(True)
                     self.calibrate_on_next_reset = True
 
+            # another thread may attempt to wait for the switch to be released immediately upon the pressed event being
+            # set. prevent a race condition by first clearing the released event before setting the pressed event.
             self.left_limit_released.clear()
             self.left_limit_pressed.set()
 
@@ -432,6 +433,8 @@ class CartPole(MdpEnvironment):
 
             logging.info('Left limit released.')
 
+            # another thread may attempt to wait for the switch to be pressed immediately upon the released event being
+            # set. prevent a race condition by first clearing the pressed event before setting the released event.
             self.left_limit_pressed.clear()
             self.left_limit_released.set()
 
@@ -477,6 +480,8 @@ class CartPole(MdpEnvironment):
                     self.state = self.get_state(True)
                     self.calibrate_on_next_reset = True
 
+            # another thread may attempt to wait for the switch to be released immediately upon the pressed event being
+            # set. prevent a race condition by first clearing the released event before setting the pressed event.
             self.right_limit_released.clear()
             self.right_limit_pressed.set()
 
@@ -484,6 +489,8 @@ class CartPole(MdpEnvironment):
 
             logging.info('Right limit released.')
 
+            # another thread may attempt to wait for the switch to be pressed immediately upon the released event being
+            # set. prevent a race condition by first clearing the pressed event before setting the released event.
             self.right_limit_pressed.clear()
             self.right_limit_released.set()
 
@@ -496,7 +503,7 @@ class CartPole(MdpEnvironment):
 
         logging.info('Centering cart.')
 
-        # only report state when we cross the midline
+        # report state when we cross the midline
         originally_left_of_center = self.is_left_of_center()
         self.cart_rotary_encoder.report_state = lambda _: (
             (
@@ -508,7 +515,8 @@ class CartPole(MdpEnvironment):
             )
         )
 
-        # move the cart until the state is reported (center is reached)
+        # move the cart until the state is reported (center is reached). wait for any state event to be reported and
+        # set the event.
         self.center_reached.clear()
         centering_rpy_event = RpyEvent(lambda _: self.center_reached.set())
         self.cart_rotary_encoder.events.append(centering_rpy_event)
@@ -518,14 +526,14 @@ class CartPole(MdpEnvironment):
         )
         self.center_reached.wait()
 
-        # stop
+        # stop the cart and stop reporting states/events
         self.motor.set_speed(0)
         self.cart_rotary_encoder.report_state = lambda e: False
         self.cart_rotary_encoder.events.remove(centering_rpy_event)
         self.center_reached.clear()
         logging.info('Cart centered.\n')
 
-        # wait for the pole to stop swinging
+        # wait for the pole to stop swinging. check number of phase changes in a second.
         logging.info('Waiting for stationary pole.')
         previous_pole_num_phase_changes = self.pole_rotary_encoder.num_phase_changes
         time.sleep(1.0)
@@ -565,9 +573,13 @@ class CartPole(MdpEnvironment):
 
         self.motor.start()
 
+        # calibrate if needed, which leaves the cart centered.
         if self.calibrate_on_next_reset:
             self.calibrate()
             self.calibrate_on_next_reset = False
+
+        # otherwise, center the cart with the current calibration and reset the rotary encoders to their calibration-
+        # initial conditions.
         else:
             self.center_cart()
             self.cart_rotary_encoder.reset_state(self.cart_rotary_encoder_centered_state)
@@ -611,10 +623,13 @@ class CartPole(MdpEnvironment):
                 self.motor.set_speed(self.motor.get_speed() + speed_change)
 
                 self.state = self.get_state(None)
+
                 if self.state.terminal:
                     self.motor.set_speed(0)
 
                 reward_value = 1.0
+                
+            logging.debug(f'State after time {t}:  {self.state}')
 
             return self.state, Reward(None, reward_value)
 
@@ -629,14 +644,20 @@ class CartPole(MdpEnvironment):
         :return: State.
         """
 
-        mm_from_midline = (
-            abs(self.cart_rotary_encoder.net_total_degrees - self.left_limit_degrees) * self.cart_mm_per_degree
-        ) - self.limit_to_limit_mm / 2.0
+        mm_from_left_limit = abs(
+            self.cart_rotary_encoder.net_total_degrees - self.left_limit_degrees
+        ) * self.cart_mm_per_degree
 
+        mm_from_midline = mm_from_left_limit - self.limit_to_limit_mm / 2.0
+
+        # terminate for violation of soft limit
         if terminal is None:
-            terminal = abs(mm_from_midline) > self.soft_limit_mm_from_midline
+            terminal = abs(mm_from_midline) >= self.soft_limit_mm_from_midline
             if terminal:
-                logging.info('Cart exceeded soft limit. Terminating.')
+                logging.info(
+                    f'Cart position ({mm_from_midline:.1f}) mm exceeded soft limit '
+                    f'({self.soft_limit_mm_from_midline}) mm. Terminating.'
+                )
 
         return CartPoleState(
             environment=self,
