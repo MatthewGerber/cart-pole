@@ -47,7 +47,7 @@ class TestAgent(MdpAgent):
     def __act__(self, t: int) -> Action:
 
         return ContinuousMultiDimensionalAction(
-            value=np.array([self.increment if t < 60 else 0.0]),
+            value=np.array([self.increment if t < 50 else 0.0]),
             min_values=None,
             max_values=None
         )

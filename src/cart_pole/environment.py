@@ -296,9 +296,12 @@ class CartPole(MdpEnvironment):
             phase_b_pin=self.cart_rotary_encoder_phase_b_pin,
             phase_changes_per_rotation=2400,
             report_state=lambda e: False,
-            degrees_per_second_smoothing=0.75
+            degrees_per_second_smoothing=0.75,
+            bounce_time_ms=None
         )
         self.cart_rotary_encoder_centered_state: Optional[Dict[str, float]] = None
+        self.cart_rotary_encoder_left_limit_state: Optional[Dict[str, float]] = None
+        self.cart_rotary_encoder_right_limit_state: Optional[Dict[str, float]] = None
         self.center_reached = Event()
 
         self.pole_rotary_encoder = RotaryEncoder(
@@ -306,7 +309,8 @@ class CartPole(MdpEnvironment):
             phase_b_pin=self.pole_rotary_encoder_phase_b_pin,
             phase_changes_per_rotation=2400,
             report_state=lambda e: False,
-            degrees_per_second_smoothing=0.75
+            degrees_per_second_smoothing=0.75,
+            bounce_time_ms=None
         )
         self.pole_rotary_encoder_stationary_state: Optional[Dict[str, float]] = None
         self.pole_rotary_encoder_degrees_at_bottom: Optional[float] = None
@@ -336,7 +340,6 @@ class CartPole(MdpEnvironment):
         self.right_limit_switch.event(lambda s: self.right_limit_event(s.pressed))
 
         # calibration state and values
-        self.has_calibrated = False
         self.calibrate_on_next_reset = True
         self.left_limit_degrees: Optional[float] = None
         self.right_limit_degrees: Optional[float] = None
@@ -353,11 +356,23 @@ class CartPole(MdpEnvironment):
 
         logging.info('Calibrating.')
 
-        # mark degrees at left and right limits
-        self.move_cart_to_left_limit()
-        self.left_limit_degrees = self.cart_rotary_encoder.net_total_degrees
-        self.move_cart_to_right_limit()
-        self.right_limit_degrees = self.cart_rotary_encoder.net_total_degrees
+        # mark degrees at left and right limits. do this in whatever order is the most efficient given the cart's
+        # current position. we can only do this after the initial calibration, since determining left of center
+        # depends on having a value for the left limit.
+        if self.left_limit_degrees is not None and self.is_left_of_center():
+            self.move_cart_to_left_limit()
+            self.left_limit_degrees = self.cart_rotary_encoder.net_total_degrees
+            self.cart_rotary_encoder_left_limit_state = self.cart_rotary_encoder.capture_state()
+            self.move_cart_to_right_limit()
+            self.right_limit_degrees = self.cart_rotary_encoder.net_total_degrees
+            self.cart_rotary_encoder_right_limit_state = self.cart_rotary_encoder.capture_state()
+        else:
+            self.move_cart_to_right_limit()
+            self.right_limit_degrees = self.cart_rotary_encoder.net_total_degrees
+            self.cart_rotary_encoder_right_limit_state = self.cart_rotary_encoder.capture_state()
+            self.move_cart_to_left_limit()
+            self.left_limit_degrees = self.cart_rotary_encoder.net_total_degrees
+            self.cart_rotary_encoder_left_limit_state = self.cart_rotary_encoder.capture_state()
 
         # calibrate mm/degree and the midline
         self.limit_to_limit_degrees = abs(self.left_limit_degrees - self.right_limit_degrees)
@@ -365,7 +380,7 @@ class CartPole(MdpEnvironment):
         self.midline_degrees = (self.left_limit_degrees + self.right_limit_degrees) / 2.0
 
         # center cart and capture initial conditions of the rotary encoders for resetting later
-        self.center_cart()
+        self.center_cart(False)
         self.cart_rotary_encoder_centered_state = self.cart_rotary_encoder.capture_state()
         self.pole_rotary_encoder_stationary_state = self.pole_rotary_encoder.capture_state()
         self.pole_rotary_encoder_degrees_at_bottom = self.pole_rotary_encoder.degrees
@@ -379,8 +394,6 @@ class CartPole(MdpEnvironment):
             f'\tMidline degree:  {self.midline_degrees}\n'
             f'\tPole degrees at bottom:  {self.pole_rotary_encoder_degrees_at_bottom}\n'
         )
-
-        self.has_calibrated = True
 
     def move_cart_to_left_limit(
             self
@@ -413,14 +426,14 @@ class CartPole(MdpEnvironment):
 
             logging.info('Left limit pressed.')
 
-            # any time the limit switch is pressed, it's important to stop the cart and terimate any current episode.
-            # we can only do this after we have calibrated, since getting the state requires calibration values. if we
-            # haven't calibrated, then we must have hit the limit switch from the calibration movements. those are
-            # synchronized with the current event, and they will immediately move the cart away from the limit switch.
-            # so there's no need to zero the speed here in that case.
-            if self.has_calibrated:
-                with self.state_lock:
-                    self.motor.set_speed(0)
+            with self.state_lock:
+
+                # it's important to stop the cart any time the limit switch is pressed
+                self.motor.set_speed(0)
+
+                # hitting a limit switch in the middle of an episode means that we've lost calibration. the soft limits
+                # should have prevented this, but this failed. end the episode and calibrate upon the next episod reset.
+                if self.state is not None and not self.state.terminal:
                     self.state = self.get_state(True)
                     self.calibrate_on_next_reset = True
 
@@ -469,14 +482,14 @@ class CartPole(MdpEnvironment):
 
             logging.info('Right limit pressed.')
 
-            # any time the limit switch is pressed, it's important to stop the cart and terimate any current episode.
-            # we can only do this after we have calibrated, since getting the state requires calibration values. if we
-            # haven't calibrated, then we must have hit the limit switch from the calibration movements. those are
-            # synchronized with the current event, and they will immediately move the cart away from the limit switch.
-            # so there's no need to zero the speed here in that case.
-            if self.has_calibrated:
-                with self.state_lock:
-                    self.motor.set_speed(0)
+            with self.state_lock:
+
+                # it's important to stop the cart any time the limit switch is pressed
+                self.motor.set_speed(0)
+
+                # hitting a limit switch in the middle of an episode means that we've lost calibration. the soft limits
+                # should have prevented this, but this failed. end the episode and calibrate upon the next episod reset.
+                if self.state is not None and not self.state.terminal:
                     self.state = self.get_state(True)
                     self.calibrate_on_next_reset = True
 
@@ -495,16 +508,30 @@ class CartPole(MdpEnvironment):
             self.right_limit_released.set()
 
     def center_cart(
-            self
+            self,
+            restore_limit_state: bool
     ):
         """
         Center the cart.
+
+        :param restore_limit_state: Whether to restore the limit state before centering.
         """
 
         logging.info('Centering cart.')
 
-        # report state when we cross the midline
         originally_left_of_center = self.is_left_of_center()
+
+        # restore the limit state by physicially positioning the cart at the limit and restoring the state to what is
+        # was when we calibrated.
+        if restore_limit_state:
+            if originally_left_of_center:
+                self.move_cart_to_left_limit()
+                self.cart_rotary_encoder.restore_captured_state(self.cart_rotary_encoder_left_limit_state)
+            else:
+                self.move_cart_to_right_limit()
+                self.cart_rotary_encoder.restore_captured_state(self.cart_rotary_encoder_right_limit_state)
+
+        # report state when we cross the midline
         self.cart_rotary_encoder.report_state = lambda _: (
             (
                 originally_left_of_center and not self.is_left_of_center()
@@ -581,9 +608,9 @@ class CartPole(MdpEnvironment):
         # otherwise, center the cart with the current calibration and reset the rotary encoders to their calibration-
         # initial conditions.
         else:
-            self.center_cart()
-            self.cart_rotary_encoder.reset_state(self.cart_rotary_encoder_centered_state)
-            self.pole_rotary_encoder.reset_state(self.pole_rotary_encoder_stationary_state)
+            self.center_cart(True)
+            self.cart_rotary_encoder.restore_captured_state(self.cart_rotary_encoder_centered_state)
+            self.pole_rotary_encoder.restore_captured_state(self.pole_rotary_encoder_stationary_state)
 
         self.agent = agent
         self.state = self.get_state(False)
@@ -628,8 +655,6 @@ class CartPole(MdpEnvironment):
                     self.motor.set_speed(0)
 
                 reward_value = 1.0
-                
-            logging.debug(f'State after time {t}:  {self.state}')
 
             return self.state, Reward(None, reward_value)
 
