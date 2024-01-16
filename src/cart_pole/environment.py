@@ -1,5 +1,4 @@
 import logging
-import time
 from argparse import ArgumentParser
 from threading import Event, RLock
 from typing import List, Tuple, Any, Optional, Dict
@@ -411,6 +410,7 @@ class CartPole(MdpEnvironment):
         self.motor.set_speed(self.move_away_from_limit_motor_speed)
         self.left_limit_released.wait()
         self.motor.set_speed(0)
+        self.cart_rotary_encoder.wait_for_stationarity()
 
     def left_limit_event(
             self,
@@ -430,6 +430,7 @@ class CartPole(MdpEnvironment):
 
                 # it's important to stop the cart any time the limit switch is pressed
                 self.motor.set_speed(0)
+                self.cart_rotary_encoder.wait_for_stationarity()
 
                 # hitting a limit switch in the middle of an episode means that we've lost calibration. the soft limits
                 # should have prevented this, but this failed. end the episode and calibrate upon the next episod reset.
@@ -467,6 +468,7 @@ class CartPole(MdpEnvironment):
         self.motor.set_speed(-self.move_away_from_limit_motor_speed)
         self.right_limit_released.wait()
         self.motor.set_speed(0)
+        self.cart_rotary_encoder.wait_for_stationarity()
 
     def right_limit_event(
             self,
@@ -486,6 +488,7 @@ class CartPole(MdpEnvironment):
 
                 # it's important to stop the cart any time the limit switch is pressed
                 self.motor.set_speed(0)
+                self.cart_rotary_encoder.wait_for_stationarity()
 
                 # hitting a limit switch in the middle of an episode means that we've lost calibration. the soft limits
                 # should have prevented this, but this failed. end the episode and calibrate upon the next episod reset.
@@ -555,19 +558,14 @@ class CartPole(MdpEnvironment):
 
         # stop the cart and stop reporting states/events
         self.motor.set_speed(0)
+        self.cart_rotary_encoder.wait_for_stationarity()
         self.cart_rotary_encoder.report_state = lambda e: False
         self.cart_rotary_encoder.events.remove(centering_rpy_event)
         self.center_reached.clear()
         logging.info('Cart centered.\n')
 
-        # wait for the pole to stop swinging. check number of phase changes in a second.
         logging.info('Waiting for stationary pole.')
-        previous_pole_num_phase_changes = self.pole_rotary_encoder.num_phase_changes
-        time.sleep(1.0)
-        while self.pole_rotary_encoder.num_phase_changes != previous_pole_num_phase_changes:
-            previous_pole_num_phase_changes = self.pole_rotary_encoder.num_phase_changes
-            logging.info('Waiting for stationary pole.')
-            time.sleep(1.0)
+        self.pole_rotary_encoder.wait_for_stationarity()
         logging.info(f'Pole is stationary at degrees:  {self.pole_rotary_encoder.net_total_degrees}\n')
 
     def is_left_of_center(
@@ -653,6 +651,7 @@ class CartPole(MdpEnvironment):
 
                 if self.state.terminal:
                     self.motor.set_speed(0)
+                    self.cart_rotary_encoder.wait_for_stationarity()
 
                 reward_value = 1.0
 
