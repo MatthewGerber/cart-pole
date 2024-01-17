@@ -58,7 +58,7 @@ def main():
     Demonstrate the cart-pole environment.
     """
 
-    logging.getLogger().setLevel(logging.INFO)
+    logging.getLogger().setLevel(logging.DEBUG)
 
     setup()
 
@@ -66,7 +66,7 @@ def main():
         name='test',
         random_state=RandomState(12345),
         T=None,
-        limit_to_limit_mm=990.0,
+        limit_to_limit_mm=914.0,
         motor_pwm_channel=0,
         motor_pwm_direction_pin=CkPin.GPIO21,
         motor_negative_speed_is_left=False,
@@ -75,7 +75,8 @@ def main():
         pole_rotary_encoder_phase_a_pin=CkPin.GPIO17,
         pole_rotary_encoder_phase_b_pin=CkPin.GPIO27,
         left_limit_switch_input_pin=CkPin.GPIO20,
-        right_limit_switch_input_pin=CkPin.GPIO16
+        right_limit_switch_input_pin=CkPin.GPIO16,
+        max_timesteps_per_second=20.0
     )
 
     agent = TestAgent()
@@ -83,6 +84,8 @@ def main():
         initial_state = env.reset_for_new_run(agent)
         agent.reset_for_new_run(initial_state)
         env.run(agent, Monitor())
+
+    env.close()
 
     cleanup()
 
