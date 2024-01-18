@@ -1,10 +1,12 @@
 import logging
 from typing import List, Tuple, Dict
 
+import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from numpy.random import RandomState
 
-from cart_pole.environment import CartPole
+from cart_pole.environment import CartPole, CartPoleState
 from raspberry_py.gpio import CkPin, setup, cleanup
 from rlai.core import (
     MdpAgent,
@@ -39,27 +41,55 @@ class TestAgent(MdpAgent):
     ) -> Tuple[List[Agent], List[str]]:
         pass
 
+    def __init__(self):
+
+        super().__init__('test', RandomState(12345), DummyPolicy(), 1.0)
+
+        self.increment = 1.0
+        self.curr_motor_speed = 0
+        self.motor_speed_state_speeds: List[Tuple[int, float]] = []
+
     def reset_for_new_run(
             self,
             state: State
     ):
         super().reset_for_new_run(state)
 
+        if len(self.motor_speed_state_speeds) > 0:
+            df = pd.DataFrame(
+                data=self.motor_speed_state_speeds,
+                columns=['motor_speed', 'state_speed']
+            )
+            df.boxplot('state_speed', by='motor_speed', figsize=(8.0, 8.0))
+            plt.xticks(rotation=45, ha='right')
+            plt.xlabel('Motor speed [-100,100] (unitless)')
+            plt.ylabel('Rotary encoder velocity (mm/sec)')
+            plt.tight_layout()
+            plt.show()
+
+        self.curr_motor_speed = 0
+        self.motor_speed_state_speeds.clear()
         self.increment *= -1.0
-
-    def __init__(self):
-
-        super().__init__('test', RandomState(12345), DummyPolicy(), 1.0)
-
-        self.increment = 1.0
 
     def __act__(self, t: int) -> Action:
 
+        motor_speed_increment = self.increment if t < 50 else 0.0
+        self.curr_motor_speed += motor_speed_increment
+
         return ContinuousMultiDimensionalAction(
-            value=np.array([self.increment if t < 50 else 0.0]),
+            value=np.array([motor_speed_increment]),
             min_values=None,
             max_values=None
         )
+
+    def sense(
+            self,
+            state: State,
+            t: int
+    ):
+        assert isinstance(state, CartPoleState)
+
+        self.motor_speed_state_speeds.append((self.curr_motor_speed, float(state.observation[1])))
 
 
 def main():

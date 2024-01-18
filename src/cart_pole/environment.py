@@ -71,7 +71,7 @@ class CartPoleState(MdpState):
 
         return (
             f'cart x={self.observation[0]:.1f} mm @ {self.observation[1]:.1f} mm/s; '
-            f'pole deg={self.observation[2]:.1f} @ {self.observation[2]:.1f} deg/s'
+            f'pole deg={self.observation[2]:.1f} @ {self.observation[3]:.1f} deg/s'
         )
 
 
@@ -99,7 +99,8 @@ class MultiprocessRotaryEncoder:
                 bounce_time_ms: Optional[float],
                 net_total_degrees_value: Value,
                 degrees_value: Value,
-                degrees_per_second_value: Value
+                degrees_per_second_value: Value,
+                clockwise_value: Value
         ):
             """
             Initialize the rotary encoder.
@@ -120,6 +121,7 @@ class MultiprocessRotaryEncoder:
             :param net_total_degrees_value: Shared-memory structure for reading the current net-total degrees.
             :param degrees_value: Shared-memory structure for reading the current degrees.
             :param degrees_per_second_value: Shared-memory structure for reading the current degrees per second value.
+            :param clockwise_value: Shared-memory structure for reading the clockwise value.
             """
 
             super().__init__(
@@ -134,11 +136,9 @@ class MultiprocessRotaryEncoder:
             self.net_total_degrees_value = net_total_degrees_value
             self.degrees_value = degrees_value
             self.degrees_per_second_value = degrees_per_second_value
+            self.clockwise_value = clockwise_value
 
-            # set initial values
-            self.net_total_degrees_value.value = self.net_total_degrees
-            self.degrees_value.value = self.degrees
-            self.degrees_per_second_value.value = self.degrees_per_second
+            self.set_shared_memory_values()
 
         def update_state(
                 self
@@ -149,10 +149,19 @@ class MultiprocessRotaryEncoder:
 
             super().update_state()
 
-            # set new values
+            self.set_shared_memory_values()
+
+        def set_shared_memory_values(
+                self
+        ):
+            """
+            Set shared-memory values.
+            """
+
             self.net_total_degrees_value.value = self.net_total_degrees
             self.degrees_value.value = self.degrees
             self.degrees_per_second_value.value = self.degrees_per_second
+            self.clockwise_value.value = 1 if self.clockwise else 0
 
     class CommandFunction(Enum):
         """
@@ -209,6 +218,7 @@ class MultiprocessRotaryEncoder:
             net_total_degrees_value: Value,
             degrees_value: Value,
             degrees_per_second_value: Value,
+            clockwise_value: Value,
             command_pipe: Connection
     ):
         """
@@ -224,6 +234,7 @@ class MultiprocessRotaryEncoder:
         :param net_total_degrees_value: Shared-memory structure for reading the current net-total degrees.
         :param degrees_value: Shared-memory structure for reading the current degrees.
         :param degrees_per_second_value: Shared-memory structure for reading the current degrees per second value.
+        :param clockwise_value: Shared-memory structure for reading the clockwise value.
         :param command_pipe: Command pipe that the command loop will use to receive commands and send return values.
         """
 
@@ -236,7 +247,8 @@ class MultiprocessRotaryEncoder:
             bounce_time_ms=None,
             net_total_degrees_value=net_total_degrees_value,
             degrees_value=degrees_value,
-            degrees_per_second_value=degrees_per_second_value
+            degrees_per_second_value=degrees_per_second_value,
+            clockwise_value=clockwise_value
         )
 
         while True:
@@ -252,9 +264,11 @@ class MultiprocessRotaryEncoder:
                 return_value = rotary_encoder.capture_state()
             elif command.function == MultiprocessRotaryEncoder.CommandFunction.RESTORE_CAPTURED_STATE:
                 rotary_encoder.restore_captured_state(*command.args)
+                rotary_encoder.set_shared_memory_values()
                 return_value = None
             elif command.function == MultiprocessRotaryEncoder.CommandFunction.WAIT_FOR_STATIONARITY:
-                rotary_encoder.wait_for_stationarity(0.1)
+                rotary_encoder.wait_for_stationarity(0.5)
+                rotary_encoder.set_shared_memory_values()
                 return_value = None
             elif command.function == MultiprocessRotaryEncoder.CommandFunction.WAIT_FOR_CART_TO_CROSS_CENTER:
 
@@ -339,6 +353,7 @@ class MultiprocessRotaryEncoder:
         self.net_total_degrees_value = Value('d', 0.0)
         self.degrees_value = Value('d', 0.0)
         self.degrees_per_second_value = Value('d', 0.0)
+        self.clockwise_value = Value('i', 0)
         self.parent_connection, self.child_connection = Pipe()
         self.process = Process(
             target=MultiprocessRotaryEncoder.run_command_loop,
@@ -350,6 +365,7 @@ class MultiprocessRotaryEncoder:
                 self.net_total_degrees_value,
                 self.degrees_value,
                 self.degrees_per_second_value,
+                self.clockwise_value,
                 self.child_connection
             )
         )
@@ -387,6 +403,17 @@ class MultiprocessRotaryEncoder:
         """
 
         return self.degrees_per_second_value.value
+
+    def get_clockwise(
+            self
+    ) -> bool:
+        """
+        Get clockwise.
+
+        :return: True if clockwise.
+        """
+
+        return self.clockwise_value.value == 1
 
     def wait_for_startup(
             self
@@ -1157,7 +1184,10 @@ class CartPole(MdpEnvironment):
             environment=self,
             observation=np.array([
                 mm_from_midline,
-                self.cart_rotary_encoder.get_degrees_per_second() * self.cart_mm_per_degree,
+                (
+                    (-1.0 if self.cart_rotary_encoder.get_clockwise() else 1.0) *
+                    self.cart_rotary_encoder.get_degrees_per_second() * self.cart_mm_per_degree
+                ),
                 self.pole_rotary_encoder.get_degrees() - self.pole_rotary_encoder_degrees_at_bottom,
                 self.pole_rotary_encoder.get_degrees_per_second()
             ]),
