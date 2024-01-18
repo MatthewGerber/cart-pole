@@ -6,8 +6,17 @@ from numpy.random import RandomState
 
 from cart_pole.environment import CartPole
 from raspberry_py.gpio import CkPin, setup, cleanup
-from rlai.core import MdpAgent, Action, Monitor, Policy, MdpState, ContinuousMultiDimensionalAction, Environment, Agent, \
+from rlai.core import (
+    MdpAgent,
+    Action,
+    Monitor,
+    Policy,
+    MdpState,
+    ContinuousMultiDimensionalAction,
+    Environment,
+    Agent,
     State
+)
 
 
 class DummyPolicy(Policy):
@@ -67,6 +76,8 @@ def main():
         random_state=RandomState(12345),
         T=None,
         limit_to_limit_mm=914.0,
+        soft_limit_standoff=100.0,
+        cart_width_mm=45.0,
         motor_pwm_channel=0,
         motor_pwm_direction_pin=CkPin.GPIO21,
         motor_negative_speed_is_left=False,

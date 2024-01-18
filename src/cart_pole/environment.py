@@ -1,11 +1,11 @@
 import logging
+import time
 from argparse import ArgumentParser
 from enum import Enum, auto
 from multiprocessing import Process, Value, Pipe
 # noinspection PyProtectedMember
 from multiprocessing.connection import Connection
 from threading import Event, RLock
-import time
 from typing import List, Tuple, Any, Optional, Dict, Callable
 
 import numpy as np
@@ -40,11 +40,12 @@ class CartPoleState(MdpState):
         Initialize the state.
 
         :param environment: Environment.
-        :param observation: Observation.
+        :param observation: Observation as a length-4 vector of cart position, cart velocity, pole angle, and pole
+        angular velocity.
         :param agent: Agent.
         :param terminal: Whether the state is terminal, meaning the episode has terminated naturally due to the
-        dynamics of the environment. For example, the natural dynamics of the environment might terminate when the agent
-        reaches a predefined goal state.
+        dynamics of the environment. For example, the natural dynamics of the environment terminate when the pole goes
+        beyond the permitted bounds of the track.
         :param truncated: Whether the state is truncated, meaning the episode has ended for some reason other than the
         natural dynamics of the environment. For example, imposing an artificial time limit on an episode might cause
         the episode to end without the agent in a predefined goal state.
@@ -69,70 +70,130 @@ class CartPoleState(MdpState):
         """
 
         return (
-            f'Cart x={self.observation[0]:.1f} mm @ {self.observation[1]:.1f} mm/s; '
-            f'Pole deg={self.observation[2]:.1f} @ {self.observation[2]:.1f} deg/s'
+            f'cart x={self.observation[0]:.1f} mm @ {self.observation[1]:.1f} mm/s; '
+            f'pole deg={self.observation[2]:.1f} @ {self.observation[2]:.1f} deg/s'
         )
 
 
-class MultiprocessRotaryEncoder(RotaryEncoder):
+class MultiprocessRotaryEncoder:
+    """
+    Multiprocess wrapper around the rotary encoder. This allows the rotary encoder to receive phase-change events on a
+    dedicated CPU core that is separate from the main program running the environment and RLAI. This is important
+    because rotary encoders receive events at a high rate, and if events are dropped because the event callbacks are
+    competing with other threads on the same core, then events can be dropped and the rotary encoder's output will be
+    incorrect.
+    """
 
-    def __init__(
-            self,
-            phase_a_pin: CkPin,
-            phase_b_pin: CkPin,
-            phase_changes_per_rotation: int,
-            report_state: Optional[Callable[['RotaryEncoder'], bool]],
-            degrees_per_second_smoothing: Optional[float],
-            bounce_time_ms: Optional[float],
-            net_total_degrees_value: Value,
-            degrees_value: Value,
-            degrees_per_second_value: Value
-    ):
-        super().__init__(
-            phase_a_pin,
-            phase_b_pin,
-            phase_changes_per_rotation,
-            report_state,
-            degrees_per_second_smoothing,
-            bounce_time_ms
-        )
-
-        self.net_total_degrees_value = net_total_degrees_value
-        self.degrees_value = degrees_value
-        self.degrees_per_second_value = degrees_per_second_value
-
-        self.net_total_degrees_value.value = self.net_total_degrees
-        self.degrees_value.value = self.degrees
-        self.degrees_per_second_value.value = self.degrees_per_second
-
-    def update_state(
-            self
-    ):
-        super().update_state()
-
-        self.net_total_degrees_value.value = self.net_total_degrees
-        self.degrees_value.value = self.degrees
-        self.degrees_per_second_value.value = self.degrees_per_second
-
-
-class MultiprocessRotaryEncoderAPI:
-
-    class CommandFunction(Enum):
-
-        WAIT_FOR_STARTUP = auto()
-        CAPTURE_STATE = auto()
-        RESTORE_CAPTURED_STATE = auto()
-        WAIT_FOR_STATIONARITY = auto()
-        WAIT_FOR_CART_TO_CROSS_CENTER = auto()
-        TERMINATE = auto()
-
-    class Command:
+    class SharedMemoryRotaryEncoder(RotaryEncoder):
+        """
+        Extension of the rotary encoder that provides shared-memory access to internal variables.
+        """
 
         def __init__(
                 self,
-                function: 'MultiprocessRotaryEncoderAPI.CommandFunction',
+                phase_a_pin: CkPin,
+                phase_b_pin: CkPin,
+                phase_changes_per_rotation: int,
+                report_state: Optional[Callable[['RotaryEncoder'], bool]],
+                degrees_per_second_smoothing: Optional[float],
+                bounce_time_ms: Optional[float],
+                net_total_degrees_value: Value,
+                degrees_value: Value,
+                degrees_per_second_value: Value
+        ):
+            """
+            Initialize the rotary encoder.
+
+            :param phase_a_pin: Phase-a pin.
+            :param phase_b_pin: Phase-b pin.
+            :param phase_changes_per_rotation: Number of phase changes per rotation.
+            :param report_state: A function from the current rotary encoder to a boolean indicating whether to report
+            state when rotation changes. Because rotary encoders usually need to have very low latency, the added
+            overhead of reporting state at ever phase change can reduce timeliness of the updates. Pass None to always
+            report state.
+            :param degrees_per_second_smoothing: Smoothing factor to apply to the degrees/second estimate, with 0.0
+            being no smoothing (the new value equals the most recent value exactly), and 1.0 being complete smoothing
+            (the new value equals the previous value exactly).
+            :param bounce_time_ms: Bounce time (ms), or None for no value. This is not usually needed with high-quality
+            rotary encoders that exhibit minimal mechanical bounce in their internal switches. Conversely, any nonzero
+            bounce time will cause missed phase changes and inaccurate rotary encodings.
+            :param net_total_degrees_value: Shared-memory structure for reading the current net-total degrees.
+            :param degrees_value: Shared-memory structure for reading the current degrees.
+            :param degrees_per_second_value: Shared-memory structure for reading the current degrees per second value.
+            """
+
+            super().__init__(
+                phase_a_pin,
+                phase_b_pin,
+                phase_changes_per_rotation,
+                report_state,
+                degrees_per_second_smoothing,
+                bounce_time_ms
+            )
+
+            self.net_total_degrees_value = net_total_degrees_value
+            self.degrees_value = degrees_value
+            self.degrees_per_second_value = degrees_per_second_value
+
+            # set initial values
+            self.net_total_degrees_value.value = self.net_total_degrees
+            self.degrees_value.value = self.degrees
+            self.degrees_per_second_value.value = self.degrees_per_second
+
+        def update_state(
+                self
+        ):
+            """
+            Update state.
+            """
+
+            super().update_state()
+
+            # set new values
+            self.net_total_degrees_value.value = self.net_total_degrees
+            self.degrees_value.value = self.degrees
+            self.degrees_per_second_value.value = self.degrees_per_second
+
+    class CommandFunction(Enum):
+        """
+        Command functions that can be sent to the rotary encoder.
+        """
+
+        # Wait for the rotary encoder process to fully start up.
+        WAIT_FOR_STARTUP = auto()
+
+        # Capture the state of the rotary encoder for subsequent restoration via RESTORE_CAPTURED_STATE.
+        CAPTURE_STATE = auto()
+
+        # Restore a state previously captured via CAPTURE_STATE.
+        RESTORE_CAPTURED_STATE = auto()
+
+        # Wait for the rotary encoder to become stationary.
+        WAIT_FOR_STATIONARITY = auto()
+
+        # Wait for the cart to cross the center of the track. This only applies to the cart's rotary encoder.
+        WAIT_FOR_CART_TO_CROSS_CENTER = auto()
+
+        # Terminate the process running the rotary encoder.
+        TERMINATE = auto()
+
+    class Command:
+        """
+        Command to send to the rotary encoder.
+        """
+
+        def __init__(
+                self,
+                function: 'MultiprocessRotaryEncoder.CommandFunction',
                 args: Optional[List[Any]] = None
         ):
+            """
+            Initialize the command.
+
+            :param function: Function.
+            :param args: Optional list of arguments passed to the function.
+            """
+
             if args is None:
                 args = []
 
@@ -140,20 +201,38 @@ class MultiprocessRotaryEncoderAPI:
             self.args = args
 
     @staticmethod
-    def loop(
+    def run_command_loop(
+            identifier: str,
             phase_a_pin: CkPin,
             phase_b_pin: CkPin,
+            degrees_per_second_smoothing: float,
             net_total_degrees_value: Value,
             degrees_value: Value,
             degrees_per_second_value: Value,
             command_pipe: Connection
     ):
-        rotary_encoder = MultiprocessRotaryEncoder(
+        """
+        Run the command loop. This instantiates the shared-memory rotary encoder, passing in shared-memory variables to
+        enable reading the rotary encoder's state.
+
+        :param identifier: Descriptive string identifier for the command loop.
+        :param phase_a_pin: Phase-a pin.
+        :param phase_b_pin: Phase-b pin.
+        :param degrees_per_second_smoothing: Smoothing factor to apply to the degrees/second estimate, with 0.0 being no
+        smoothing (the new value equals the most recent value exactly), and 1.0 being complete smoothing (the new value
+        equals the previous value exactly).
+        :param net_total_degrees_value: Shared-memory structure for reading the current net-total degrees.
+        :param degrees_value: Shared-memory structure for reading the current degrees.
+        :param degrees_per_second_value: Shared-memory structure for reading the current degrees per second value.
+        :param command_pipe: Command pipe that the command loop will use to receive commands and send return values.
+        """
+
+        rotary_encoder = MultiprocessRotaryEncoder.SharedMemoryRotaryEncoder(
             phase_a_pin=phase_a_pin,
             phase_b_pin=phase_b_pin,
             phase_changes_per_rotation=2400,
             report_state=lambda e: False,
-            degrees_per_second_smoothing=0.75,
+            degrees_per_second_smoothing=degrees_per_second_smoothing,
             bounce_time_ms=None,
             net_total_degrees_value=net_total_degrees_value,
             degrees_value=degrees_value,
@@ -162,22 +241,24 @@ class MultiprocessRotaryEncoderAPI:
 
         while True:
 
-            print('Waiting for command')
+            logging.info(f'{identifier}:  Waiting for command...')
+            command: MultiprocessRotaryEncoder.Command = command_pipe.recv()
+            logging.info(f'{identifier}:  Command received -- {command.function}')
 
-            command: MultiprocessRotaryEncoderAPI.Command = command_pipe.recv()
-
-            if command.function == MultiprocessRotaryEncoderAPI.CommandFunction.WAIT_FOR_STARTUP:
+            if command.function == MultiprocessRotaryEncoder.CommandFunction.WAIT_FOR_STARTUP:
+                logging.info(f'{identifier}:  Startup complete.')
                 return_value = None
-            elif command.function == MultiprocessRotaryEncoderAPI.CommandFunction.CAPTURE_STATE:
+            elif command.function == MultiprocessRotaryEncoder.CommandFunction.CAPTURE_STATE:
                 return_value = rotary_encoder.capture_state()
-            elif command.function == MultiprocessRotaryEncoderAPI.CommandFunction.RESTORE_CAPTURED_STATE:
+            elif command.function == MultiprocessRotaryEncoder.CommandFunction.RESTORE_CAPTURED_STATE:
                 rotary_encoder.restore_captured_state(*command.args)
                 return_value = None
-            elif command.function == MultiprocessRotaryEncoderAPI.CommandFunction.WAIT_FOR_STATIONARITY:
+            elif command.function == MultiprocessRotaryEncoder.CommandFunction.WAIT_FOR_STATIONARITY:
                 rotary_encoder.wait_for_stationarity(0.1)
                 return_value = None
-            elif command.function == MultiprocessRotaryEncoderAPI.CommandFunction.WAIT_FOR_CART_TO_CROSS_CENTER:
+            elif command.function == MultiprocessRotaryEncoder.CommandFunction.WAIT_FOR_CART_TO_CROSS_CENTER:
 
+                # unpack arguments
                 (
                     originally_left_of_center,
                     left_limit_degrees,
@@ -207,7 +288,7 @@ class MultiprocessRotaryEncoderAPI:
                     )
                 )
 
-                # wait for any state event to be reported and set the event
+                # wait for a state event to be reported and set the thread-wait event
                 center_reached = Event()
                 center_reached_rpy_event = RpyEvent(lambda _: center_reached.set())
                 rotary_encoder.events.append(center_reached_rpy_event)
@@ -215,40 +296,57 @@ class MultiprocessRotaryEncoderAPI:
                 # wait for event
                 center_reached.wait()
 
-                # disable event
+                # disable reporting and remove event
                 rotary_encoder.report_state = lambda e: False
                 rotary_encoder.events.remove(center_reached_rpy_event)
 
                 return_value = None
 
-            elif command.function == MultiprocessRotaryEncoderAPI.CommandFunction.TERMINATE:
+            elif command.function == MultiprocessRotaryEncoder.CommandFunction.TERMINATE:
+                logging.info(f'{identifier}:  Terminating.')
                 break
             else:
                 raise ValueError(f'Unknown function:  {command.function}')
 
             command_pipe.send(return_value)
 
+        # we'll only get here when we break above
         command_pipe.send(None)
 
     def __init__(
             self,
+            identifier: str,
             phase_a_pin: CkPin,
-            phase_b_pin: CkPin
+            phase_b_pin: CkPin,
+            degrees_per_second_smoothing: float
     ):
+        """
+        Initialize the multiprocess rotary encoder.
+
+        :param identifier: Descriptive string identifier for the process.
+        :param phase_a_pin: Phase-a pin.
+        :param phase_b_pin: Phase-b pin.
+        :param degrees_per_second_smoothing: Smoothing factor to apply to the degrees/second estimate, with 0.0 being no
+        smoothing (the new value equals the most recent value exactly), and 1.0 being complete smoothing (the new value
+        equals the previous value exactly).
+        """
+
+        self.identifier = identifier
         self.phase_a_pin = phase_a_pin
         self.phase_b_pin = phase_b_pin
+        self.degrees_per_second_smoothing = degrees_per_second_smoothing
 
         self.net_total_degrees_value = Value('d', 0.0)
         self.degrees_value = Value('d', 0.0)
         self.degrees_per_second_value = Value('d', 0.0)
-
         self.parent_connection, self.child_connection = Pipe()
-
         self.process = Process(
-            target=MultiprocessRotaryEncoderAPI.loop,
+            target=MultiprocessRotaryEncoder.run_command_loop,
             args=(
+                self.identifier,
                 self.phase_a_pin,
                 self.phase_b_pin,
+                self.degrees_per_second_smoothing,
                 self.net_total_degrees_value,
                 self.degrees_value,
                 self.degrees_per_second_value,
@@ -260,27 +358,45 @@ class MultiprocessRotaryEncoderAPI:
     def get_net_total_degrees(
             self
     ) -> float:
+        """
+        Get net total degrees in (-inf,inf).
+
+        :return: Degrees.
+        """
 
         return self.net_total_degrees_value.value
 
     def get_degrees(
             self
     ) -> float:
+        """
+        Get rotational degrees in [0,360].
+
+        :return: Degrees.
+        """
 
         return self.degrees_value.value
 
     def get_degrees_per_second(
             self
     ) -> float:
+        """
+        Get degrees per second.
+
+        :return: Degrees per second.
+        """
 
         return self.degrees_per_second_value.value
 
     def wait_for_startup(
             self
     ):
+        """
+        Wait for startup.
+        """
 
         self.parent_connection.send(
-            MultiprocessRotaryEncoderAPI.Command(MultiprocessRotaryEncoderAPI.CommandFunction.WAIT_FOR_STARTUP)
+            MultiprocessRotaryEncoder.Command(MultiprocessRotaryEncoder.CommandFunction.WAIT_FOR_STARTUP)
         )
 
         return_value = self.parent_connection.recv()
@@ -290,9 +406,14 @@ class MultiprocessRotaryEncoderAPI:
     def capture_state(
             self
     ) -> Dict[str, float]:
+        """
+        Capture state.
+
+        :return: Captured state.
+        """
 
         self.parent_connection.send(
-            MultiprocessRotaryEncoderAPI.Command(MultiprocessRotaryEncoderAPI.CommandFunction.CAPTURE_STATE)
+            MultiprocessRotaryEncoder.Command(MultiprocessRotaryEncoder.CommandFunction.CAPTURE_STATE)
         )
 
         return self.parent_connection.recv()
@@ -301,10 +422,15 @@ class MultiprocessRotaryEncoderAPI:
             self,
             captured_state: Dict[str, float]
     ):
+        """
+        Restore captured state.
+
+        :param captured_state: Captured state.
+        """
 
         self.parent_connection.send(
-            MultiprocessRotaryEncoderAPI.Command(
-                MultiprocessRotaryEncoderAPI.CommandFunction.RESTORE_CAPTURED_STATE,
+            MultiprocessRotaryEncoder.Command(
+                MultiprocessRotaryEncoder.CommandFunction.RESTORE_CAPTURED_STATE,
                 [captured_state]
             )
         )
@@ -316,9 +442,12 @@ class MultiprocessRotaryEncoderAPI:
     def wait_for_stationarity(
             self
     ):
+        """
+        Wait for stationarity.
+        """
 
         self.parent_connection.send(
-            MultiprocessRotaryEncoderAPI.Command(MultiprocessRotaryEncoderAPI.CommandFunction.WAIT_FOR_STATIONARITY)
+            MultiprocessRotaryEncoder.Command(MultiprocessRotaryEncoder.CommandFunction.WAIT_FOR_STATIONARITY)
         )
 
         return_value = self.parent_connection.recv()
@@ -332,10 +461,18 @@ class MultiprocessRotaryEncoderAPI:
             cart_mm_per_degree: float,
             midline_mm: float
     ):
+        """
+        Wait for the cart to cross the center of the track.
+
+        :param originally_left_of_center: Whether the cart was originally left of center.
+        :param left_limit_degrees: Left-limit degrees.
+        :param cart_mm_per_degree: Cart's calibrated mm/degree.
+        :param midline_mm: Track midline (mm).
+        """
 
         self.parent_connection.send(
-            MultiprocessRotaryEncoderAPI.Command(
-                MultiprocessRotaryEncoderAPI.CommandFunction.WAIT_FOR_CART_TO_CROSS_CENTER,
+            MultiprocessRotaryEncoder.Command(
+                MultiprocessRotaryEncoder.CommandFunction.WAIT_FOR_CART_TO_CROSS_CENTER,
                 [
                     originally_left_of_center,
                     left_limit_degrees,
@@ -352,9 +489,12 @@ class MultiprocessRotaryEncoderAPI:
     def wait_for_termination(
             self
     ):
+        """
+        Wait for termination.
+        """
 
         self.parent_connection.send(
-            MultiprocessRotaryEncoderAPI.Command(MultiprocessRotaryEncoderAPI.CommandFunction.TERMINATE)
+            MultiprocessRotaryEncoder.Command(MultiprocessRotaryEncoder.CommandFunction.TERMINATE)
         )
 
         return_value = self.parent_connection.recv()
@@ -508,6 +648,8 @@ class CartPole(MdpEnvironment):
             random_state: RandomState,
             T: Optional[int],
             limit_to_limit_mm: float,
+            soft_limit_standoff: float,
+            cart_width_mm: float,
             motor_pwm_channel: int,
             motor_pwm_direction_pin: CkPin,
             motor_negative_speed_is_left: bool,
@@ -526,6 +668,8 @@ class CartPole(MdpEnvironment):
         :param random_state: Random state.
         :param T: Maximum number of steps to run, or None for no limit.
         :param limit_to_limit_mm: The distance (mm) from the left to right limit switches.
+        :param soft_limit_standoff: Soft-limit standoff distance (mm) to maintain from the hard limits.
+        :param cart_width_mm: Width (mm) of the cart that hits the limits.
         :param motor_pwm_channel: Pulse-wave modulation (PWM) channel to use for motor control.
         :param motor_pwm_direction_pin: Motor's PWM direction pin.
         :param motor_negative_speed_is_left: Whether negative motor speeds move the cart to the left.
@@ -545,6 +689,8 @@ class CartPole(MdpEnvironment):
         )
 
         self.limit_to_limit_mm = limit_to_limit_mm
+        self.soft_limit_standoff = soft_limit_standoff
+        self.cart_width_mm = cart_width_mm
         self.motor_pwm_channel = motor_pwm_channel
         self.motor_pwm_direction_pin = motor_pwm_direction_pin
         self.motor_negative_speed_is_left = motor_negative_speed_is_left
@@ -557,13 +703,14 @@ class CartPole(MdpEnvironment):
         self.max_timesteps_per_second = max_timesteps_per_second
 
         self.midline_mm = self.limit_to_limit_mm / 2.0
-        self.soft_limit_mm_from_midline = self.midline_mm - 100.0 - 45.0 / 2.0
+        self.soft_limit_mm_from_midline = self.midline_mm - self.soft_limit_standoff - self.cart_width_mm / 2.0
         self.move_to_limit_motor_speed = 25
         self.move_away_from_limit_motor_speed = 15
         self.agent: Optional[MdpAgent] = None
         self.state_lock = RLock()
         self.previous_timestep_epoch: Optional[float] = None
-        self.steps_per_second = 0.0
+        self.time_steps_per_second = 0.0
+        self.time_step_sleep_seconds = 1.0 / self.max_timesteps_per_second
 
         self.actions = [
             ContinuousMultiDimensionalAction(
@@ -590,21 +737,25 @@ class CartPole(MdpEnvironment):
             speed=0
         )
 
-        self.cart_rotary_encoder = MultiprocessRotaryEncoderAPI(
+        self.cart_rotary_encoder = MultiprocessRotaryEncoder(
+            identifier='cart-rotary-encoder',
             phase_a_pin=self.cart_rotary_encoder_phase_a_pin,
-            phase_b_pin=self.cart_rotary_encoder_phase_b_pin
+            phase_b_pin=self.cart_rotary_encoder_phase_b_pin,
+            degrees_per_second_smoothing=0.95,
         )
         self.cart_rotary_encoder.wait_for_startup()
-        self.cart_rotary_encoder_centered_state: Optional[Dict[str, float]] = None
-        self.cart_rotary_encoder_left_limit_state: Optional[Dict[str, float]] = None
-        self.cart_rotary_encoder_right_limit_state: Optional[Dict[str, float]] = None
+        self.cart_rotary_encoder_state_at_center: Optional[Dict[str, float]] = None
+        self.cart_rotary_encoder_state_at_left_limit: Optional[Dict[str, float]] = None
+        self.cart_rotary_encoder_state_at_right_limit: Optional[Dict[str, float]] = None
 
-        self.pole_rotary_encoder = MultiprocessRotaryEncoderAPI(
+        self.pole_rotary_encoder = MultiprocessRotaryEncoder(
+            identifier='pole-rotary-encoder',
             phase_a_pin=self.pole_rotary_encoder_phase_a_pin,
-            phase_b_pin=self.pole_rotary_encoder_phase_b_pin
+            phase_b_pin=self.pole_rotary_encoder_phase_b_pin,
+            degrees_per_second_smoothing=0.95,
         )
         self.pole_rotary_encoder.wait_for_startup()
-        self.pole_rotary_encoder_stationary_state: Optional[Dict[str, float]] = None
+        self.pole_rotary_encoder_state_at_bottom: Optional[Dict[str, float]] = None
         self.pole_rotary_encoder_degrees_at_bottom: Optional[float] = None
 
         self.left_limit_switch = LimitSwitch(
@@ -643,7 +794,7 @@ class CartPole(MdpEnvironment):
             self
     ):
         """
-        Calibrate the cart-pole apparatus.
+        Calibrate the cart-pole apparatus, leaving the cart centered.
         """
 
         logging.info('Calibrating.')
@@ -653,24 +804,25 @@ class CartPole(MdpEnvironment):
         # depends on having a value for the left limit.
         if self.left_limit_degrees is not None and self.is_left_of_center():
             self.left_limit_degrees = self.move_cart_to_left_limit()
-            self.cart_rotary_encoder_left_limit_state = self.cart_rotary_encoder.capture_state()
+            self.cart_rotary_encoder_state_at_left_limit = self.cart_rotary_encoder.capture_state()
             self.right_limit_degrees = self.move_cart_to_right_limit()
-            self.cart_rotary_encoder_right_limit_state = self.cart_rotary_encoder.capture_state()
+            self.cart_rotary_encoder_state_at_right_limit = self.cart_rotary_encoder.capture_state()
         else:
             self.right_limit_degrees = self.move_cart_to_right_limit()
-            self.cart_rotary_encoder_right_limit_state = self.cart_rotary_encoder.capture_state()
+            self.cart_rotary_encoder_state_at_right_limit = self.cart_rotary_encoder.capture_state()
             self.left_limit_degrees = self.move_cart_to_left_limit()
-            self.cart_rotary_encoder_left_limit_state = self.cart_rotary_encoder.capture_state()
+            self.cart_rotary_encoder_state_at_left_limit = self.cart_rotary_encoder.capture_state()
 
         # calibrate mm/degree and the midline
         self.limit_to_limit_degrees = abs(self.left_limit_degrees - self.right_limit_degrees)
         self.cart_mm_per_degree = self.limit_to_limit_mm / self.limit_to_limit_degrees
         self.midline_degrees = (self.left_limit_degrees + self.right_limit_degrees) / 2.0
 
-        # center cart and capture initial conditions of the rotary encoders for resetting later
+        # center cart and capture initial conditions of the rotary encoders for subsequent restoration. no need to
+        # restore the limit state, since we just obtained it above.
         self.center_cart(False)
-        self.cart_rotary_encoder_centered_state = self.cart_rotary_encoder.capture_state()
-        self.pole_rotary_encoder_stationary_state = self.pole_rotary_encoder.capture_state()
+        self.cart_rotary_encoder_state_at_center = self.cart_rotary_encoder.capture_state()
+        self.pole_rotary_encoder_state_at_bottom = self.pole_rotary_encoder.capture_state()
         self.pole_rotary_encoder_degrees_at_bottom = self.pole_rotary_encoder.get_degrees()
 
         logging.info(
@@ -714,34 +866,12 @@ class CartPole(MdpEnvironment):
         :param is_pressed: Whether the limit switch is pressed.
         """
 
-        if is_pressed:
-
-            logging.info('Left limit pressed.')
-
-            with self.state_lock:
-
-                # it's important to stop the cart any time the limit switch is pressed
-                self.stop_cart()
-
-                # hitting a limit switch in the middle of an episode means that we've lost calibration. the soft limits
-                # should have prevented this, but this failed. end the episode and calibrate upon the next episod reset.
-                if self.state is not None and not self.state.terminal:
-                    self.state = self.get_state(True)
-                    self.calibrate_on_next_reset = True
-
-            # another thread may attempt to wait for the switch to be released immediately upon the pressed event being
-            # set. prevent a race condition by first clearing the released event before setting the pressed event.
-            self.left_limit_released.clear()
-            self.left_limit_pressed.set()
-
-        else:
-
-            logging.info('Left limit released.')
-
-            # another thread may attempt to wait for the switch to be pressed immediately upon the released event being
-            # set. prevent a race condition by first clearing the pressed event before setting the released event.
-            self.left_limit_pressed.clear()
-            self.left_limit_released.set()
+        self.handle_limit_event(
+            'Left',
+            is_pressed,
+            self.left_limit_pressed,
+            self.left_limit_released
+        )
 
     def move_cart_to_right_limit(
             self
@@ -774,9 +904,32 @@ class CartPole(MdpEnvironment):
         :param is_pressed: Whether the limit switch is pressed.
         """
 
+        self.handle_limit_event(
+            'Right',
+            is_pressed,
+            self.right_limit_pressed,
+            self.right_limit_released
+        )
+
+    def handle_limit_event(
+            self,
+            descriptor: str,
+            is_pressed: bool,
+            limit_pressed: Event,
+            limit_released: Event
+    ):
+        """
+        Handle a limit event.
+
+        :param descriptor: Limit descriptor for logging.
+        :param is_pressed: Whether the limit is pressed (True) or released (False).
+        :param limit_pressed: Pressed event.
+        :param limit_released: Released event.
+        """
+
         if is_pressed:
 
-            logging.info('Right limit pressed.')
+            logging.info(f'{descriptor} limit pressed.')
 
             with self.state_lock:
 
@@ -791,17 +944,17 @@ class CartPole(MdpEnvironment):
 
             # another thread may attempt to wait for the switch to be released immediately upon the pressed event being
             # set. prevent a race condition by first clearing the released event before setting the pressed event.
-            self.right_limit_released.clear()
-            self.right_limit_pressed.set()
+            limit_released.clear()
+            limit_pressed.set()
 
         else:
 
-            logging.info('Right limit released.')
+            logging.info(f'{descriptor} limit released.')
 
             # another thread may attempt to wait for the switch to be pressed immediately upon the released event being
             # set. prevent a race condition by first clearing the pressed event before setting the released event.
-            self.right_limit_pressed.clear()
-            self.right_limit_released.set()
+            limit_pressed.clear()
+            limit_released.set()
 
     def center_cart(
             self,
@@ -810,7 +963,8 @@ class CartPole(MdpEnvironment):
         """
         Center the cart.
 
-        :param restore_limit_state: Whether to restore the limit state before centering.
+        :param restore_limit_state: Whether to restore the limit state before centering. This involves moving the cart
+        to the nearest limit and restoring the rotary encoder state at that limit.
         """
 
         logging.info('Centering cart.')
@@ -823,10 +977,10 @@ class CartPole(MdpEnvironment):
         if restore_limit_state:
             if originally_left_of_center:
                 self.move_cart_to_left_limit()
-                self.cart_rotary_encoder.restore_captured_state(self.cart_rotary_encoder_left_limit_state)
+                self.cart_rotary_encoder.restore_captured_state(self.cart_rotary_encoder_state_at_left_limit)
             else:
                 self.move_cart_to_right_limit()
-                self.cart_rotary_encoder.restore_captured_state(self.cart_rotary_encoder_right_limit_state)
+                self.cart_rotary_encoder.restore_captured_state(self.cart_rotary_encoder_state_at_right_limit)
 
         # move toward the center, wait for the center to be reached, and stop the cart.
         self.motor.set_speed(
@@ -876,7 +1030,7 @@ class CartPole(MdpEnvironment):
             agent: Any
     ) -> MdpState:
         """
-        Reset the environment to a random nonterminal state, if any are specified, or to None.
+        Reset the environment to its initial conditions.
 
         :param agent: Agent used to generate on-the-fly state identifiers.
         :return: Initial state.
@@ -888,7 +1042,7 @@ class CartPole(MdpEnvironment):
 
         self.motor.start()
 
-        # calibrate if needed, which leaves the cart centered.
+        # calibrate if needed, which leaves the cart centered in its initial conditions.
         if self.calibrate_on_next_reset:
             self.calibrate()
             self.calibrate_on_next_reset = False
@@ -897,13 +1051,13 @@ class CartPole(MdpEnvironment):
         # initial conditions.
         else:
             self.center_cart(True)
-            self.cart_rotary_encoder.restore_captured_state(self.cart_rotary_encoder_centered_state)
-            self.pole_rotary_encoder.restore_captured_state(self.pole_rotary_encoder_stationary_state)
+            self.cart_rotary_encoder.restore_captured_state(self.cart_rotary_encoder_state_at_center)
+            self.pole_rotary_encoder.restore_captured_state(self.pole_rotary_encoder_state_at_bottom)
 
         self.agent = agent
         self.state = self.get_state(False)
         self.previous_timestep_epoch = None
-        self.steps_per_second = 0.0
+        self.time_steps_per_second = 0.0
 
         logging.info(f'State after reset:  {self.state}')
 
@@ -956,11 +1110,18 @@ class CartPole(MdpEnvironment):
                 current_timestep_epoch = time.time()
                 steps_per_second = 1.0 / (current_timestep_epoch - self.previous_timestep_epoch)
                 self.previous_timestep_epoch = current_timestep_epoch
-                smoothing = 0.5
-                self.steps_per_second = smoothing * self.steps_per_second + (1.0 - smoothing) * steps_per_second
-                logging.debug(f'Running at {self.steps_per_second:.1f} steps/sec')
+                smoothing = 0.75
+                self.time_steps_per_second = (
+                    smoothing * self.time_steps_per_second +
+                    (1.0 - smoothing) * steps_per_second
+                )
+                if self.time_steps_per_second > self.max_timesteps_per_second:
+                    self.time_step_sleep_seconds *= 1.01
+                else:
+                    self.time_step_sleep_seconds *= 0.99
+                logging.debug(f'Running at {self.time_steps_per_second:.1f} steps/sec')
 
-            time.sleep(1.0 / self.max_timesteps_per_second)
+            time.sleep(self.time_step_sleep_seconds)
 
             logging.debug(f'State after step {t}:  {self.state}')
 
