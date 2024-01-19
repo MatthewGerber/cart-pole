@@ -61,6 +61,8 @@ class TestAgent(MdpAgent):
                 columns=['motor_speed', 'cart_velocity']
             )
             df.boxplot('cart_velocity', by='motor_speed', figsize=(8.0, 8.0))
+            ticks, labels = plt.xticks()
+            plt.xticks(ticks, [label if int(float(label.get_text())) % 5 == 0 else '' for label in labels])
             plt.xticks(rotation=45, ha='right')
             plt.xlabel('Motor speed [-100,100] (unitless)')
             plt.ylabel('Cart velocity (mm/sec)')
@@ -68,7 +70,6 @@ class TestAgent(MdpAgent):
             plt.show()
 
         self.curr_motor_speed = 0
-        self.motor_speed_state_speeds.clear()
         self.increment *= -1.0
 
     def __act__(self, t: int) -> Action:
@@ -89,7 +90,7 @@ class TestAgent(MdpAgent):
     ):
         assert isinstance(state, CartPoleState)
 
-        self.motor_speed_state_speeds.append((self.curr_motor_speed, float(state.observation[1])))
+        self.motor_speed_state_speeds.append((self.curr_motor_speed, float(state.cart_velocity)))
 
 
 def main():
