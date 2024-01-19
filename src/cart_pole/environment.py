@@ -31,7 +31,10 @@ class CartPoleState(MdpState):
     def __init__(
             self,
             environment: 'CartPole',
-            observation: np.ndarray,
+            cart_position: float,
+            cart_velocity: float,
+            pole_angle: float,
+            pole_angular_velocity: float,
             agent: MdpAgent,
             terminal: bool,
             truncated: bool
@@ -40,8 +43,10 @@ class CartPoleState(MdpState):
         Initialize the state.
 
         :param environment: Environment.
-        :param observation: Observation as a length-4 vector of cart position, cart velocity, pole angle, and pole
-        angular velocity.
+        :param cart_position: Cart position.
+        :param cart_velocity: Cart velocity.
+        :param pole_angle: Pole angle.
+        :param pole_angular_velocity: Pole angular velocity.
         :param agent: Agent.
         :param terminal: Whether the state is terminal, meaning the episode has terminated naturally due to the
         dynamics of the environment. For example, the natural dynamics of the environment terminate when the pole goes
@@ -51,14 +56,24 @@ class CartPoleState(MdpState):
         the episode to end without the agent in a predefined goal state.
         """
 
+        self.cart_position = cart_position
+        self.cart_velocity = cart_velocity
+        self.pole_angle = pole_angle
+        self.pole_angular_velocity = pole_angular_velocity
+
+        self.observation = np.array([
+            self.cart_position,
+            self.cart_velocity,
+            self.pole_angle,
+            self.pole_angular_velocity
+        ])
+
         super().__init__(
-            i=agent.pi.get_state_i(observation),
+            i=agent.pi.get_state_i(self.observation),
             AA=environment.actions,
             terminal=terminal,
             truncated=truncated
         )
-
-        self.observation = observation
 
     def __str__(
             self
@@ -816,6 +831,8 @@ class CartPole(MdpEnvironment):
         self.limit_to_limit_degrees: Optional[float] = None
         self.cart_mm_per_degree: Optional[float] = None
         self.midline_degrees: Optional[float] = None
+        self.minimum_motor_speed_left: Optional[int] = None
+        self.minimum_motor_speed_right: Optional[int] = None
 
     def calibrate(
             self
@@ -852,6 +869,26 @@ class CartPole(MdpEnvironment):
         self.pole_rotary_encoder_state_at_bottom = self.pole_rotary_encoder.capture_state()
         self.pole_rotary_encoder_degrees_at_bottom = self.pole_rotary_encoder.get_degrees()
 
+        # identify the minimum motor speeds that will get the cart to move left and right. there's a deadzone in the
+        # middle that depends on the logic of the motor circuitry, mass and friction of the assembly, etc. this
+        # nonlinearity of motor speed and cart velocity will confuse the controller.
+        state = self.get_state(True)
+        self.minimum_motor_speed_left = 0
+        while np.isclose(state.cart_velocity, 0.0):
+            self.minimum_motor_speed_left -= 1
+            self.motor.set_speed(self.minimum_motor_speed_left)
+            time.sleep(0.5)
+            state = self.get_state(True)
+        self.stop_cart()
+        state = self.get_state(True)
+        self.minimum_motor_speed_right = 0
+        while np.isclose(state.cart_velocity, 0.0):
+            self.minimum_motor_speed_right += 1
+            self.motor.set_speed(self.minimum_motor_speed_right)
+            time.sleep(0.5)
+            state = self.get_state(True)
+        self.stop_cart()
+
         logging.info(
             f'Calibrated:\n'
             f'\tLeft-limit degrees:  {self.left_limit_degrees}\n'
@@ -860,6 +897,8 @@ class CartPole(MdpEnvironment):
             f'\tCart mm / degree:  {self.cart_mm_per_degree}\n'
             f'\tMidline degree:  {self.midline_degrees}\n'
             f'\tPole degrees at bottom:  {self.pole_rotary_encoder_degrees_at_bottom}\n'
+            f'\tMinimum motor speed left:  {self.minimum_motor_speed_left}\n'
+            f'\tMinimum motor speed right:  {self.minimum_motor_speed_right}\n'
         )
 
     def move_cart_to_left_limit(
@@ -1117,10 +1156,20 @@ class CartPole(MdpEnvironment):
 
                 assert isinstance(a, ContinuousMultiDimensionalAction)
                 assert a.value.shape == (1,)
+
                 speed_change = round(float(a.value[0]))
+                next_speed = self.motor.get_speed() + speed_change
+
+                # if the next speed falls into the motor's dead zone, bump it to the minimum speed based on the
+                # direction of speed change.
+                if self.minimum_motor_speed_left < next_speed < self.minimum_motor_speed_right:
+                    if speed_change < 0:
+                        next_speed = self.minimum_motor_speed_left
+                    elif speed_change > 0:
+                        next_speed = self.minimum_motor_speed_right
 
                 try:
-                    self.motor.set_speed(self.motor.get_speed() + speed_change)
+                    self.motor.set_speed(next_speed)
                 except OSError as e:
                     logging.error(f'Error while setting speed:  {e}')
 
@@ -1131,6 +1180,8 @@ class CartPole(MdpEnvironment):
 
                 reward_value = 1.0
 
+            # adapt the time-step sleep duration to achieve the exepcted steps per second, given the overhead involved
+            # in running the simulation and doing calculations.
             if self.previous_timestep_epoch is None:
                 self.previous_timestep_epoch = time.time()
             else:
@@ -1182,15 +1233,13 @@ class CartPole(MdpEnvironment):
 
         return CartPoleState(
             environment=self,
-            observation=np.array([
-                mm_from_midline,
-                (
-                    (-1.0 if self.cart_rotary_encoder.get_clockwise() else 1.0) *
-                    self.cart_rotary_encoder.get_degrees_per_second() * self.cart_mm_per_degree
-                ),
-                self.pole_rotary_encoder.get_degrees() - self.pole_rotary_encoder_degrees_at_bottom,
-                self.pole_rotary_encoder.get_degrees_per_second()
-            ]),
+            cart_position=mm_from_midline,
+            cart_velocity=(
+                (-1.0 if self.cart_rotary_encoder.get_clockwise() else 1.0) *
+                self.cart_rotary_encoder.get_degrees_per_second() * self.cart_mm_per_degree
+            ),
+            pole_angle=self.pole_rotary_encoder.get_degrees() - self.pole_rotary_encoder_degrees_at_bottom,
+            pole_angular_velocity=self.pole_rotary_encoder.get_degrees_per_second(),
             agent=self.agent,
             terminal=terminal,
             truncated=False

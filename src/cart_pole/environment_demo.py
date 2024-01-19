@@ -58,12 +58,12 @@ class TestAgent(MdpAgent):
         if len(self.motor_speed_state_speeds) > 0:
             df = pd.DataFrame(
                 data=self.motor_speed_state_speeds,
-                columns=['motor_speed', 'state_speed']
+                columns=['motor_speed', 'cart_velocity']
             )
-            df.boxplot('state_speed', by='motor_speed', figsize=(8.0, 8.0))
+            df.boxplot('cart_velocity', by='motor_speed', figsize=(8.0, 8.0))
             plt.xticks(rotation=45, ha='right')
             plt.xlabel('Motor speed [-100,100] (unitless)')
-            plt.ylabel('Rotary encoder velocity (mm/sec)')
+            plt.ylabel('Cart velocity (mm/sec)')
             plt.tight_layout()
             plt.show()
 
