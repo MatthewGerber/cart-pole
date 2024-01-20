@@ -107,7 +107,7 @@ def main():
         random_state=RandomState(12345),
         T=None,
         limit_to_limit_mm=914.0,
-        soft_limit_standoff=100.0,
+        soft_limit_standoff_mm=100.0,
         cart_width_mm=45.0,
         motor_pwm_channel=0,
         motor_pwm_direction_pin=CkPin.GPIO21,
@@ -118,7 +118,7 @@ def main():
         pole_rotary_encoder_phase_b_pin=CkPin.GPIO27,
         left_limit_switch_input_pin=CkPin.GPIO20,
         right_limit_switch_input_pin=CkPin.GPIO16,
-        max_timesteps_per_second=20.0
+        timesteps_per_second=20.0
     )
 
     agent = TestAgent()

@@ -12,7 +12,7 @@ import numpy as np
 from numpy.random import RandomState
 from smbus2 import SMBus
 
-from raspberry_py.gpio import CkPin
+from raspberry_py.gpio import CkPin, get_ck_pin
 from raspberry_py.gpio import Event as RpyEvent
 from raspberry_py.gpio.controls import LimitSwitch
 from raspberry_py.gpio.integrated_circuits import PulseWaveModulatorPCA9685PW
@@ -575,6 +575,18 @@ class CartPole(MdpEnvironment):
         )
 
         parser.add_argument(
+            '--soft-limit-standoff-mm',
+            type=float,
+            help='Soft-limit standoff distance (mm) to maintain from the hard limits.'
+        )
+
+        parser.add_argument(
+            '--cart-width-mm',
+            type=float,
+            help='Width (mm) of the cart that hits the limits.'
+        )
+
+        parser.add_argument(
             '--motor-pwm-channel',
             type=int,
             help='Pulse-wave modulation (PWM) channel to use for motor control.'
@@ -582,10 +594,10 @@ class CartPole(MdpEnvironment):
 
         parser.add_argument(
             '--motor-pwm-direction-pin',
-            type=str,
+            type=get_ck_pin,
             help=(
                 'GPIO pin connected to the pulse-wave modulation (PWM) direction control. This can be an enumerated '
-                'name and value from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
+                'type and name from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
                 'raspberry_py.gpio.CkPin class (e.g., CkPin.GPIO5).'
             )
         )
@@ -600,62 +612,68 @@ class CartPole(MdpEnvironment):
 
         parser.add_argument(
             '--cart-rotary-encoder-phase-a-pin',
-            type=str,
+            type=get_ck_pin,
             help=(
                 'GPIO pin connected to the phase-a input of the cart\'s rotary encoder. This can be an enumerated '
-                'name and value from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
+                'type and name from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
                 'raspberry_py.gpio.CkPin class (e.g., CkPin.GPIO5).'
             )
         )
 
         parser.add_argument(
             '--cart-rotary-encoder-phase-b-pin',
-            type=str,
+            type=get_ck_pin,
             help=(
                 'GPIO pin connected to the phase-b input of the cart\'s rotary encoder. This can be an enumerated '
-                'name and value from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
+                'type and name from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
                 'raspberry_py.gpio.CkPin class (e.g., CkPin.GPIO5).'
             )
         )
 
         parser.add_argument(
             '--pole-rotary-encoder-phase-a-pin',
-            type=str,
+            type=get_ck_pin,
             help=(
                 'GPIO pin connected to the phase-a input of the pole\'s rotary encoder. This can be an enumerated '
-                'name and value from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
+                'type and name from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
                 'raspberry_py.gpio.CkPin class (e.g., CkPin.GPIO5).'
             )
         )
 
         parser.add_argument(
             '--pole-rotary-encoder-phase-b-pin',
-            type=str,
+            type=get_ck_pin,
             help=(
                 'GPIO pin connected to the phase-b input of the pole\'s rotary encoder. This can be an enumerated '
-                'name and value from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
+                'type and name from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
                 'raspberry_py.gpio.CkPin class (e.g., CkPin.GPIO5).'
             )
         )
 
         parser.add_argument(
             '--left-limit-switch-input-pin',
-            type=str,
+            type=get_ck_pin,
             help=(
-                'GPIO pin connected to the input pin of the left limit switch. This can be an enumerated '
-                'name and value from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
-                'raspberry_py.gpio.CkPin class (e.g., CkPin.GPIO5).'
+                'GPIO pin connected to the input pin of the left limit switch. This can be an enumerated type and name '
+                'from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the raspberry_py.gpio.CkPin class '
+                '(e.g., CkPin.GPIO5).'
             )
         )
 
         parser.add_argument(
             '--right-limit-switch-input-pin',
-            type=str,
+            type=get_ck_pin,
             help=(
-                'GPIO pin connected to the input pin of the right limit switch. This can be an '
-                'enumerated name and value from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
-                'raspberry_py.gpio.CkPin class (e.g., CkPin.GPIO5).'
+                'GPIO pin connected to the input pin of the right limit switch. This can be an enumerated type and name '
+                'from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the raspberry_py.gpio.CkPin class '
+                '(e.g., CkPin.GPIO5).'
             )
+        )
+
+        parser.add_argument(
+            '--timesteps-per-second',
+            type=float,
+            help='Number of environment advancement steps to execute per second.'
         )
 
         return parser
@@ -690,7 +708,7 @@ class CartPole(MdpEnvironment):
             random_state: RandomState,
             T: Optional[int],
             limit_to_limit_mm: float,
-            soft_limit_standoff: float,
+            soft_limit_standoff_mm: float,
             cart_width_mm: float,
             motor_pwm_channel: int,
             motor_pwm_direction_pin: CkPin,
@@ -701,7 +719,7 @@ class CartPole(MdpEnvironment):
             pole_rotary_encoder_phase_b_pin: CkPin,
             left_limit_switch_input_pin: CkPin,
             right_limit_switch_input_pin: CkPin,
-            max_timesteps_per_second: float,
+            timesteps_per_second: float
     ):
         """
         Initialize the cart-pole environment.
@@ -710,7 +728,7 @@ class CartPole(MdpEnvironment):
         :param random_state: Random state.
         :param T: Maximum number of steps to run, or None for no limit.
         :param limit_to_limit_mm: The distance (mm) from the left to right limit switches.
-        :param soft_limit_standoff: Soft-limit standoff distance (mm) to maintain from the hard limits.
+        :param soft_limit_standoff_mm: Soft-limit standoff distance (mm) to maintain from the hard limits.
         :param cart_width_mm: Width (mm) of the cart that hits the limits.
         :param motor_pwm_channel: Pulse-wave modulation (PWM) channel to use for motor control.
         :param motor_pwm_direction_pin: Motor's PWM direction pin.
@@ -721,7 +739,7 @@ class CartPole(MdpEnvironment):
         :param pole_rotary_encoder_phase_b_pin: Pole rotary encoder phase-b pin.
         :param left_limit_switch_input_pin: Left limit pin.
         :param right_limit_switch_input_pin: Right limit pin.
-        :param max_timesteps_per_second: Maximum timesteps per second.
+        :param timesteps_per_second: Number of environment advancement steps to execute per second.
         """
 
         super().__init__(
@@ -731,7 +749,7 @@ class CartPole(MdpEnvironment):
         )
 
         self.limit_to_limit_mm = limit_to_limit_mm
-        self.soft_limit_standoff = soft_limit_standoff
+        self.soft_limit_standoff_mm = soft_limit_standoff_mm
         self.cart_width_mm = cart_width_mm
         self.motor_pwm_channel = motor_pwm_channel
         self.motor_pwm_direction_pin = motor_pwm_direction_pin
@@ -742,17 +760,18 @@ class CartPole(MdpEnvironment):
         self.pole_rotary_encoder_phase_b_pin = pole_rotary_encoder_phase_b_pin
         self.left_limit_switch_input_pin = left_limit_switch_input_pin
         self.right_limit_switch_input_pin = right_limit_switch_input_pin
-        self.max_timesteps_per_second = max_timesteps_per_second
+        self.timesteps_per_second = timesteps_per_second
 
         self.midline_mm = self.limit_to_limit_mm / 2.0
-        self.soft_limit_mm_from_midline = self.midline_mm - self.soft_limit_standoff - self.cart_width_mm / 2.0
+        self.soft_limit_mm_from_midline = self.midline_mm - self.soft_limit_standoff_mm - self.cart_width_mm / 2.0
         self.move_to_limit_motor_speed = 25
         self.move_away_from_limit_motor_speed = 15
         self.agent: Optional[MdpAgent] = None
         self.state_lock = RLock()
         self.previous_timestep_epoch: Optional[float] = None
-        self.time_steps_per_second = 0.0
-        self.time_step_sleep_seconds = 1.0 / self.max_timesteps_per_second
+        self.current_timesteps_per_second = 0.0
+        self.current_timesteps_per_second_smoothing = 0.75
+        self.timestep_sleep_seconds = 1.0 / self.timesteps_per_second
 
         self.actions = [
             ContinuousMultiDimensionalAction(
@@ -1138,7 +1157,7 @@ class CartPole(MdpEnvironment):
 
         self.state = self.get_state(False)
         self.previous_timestep_epoch = None
-        self.time_steps_per_second = 0.0
+        self.current_timesteps_per_second = 0.0
 
         logging.info(f'State after reset:  {self.state}')
 
@@ -1183,6 +1202,9 @@ class CartPole(MdpEnvironment):
                     elif speed_change > 0:
                         next_speed = self.minimum_motor_speed_right
 
+                # we occasionally get i/o errors from the underlying interface to the pwm. this probably has something
+                # to do with attempting to write new values at a high rate like we're doing here. catch any such error
+                # and try again next time.
                 try:
                     self.motor.set_speed(next_speed)
                 except OSError as e:
@@ -1193,28 +1215,38 @@ class CartPole(MdpEnvironment):
                 if self.state.terminal:
                     self.stop_cart()
 
-                reward_value = 1.0
+                reward_value = np.exp(
+                    -(
+                        np.abs([
+                            self.state.cart_position,
+                            self.state.pole_angle
+                        ]).sum()
+                    )
+                )
 
-            # adapt the time-step sleep duration to achieve the exepcted steps per second, given the overhead involved
-            # in running the simulation and doing calculations.
             if self.previous_timestep_epoch is None:
                 self.previous_timestep_epoch = time.time()
             else:
-                current_timestep_epoch = time.time()
-                steps_per_second = 1.0 / (current_timestep_epoch - self.previous_timestep_epoch)
-                self.previous_timestep_epoch = current_timestep_epoch
-                smoothing = 0.75
-                self.time_steps_per_second = (
-                    smoothing * self.time_steps_per_second +
-                    (1.0 - smoothing) * steps_per_second
-                )
-                if self.time_steps_per_second > self.max_timesteps_per_second:
-                    self.time_step_sleep_seconds *= 1.01
-                else:
-                    self.time_step_sleep_seconds *= 0.99
-                logging.debug(f'Running at {self.time_steps_per_second:.1f} steps/sec')
 
-            time.sleep(self.time_step_sleep_seconds)
+                # update current timesteps per second
+                current_timestep_epoch = time.time()
+                current_timesteps_per_second = 1.0 / (current_timestep_epoch - self.previous_timestep_epoch)
+                self.previous_timestep_epoch = current_timestep_epoch
+                self.current_timesteps_per_second = (
+                    self.current_timesteps_per_second_smoothing * self.current_timesteps_per_second +
+                    (1.0 - self.current_timesteps_per_second_smoothing) * current_timesteps_per_second
+                )
+
+                # adapt the timestep sleep duration to achieve the target steps per second, given the overhead involved
+                # in executing each call to advance.
+                if self.current_timesteps_per_second > self.timesteps_per_second:
+                    self.timestep_sleep_seconds *= 1.01
+                elif self.current_timesteps_per_second < self.timesteps_per_second:
+                    self.timestep_sleep_seconds *= 0.99
+
+                logging.debug(f'Running at {self.current_timesteps_per_second:.1f} steps/sec')
+
+            time.sleep(self.timestep_sleep_seconds)
 
             logging.debug(f'State after step {t}:  {self.state}')
 
@@ -1246,13 +1278,28 @@ class CartPole(MdpEnvironment):
                     f'({self.soft_limit_mm_from_midline}) mm. Terminating.'
                 )
 
+        # get pole's degree from vertical at bottom
+        pole_degrees_from_bottom = self.pole_rotary_encoder.get_degrees() - self.pole_rotary_encoder_degrees_at_bottom
+        if pole_degrees_from_bottom > 180.0:
+            pole_degrees_from_bottom -= 360.0
+        elif pole_degrees_from_bottom < -180.0:
+            pole_degrees_from_bottom += 360.0
+
+        # convert to degrees from upright, which is what we need for the reward calculation.
+        if pole_degrees_from_bottom == 0.0:
+            pole_angle = 180.0  # equivalent to -180.0
+        elif pole_degrees_from_bottom < 0.0:
+            pole_angle = -180.0 - pole_degrees_from_bottom
+        else:
+            pole_angle = 180.0 - pole_degrees_from_bottom
+
         return CartPoleState(
             environment=self,
             cart_position=mm_from_midline,
             cart_velocity=(
                 -self.cart_rotary_encoder.get_degrees_per_second() * self.cart_mm_per_degree
             ),
-            pole_angle=self.pole_rotary_encoder.get_degrees() - self.pole_rotary_encoder_degrees_at_bottom,
+            pole_angle=pole_angle,
             pole_angular_velocity=self.pole_rotary_encoder.get_degrees_per_second(),
             agent=self.agent,
             terminal=terminal,
