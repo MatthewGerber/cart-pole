@@ -90,7 +90,7 @@ class TestAgent(MdpAgent):
     ):
         assert isinstance(state, CartPoleState)
 
-        self.motor_speed_state_speeds.append((self.curr_motor_speed, float(state.cart_velocity)))
+        self.motor_speed_state_speeds.append((self.curr_motor_speed, float(state.cart_velocity_mm_per_second)))
 
 
 def main():
