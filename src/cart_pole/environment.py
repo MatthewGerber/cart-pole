@@ -194,6 +194,9 @@ class MultiprocessRotaryEncoder:
         # Restore a state previously captured via CAPTURE_STATE.
         RESTORE_CAPTURED_STATE = auto()
 
+        # Update the rotary encoder's state if it is stale.
+        UPDATE_STATE_IF_STALE = auto()
+
         # Wait for the rotary encoder to become stationary.
         WAIT_FOR_STATIONARITY = auto()
 
@@ -282,6 +285,9 @@ class MultiprocessRotaryEncoder:
             elif command.function == MultiprocessRotaryEncoder.CommandFunction.RESTORE_CAPTURED_STATE:
                 rotary_encoder.restore_captured_state(*command.args)
                 rotary_encoder.set_shared_memory_values()
+                return_value = None
+            elif command.function == MultiprocessRotaryEncoder.CommandFunction.UPDATE_STATE_IF_STALE:
+                rotary_encoder.update_state_if_stale()
                 return_value = None
             elif command.function == MultiprocessRotaryEncoder.CommandFunction.WAIT_FOR_STATIONARITY:
                 rotary_encoder.wait_for_stationarity(1.0)
@@ -477,6 +483,21 @@ class MultiprocessRotaryEncoder:
                 MultiprocessRotaryEncoder.CommandFunction.RESTORE_CAPTURED_STATE,
                 [captured_state]
             )
+        )
+
+        return_value = self.parent_connection.recv()
+
+        assert return_value is None
+
+    def update_state_if_stale(
+            self
+    ):
+        """
+        Update the state if it is stale.
+        """
+
+        self.parent_connection.send(
+            MultiprocessRotaryEncoder.Command(MultiprocessRotaryEncoder.CommandFunction.UPDATE_STATE_IF_STALE)
         )
 
         return_value = self.parent_connection.recv()
@@ -780,7 +801,7 @@ class CartPole(MdpEnvironment):
                 value=None,
                 min_values=np.array([-5.0]),
                 max_values=np.array([5.0]),
-                name='speed-change'
+                name='motor-speed-change'
             )
         ]
 
@@ -895,26 +916,26 @@ class CartPole(MdpEnvironment):
         # identify the minimum motor speeds that will get the cart to move left and right. there's a deadzone in the
         # middle that depends on the logic of the motor circuitry, mass and friction of the assembly, etc. this
         # nonlinearity of motor speed and cart velocity will confuse the controller.
-        state = self.get_state(-1, True)
+        state = self.get_state(None, True)
         self.minimum_motor_speed_left = 0
         while state.cart_velocity_mm_per_second > -15.0:
             self.minimum_motor_speed_left -= 1
             self.motor.set_speed(self.minimum_motor_speed_left)
             time.sleep(0.5)
-            state = self.get_state(-1, True)
+            state = self.get_state(None, True)
             logging.debug(f'Velocity:  {state.cart_velocity_mm_per_second:.2f} mm/sec')
         self.stop_cart()
-        state = self.get_state(-1, True)
+        state = self.get_state(None, True)
         self.minimum_motor_speed_right = 0
         while state.cart_velocity_mm_per_second < 15.0:
             self.minimum_motor_speed_right += 1
             self.motor.set_speed(self.minimum_motor_speed_right)
             time.sleep(0.5)
-            state = self.get_state(-1, True)
+            state = self.get_state(None, True)
             logging.debug(f'Velocity:  {state.cart_velocity_mm_per_second:.2f} mm/sec')
         self.stop_cart()
 
-        # recent the cart and restore the center state. the limit states should be fine.
+        # recenter the cart and restore the center state. the limit states should be fine.
         self.center_cart(False, True)
 
         logging.info(
@@ -1033,7 +1054,7 @@ class CartPole(MdpEnvironment):
                 # hitting a limit switch in the middle of an episode means that we've lost calibration. the soft limits
                 # should have prevented this, but this failed. end the episode and calibrate upon the next episod reset.
                 if self.state is not None and not self.state.terminal:
-                    self.state = self.get_state(-1, True)
+                    self.state = self.get_state(None, True)
                     self.calibrate_on_next_reset = True
 
             # another thread may attempt to wait for the switch to be released immediately upon the pressed event being
@@ -1157,7 +1178,7 @@ class CartPole(MdpEnvironment):
         else:
             self.center_cart(True, True)
 
-        self.state = self.get_state(0, False)
+        self.state = self.get_state(None, False)
         self.previous_timestep_epoch = None
         self.current_timesteps_per_second = 0.0
 
@@ -1256,16 +1277,19 @@ class CartPole(MdpEnvironment):
 
     def get_state(
             self,
-            t: int,
+            t: Optional[int],
             terminal: Optional[bool]
     ) -> CartPoleState:
         """
         Get the current state.
 
-        :param t: Time step.
+        :param t: Time step to consider for truncation, or None if not in an episode.
         :param terminal: Whether to force a terminal state, or None for natural assessment.
         :return: State.
         """
+
+        self.cart_rotary_encoder.update_state_if_stale()
+        self.pole_rotary_encoder.update_state_if_stale()
 
         cart_mm_from_left_limit = abs(
             self.cart_rotary_encoder.get_net_total_degrees() - self.left_limit_degrees
@@ -1304,10 +1328,10 @@ class CartPole(MdpEnvironment):
                 -self.cart_rotary_encoder.get_degrees_per_second() * self.cart_mm_per_degree
             ),
             pole_angle_deg_from_upright=pole_angle_deg_from_upright,
-            pole_angular_velocity_deg_per_sec=self.pole_rotary_encoder.get_degrees_per_second(),
+            pole_angular_velocity_deg_per_sec=-self.pole_rotary_encoder.get_degrees_per_second(),
             agent=self.agent,
             terminal=terminal,
-            truncated=self.T is not None and t >= self.T
+            truncated=t is not None and self.T is not None and t >= self.T
         )
 
     def close(
