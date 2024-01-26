@@ -1,7 +1,7 @@
 import logging
 import time
 from argparse import ArgumentParser
-from enum import auto
+from enum import auto, Enum
 from threading import Event, RLock
 from typing import List, Tuple, Any, Optional, Dict
 
@@ -25,7 +25,7 @@ class CartRotaryEncoder(MultiprocessRotaryEncoder):
     Extension of the multiprocess rotary encoder that adds cart centering.
     """
 
-    class CommandFunction(MultiprocessRotaryEncoder.CommandFunction):
+    class CommandFunction(Enum):
         """
         Command functions that can be sent to the rotary encoder.
         """
@@ -96,7 +96,7 @@ class CartRotaryEncoder(MultiprocessRotaryEncoder):
 
         # process the command in the super-class
         else:
-            return_value, break_value = super().process_command(rotary_encoder, command)
+            return_value, break_value = MultiprocessRotaryEncoder.process_command(rotary_encoder, command)
 
         return return_value, break_value
 
@@ -127,6 +127,8 @@ class CartRotaryEncoder(MultiprocessRotaryEncoder):
                 ]
             )
         )
+        return_value = self.parent_connection.recv()
+        assert return_value is None
 
 
 class CartPoleState(MdpState):
