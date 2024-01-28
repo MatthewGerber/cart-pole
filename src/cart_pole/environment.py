@@ -17,7 +17,7 @@ from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectPCA9685PW
 from raspberry_py.gpio.sensors import MultiprocessRotaryEncoder
 from rlai.core import MdpState, Action, Agent, Reward, Environment, MdpAgent, ContinuousMultiDimensionalAction
 from rlai.core.environments.mdp import MdpEnvironment
-from rlai.utils import parse_arguments
+from rlai.utils import parse_arguments, IncrementalSampleAverager
 
 
 class CartRotaryEncoder(MultiprocessRotaryEncoder):
@@ -424,8 +424,7 @@ class CartPole(MdpEnvironment):
         self.agent: Optional[MdpAgent] = None
         self.state_lock = RLock()
         self.previous_timestep_epoch: Optional[float] = None
-        self.current_timesteps_per_second = 0.0
-        self.current_timesteps_per_second_smoothing = 0.75
+        self.current_timesteps_per_second = IncrementalSampleAverager(initial_value=0.0, alpha=0.25)
         self.timestep_sleep_seconds = 1.0 / self.timesteps_per_second
 
         self.actions = [
@@ -457,7 +456,8 @@ class CartPole(MdpEnvironment):
             identifier='cart-rotary-encoder',
             phase_a_pin=self.cart_rotary_encoder_phase_a_pin,
             phase_b_pin=self.cart_rotary_encoder_phase_b_pin,
-            degrees_per_second_smoothing=0.95,
+            degrees_per_second_step_size=0.05,
+            state_updates_per_second=self.timesteps_per_second * 2.0  # ensure more updates than steps per second
         )
         self.cart_rotary_encoder.wait_for_startup()
         self.cart_rotary_encoder_state_at_center: Optional[Dict[str, float]] = None
@@ -468,7 +468,8 @@ class CartPole(MdpEnvironment):
             identifier='pole-rotary-encoder',
             phase_a_pin=self.pole_rotary_encoder_phase_a_pin,
             phase_b_pin=self.pole_rotary_encoder_phase_b_pin,
-            degrees_per_second_smoothing=0.95,
+            degrees_per_second_step_size=0.05,
+            state_updates_per_second=self.timesteps_per_second * 2.0  # ensure more updates than steps per second
         )
         self.pole_rotary_encoder.wait_for_startup()
         self.pole_rotary_encoder_state_at_bottom: Optional[Dict[str, float]] = None
@@ -885,12 +886,8 @@ class CartPole(MdpEnvironment):
 
                 # update current timesteps per second
                 current_timestep_epoch = time.time()
-                current_timesteps_per_second = 1.0 / (current_timestep_epoch - self.previous_timestep_epoch)
+                self.current_timesteps_per_second.update(1.0 / (current_timestep_epoch - self.previous_timestep_epoch))
                 self.previous_timestep_epoch = current_timestep_epoch
-                self.current_timesteps_per_second = (
-                    self.current_timesteps_per_second_smoothing * self.current_timesteps_per_second +
-                    (1.0 - self.current_timesteps_per_second_smoothing) * current_timesteps_per_second
-                )
 
                 # adapt the timestep sleep duration to achieve the target steps per second, given the overhead involved
                 # in executing each call to advance.
