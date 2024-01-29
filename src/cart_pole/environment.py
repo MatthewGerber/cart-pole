@@ -88,7 +88,7 @@ class CartRotaryEncoder(MultiprocessRotaryEncoder):
             center_reached.wait()
 
             # disable reporting and remove event
-            rotary_encoder.report_state = lambda e: False
+            rotary_encoder.report_state = None
             rotary_encoder.events.remove(center_reached_rpy_event)
 
             return_value = None
@@ -456,8 +456,8 @@ class CartPole(MdpEnvironment):
             identifier='cart-rotary-encoder',
             phase_a_pin=self.cart_rotary_encoder_phase_a_pin,
             phase_b_pin=self.cart_rotary_encoder_phase_b_pin,
-            degrees_per_second_step_size=0.05,
-            state_updates_per_second=self.timesteps_per_second * 2.0  # ensure more updates than steps per second
+            degrees_per_second_step_size=0.75,
+            state_updates_per_second=self.timesteps_per_second * 1.5  # ensure more updates/sec than steps/sec
         )
         self.cart_rotary_encoder.wait_for_startup()
         self.cart_rotary_encoder_state_at_center: Optional[Dict[str, float]] = None
@@ -468,8 +468,8 @@ class CartPole(MdpEnvironment):
             identifier='pole-rotary-encoder',
             phase_a_pin=self.pole_rotary_encoder_phase_a_pin,
             phase_b_pin=self.pole_rotary_encoder_phase_b_pin,
-            degrees_per_second_step_size=0.05,
-            state_updates_per_second=self.timesteps_per_second * 2.0  # ensure more updates than steps per second
+            degrees_per_second_step_size=0.75,
+            state_updates_per_second=self.timesteps_per_second * 1.5  # ensure more updates/sec than steps/sec
         )
         self.pole_rotary_encoder.wait_for_startup()
         self.pole_rotary_encoder_state_at_bottom: Optional[Dict[str, float]] = None
@@ -813,7 +813,7 @@ class CartPole(MdpEnvironment):
 
         self.state = self.get_state(None, False)
         self.previous_timestep_epoch = None
-        self.current_timesteps_per_second = 0.0
+        self.current_timesteps_per_second.reset()
 
         logging.info(f'State after reset:  {self.state}')
 

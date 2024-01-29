@@ -45,7 +45,7 @@ class TestAgent(MdpAgent):
 
         super().__init__('test', RandomState(12345), DummyPolicy(), 1.0)
 
-        self.increment = 1.0
+        self.increment = 2.0
         self.curr_motor_speed = 0
         self.motor_speed_state_speeds: List[Tuple[int, float]] = []
 
@@ -118,7 +118,7 @@ def main():
         pole_rotary_encoder_phase_b_pin=CkPin.GPIO27,
         left_limit_switch_input_pin=CkPin.GPIO20,
         right_limit_switch_input_pin=CkPin.GPIO16,
-        timesteps_per_second=20.0
+        timesteps_per_second=10.0
     )
 
     agent = TestAgent()
