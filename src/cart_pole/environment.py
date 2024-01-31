@@ -1,20 +1,18 @@
 import logging
 import time
 from argparse import ArgumentParser
-from enum import auto, Enum
 from threading import Event, RLock
-from typing import List, Tuple, Any, Optional, Dict
+from typing import List, Tuple, Any, Optional
 
 import numpy as np
 from numpy.random import RandomState
 from smbus2 import SMBus
 
 from raspberry_py.gpio import CkPin, get_ck_pin
-from raspberry_py.gpio import Event as RpyEvent
 from raspberry_py.gpio.controls import LimitSwitch
 from raspberry_py.gpio.integrated_circuits import PulseWaveModulatorPCA9685PW
 from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectPCA9685PW
-from raspberry_py.gpio.sensors import MultiprocessRotaryEncoder
+from raspberry_py.gpio.sensors import MultiprocessRotaryEncoder, RotaryEncoder
 from rlai.core import MdpState, Action, Agent, Reward, Environment, MdpAgent, ContinuousMultiDimensionalAction
 from rlai.core.environments.mdp import MdpEnvironment
 from rlai.utils import parse_arguments, IncrementalSampleAverager
@@ -25,81 +23,6 @@ class CartRotaryEncoder(MultiprocessRotaryEncoder):
     Extension of the multiprocess rotary encoder that adds cart centering.
     """
 
-    class CommandFunction(Enum):
-        """
-        Command functions that can be sent to the rotary encoder.
-        """
-
-        # Wait for the cart to cross the center of the track.
-        WAIT_FOR_CART_TO_CROSS_CENTER = auto()
-
-    @classmethod
-    def process_command(
-            cls,
-            rotary_encoder: MultiprocessRotaryEncoder.SharedMemoryRotaryEncoder,
-            command: MultiprocessRotaryEncoder.Command
-    ) -> Tuple[Optional[Any], bool]:
-        """
-        Process a command.
-
-        :param rotary_encoder: Rotary encoder.
-        :param command: Command.
-        :return: 2-tuple of the return value and whether to break the command loop.
-        """
-
-        if command.function == CartRotaryEncoder.CommandFunction.WAIT_FOR_CART_TO_CROSS_CENTER:
-
-            # unpack arguments
-            (
-                originally_left_of_center,
-                left_limit_degrees,
-                cart_mm_per_degree,
-                midline_mm
-            ) = command.args
-
-            def is_left_of_center() -> bool:
-                """
-                Check whether the cart is left of the midline.
-
-                :return: True if the cart is left of the midline and False otherwise.
-                """
-
-                return abs(
-                    rotary_encoder.net_total_degrees - left_limit_degrees
-                ) * cart_mm_per_degree < midline_mm
-
-            # report state when we cross the midline
-            rotary_encoder.report_state = lambda _: (
-                (
-                    originally_left_of_center and not is_left_of_center()
-                )
-                or
-                (
-                    not originally_left_of_center and is_left_of_center()
-                )
-            )
-
-            # wait for a state event to be reported and set the thread-wait event
-            center_reached = Event()
-            center_reached_rpy_event = RpyEvent(lambda _: center_reached.set())
-            rotary_encoder.events.append(center_reached_rpy_event)
-
-            # wait for event
-            center_reached.wait()
-
-            # disable reporting and remove event
-            rotary_encoder.report_state = None
-            rotary_encoder.events.remove(center_reached_rpy_event)
-
-            return_value = None
-            break_value = False
-
-        # process the command in the super-class
-        else:
-            return_value, break_value = MultiprocessRotaryEncoder.process_command(rotary_encoder, command)
-
-        return return_value, break_value
-
     def wait_for_cart_to_cross_center(
             self,
             originally_left_of_center: bool,
@@ -108,27 +31,37 @@ class CartRotaryEncoder(MultiprocessRotaryEncoder):
             midline_mm: float
     ):
         """
-        Wait for the cart to cross the center of the track.
+        Wait for cart to cross the center.
 
-        :param originally_left_of_center: Whether the cart was originally left of center.
-        :param left_limit_degrees: Left-limit degrees.
-        :param cart_mm_per_degree: Cart's calibrated mm/degree.
-        :param midline_mm: Track midline (mm).
+        :param originally_left_of_center: Originally left of center.
+        :param left_limit_degrees: Left limit degrees.
+        :param cart_mm_per_degree: Cart mm/degree.
+        :param midline_mm: Midline mm.
         """
 
-        self.parent_connection.send(
-            MultiprocessRotaryEncoder.Command(
-                CartRotaryEncoder.CommandFunction.WAIT_FOR_CART_TO_CROSS_CENTER,
-                [
-                    originally_left_of_center,
-                    left_limit_degrees,
-                    cart_mm_per_degree,
-                    midline_mm
-                ]
-            )
+        print(
+            f'{originally_left_of_center}\n'
+            f'{left_limit_degrees}\n'
+            f'{cart_mm_per_degree}\n'
+            f'{midline_mm}\n'
         )
-        return_value = self.parent_connection.recv()
-        assert return_value is None
+
+        def is_left_of_center() -> bool:
+            """
+            Check whether the cart is left of the midline.
+
+            :return: True if the cart is left of the midline and False otherwise.
+            """
+
+            self.update_state()
+            state: MultiprocessRotaryEncoder.State = self.state
+            return abs(state.net_total_degrees - left_limit_degrees) * cart_mm_per_degree < midline_mm
+
+        while (
+            (originally_left_of_center and is_left_of_center()) or
+            (not originally_left_of_center and not is_left_of_center())
+        ):
+            time.sleep(0.1)
 
 
 class CartPoleState(MdpState):
@@ -453,26 +386,26 @@ class CartPole(MdpEnvironment):
         )
 
         self.cart_rotary_encoder = CartRotaryEncoder(
-            identifier='cart-rotary-encoder',
             phase_a_pin=self.cart_rotary_encoder_phase_a_pin,
             phase_b_pin=self.cart_rotary_encoder_phase_b_pin,
-            degrees_per_second_step_size=0.75,
-            state_updates_per_second=self.timesteps_per_second * 1.5  # ensure more updates/sec than steps/sec
+            phase_changes_per_rotation=1200,
+            phase_change_mode=RotaryEncoder.PhaseChangeMode.UNIPHASE_UNIDIRECTIONAL,
+            degrees_per_second_step_size=1.0
         )
         self.cart_rotary_encoder.wait_for_startup()
-        self.cart_rotary_encoder_state_at_center: Optional[Dict[str, float]] = None
-        self.cart_rotary_encoder_state_at_left_limit: Optional[Dict[str, float]] = None
-        self.cart_rotary_encoder_state_at_right_limit: Optional[Dict[str, float]] = None
+        self.cart_rotary_encoder_phase_change_index_at_center: Optional[int] = None
+        self.cart_rotary_encoder_phase_change_index_at_left_limit: Optional[int] = None
+        self.cart_rotary_encoder_phase_change_index_at_right_limit: Optional[int] = None
 
         self.pole_rotary_encoder = MultiprocessRotaryEncoder(
-            identifier='pole-rotary-encoder',
             phase_a_pin=self.pole_rotary_encoder_phase_a_pin,
             phase_b_pin=self.pole_rotary_encoder_phase_b_pin,
-            degrees_per_second_step_size=0.75,
-            state_updates_per_second=self.timesteps_per_second * 1.5  # ensure more updates/sec than steps/sec
+            phase_change_mode=RotaryEncoder.PhaseChangeMode.UNIPHASE_UNIDIRECTIONAL,
+            phase_changes_per_rotation=1200,
+            degrees_per_second_step_size=1.0
         )
         self.pole_rotary_encoder.wait_for_startup()
-        self.pole_rotary_encoder_state_at_bottom: Optional[Dict[str, float]] = None
+        self.pole_rotary_encoder_phase_change_index_at_bottom: Optional[int] = None
         self.pole_rotary_encoder_degrees_at_bottom: Optional[float] = None
 
         self.left_limit_switch = LimitSwitch(
@@ -518,23 +451,30 @@ class CartPole(MdpEnvironment):
 
         logging.info('Calibrating.')
 
+        self.cart_rotary_encoder.update_state()
+
         # mark degrees at left and right limits. do this in whatever order is the most efficient given the cart's
         # current position. we can only do this efficiency trick after the initial calibration, since determining left
         # of center depends on having a value for the left limit. regardless, capture the rotary encoder's state at the
         # right and left limits for subsequent restoration.
         if self.left_limit_degrees is not None and self.is_left_of_center():
             self.left_limit_degrees = self.move_cart_to_left_limit()
-            self.cart_rotary_encoder_state_at_left_limit = self.cart_rotary_encoder.capture_state()
+            self.cart_rotary_encoder_phase_change_index_at_left_limit = self.cart_rotary_encoder.phase_change_index.value
             self.right_limit_degrees = self.move_cart_to_right_limit()
-            self.cart_rotary_encoder_state_at_right_limit = self.cart_rotary_encoder.capture_state()
+            self.cart_rotary_encoder_phase_change_index_at_right_limit = self.cart_rotary_encoder.phase_change_index.value
         else:
             self.right_limit_degrees = self.move_cart_to_right_limit()
-            self.cart_rotary_encoder_state_at_right_limit = self.cart_rotary_encoder.capture_state()
+            self.cart_rotary_encoder_phase_change_index_at_right_limit = self.cart_rotary_encoder.phase_change_index.value
             self.left_limit_degrees = self.move_cart_to_left_limit()
-            self.cart_rotary_encoder_state_at_left_limit = self.cart_rotary_encoder.capture_state()
+            self.cart_rotary_encoder_phase_change_index_at_left_limit = self.cart_rotary_encoder.phase_change_index.value
 
         # calibrate mm/degree and the midline
         self.limit_to_limit_degrees = abs(self.left_limit_degrees - self.right_limit_degrees)
+        print(
+            f'Left limit degrees:  {self.left_limit_degrees}\n'
+            f'Right limit degrees:  {self.right_limit_degrees}\n'
+            f'Limit to limit degrees:  {self.limit_to_limit_degrees}\n'
+        )
         self.cart_mm_per_degree = self.limit_to_limit_mm / self.limit_to_limit_degrees
         self.midline_degrees = (self.left_limit_degrees + self.right_limit_degrees) / 2.0
 
@@ -542,8 +482,8 @@ class CartPole(MdpEnvironment):
         # limit state above, and the cart hasn't moved. and we're about to center the cart and captured the center
         # state. so, no need to restore either of these.
         self.center_cart(False, False)
-        self.cart_rotary_encoder_state_at_center = self.cart_rotary_encoder.capture_state()
-        self.pole_rotary_encoder_state_at_bottom = self.pole_rotary_encoder.capture_state()
+        self.cart_rotary_encoder_phase_change_index_at_center = self.cart_rotary_encoder.phase_change_index.value
+        self.pole_rotary_encoder_phase_change_index_at_bottom = self.pole_rotary_encoder.phase_change_index.value
         self.pole_rotary_encoder_degrees_at_bottom = self.pole_rotary_encoder.get_degrees()
 
         # identify the minimum motor speeds that will get the cart to move left and right. there's a deadzone in the
@@ -553,7 +493,7 @@ class CartPole(MdpEnvironment):
         self.minimum_motor_speed_left = 0
         while state.cart_velocity_mm_per_second > -15.0:
             self.minimum_motor_speed_left -= 1
-            self.motor.set_speed(self.minimum_motor_speed_left)
+            self.set_motor_speed(self.minimum_motor_speed_left)
             time.sleep(0.5)
             state = self.get_state(None, True)
             logging.debug(f'Velocity:  {state.cart_velocity_mm_per_second:.2f} mm/sec')
@@ -562,7 +502,7 @@ class CartPole(MdpEnvironment):
         self.minimum_motor_speed_right = 0
         while state.cart_velocity_mm_per_second < 15.0:
             self.minimum_motor_speed_right += 1
-            self.motor.set_speed(self.minimum_motor_speed_right)
+            self.set_motor_speed(self.minimum_motor_speed_right)
             time.sleep(0.5)
             state = self.get_state(None, True)
             logging.debug(f'Velocity:  {state.cart_velocity_mm_per_second:.2f} mm/sec')
@@ -594,11 +534,11 @@ class CartPole(MdpEnvironment):
 
         if not self.left_limit_pressed.is_set():
             logging.info('Moving cart to the left and waiting for limit switch.')
-            self.motor.set_speed(-self.move_to_limit_motor_speed)
+            self.set_motor_speed(-self.move_to_limit_motor_speed)
             self.left_limit_pressed.wait()
 
         logging.info('Moving cart away from left limit switch.')
-        self.motor.set_speed(self.move_away_from_limit_motor_speed)
+        self.set_motor_speed(self.move_away_from_limit_motor_speed)
         self.left_limit_released.wait()
         self.stop_cart()
 
@@ -632,11 +572,11 @@ class CartPole(MdpEnvironment):
 
         if not self.right_limit_pressed.is_set():
             logging.info('Moving cart to the right and waiting for limit switch.')
-            self.motor.set_speed(self.move_to_limit_motor_speed)
+            self.set_motor_speed(self.move_to_limit_motor_speed)
             self.right_limit_pressed.wait()
 
         logging.info('Moving cart away from right limit switch.')
-        self.motor.set_speed(-self.move_away_from_limit_motor_speed)
+        self.set_motor_speed(-self.move_away_from_limit_motor_speed)
         self.right_limit_released.wait()
         self.stop_cart()
 
@@ -730,13 +670,13 @@ class CartPole(MdpEnvironment):
         if restore_limit_state:
             if originally_left_of_center:
                 self.move_cart_to_left_limit()
-                self.cart_rotary_encoder.restore_captured_state(self.cart_rotary_encoder_state_at_left_limit)
+                self.cart_rotary_encoder.phase_change_index.value = self.cart_rotary_encoder_phase_change_index_at_left_limit
             else:
                 self.move_cart_to_right_limit()
-                self.cart_rotary_encoder.restore_captured_state(self.cart_rotary_encoder_state_at_right_limit)
+                self.cart_rotary_encoder.phase_change_index.value = self.cart_rotary_encoder_phase_change_index_at_right_limit
 
         # move toward the center, wait for the center to be reached, and stop the cart.
-        self.motor.set_speed(
+        self.set_motor_speed(
             self.move_to_limit_motor_speed if originally_left_of_center
             else -self.move_to_limit_motor_speed
         )
@@ -753,10 +693,9 @@ class CartPole(MdpEnvironment):
         self.pole_rotary_encoder.wait_for_stationarity()
         logging.info(f'Pole is stationary at degrees:  {self.pole_rotary_encoder.get_net_total_degrees():.1f}\n')
 
-        # restore the center state
         if restore_center_state:
-            self.cart_rotary_encoder.restore_captured_state(self.cart_rotary_encoder_state_at_center)
-            self.pole_rotary_encoder.restore_captured_state(self.pole_rotary_encoder_state_at_bottom)
+            self.cart_rotary_encoder.phase_change_index.value = self.cart_rotary_encoder_phase_change_index_at_center
+            self.pole_rotary_encoder.phase_change_index.value = self.pole_rotary_encoder_phase_change_index_at_bottom
 
     def is_left_of_center(
             self,
@@ -779,9 +718,22 @@ class CartPole(MdpEnvironment):
         """
 
         logging.info('Stopping cart...')
-        self.motor.set_speed(0)
+        self.set_motor_speed(0)
         self.cart_rotary_encoder.wait_for_stationarity()
         logging.info('Cart stopped.')
+
+    def set_motor_speed(
+            self,
+            speed: int
+    ):
+        """
+        Set the motor speed.
+
+        :param speed: Speed.
+        """
+
+        self.motor.set_speed(speed)
+        self.cart_rotary_encoder.clockwise.value = speed > 0
 
     def reset_for_new_run(
             self,
@@ -862,7 +814,7 @@ class CartPole(MdpEnvironment):
                 # to do with attempting to write new values at a high rate like we're doing here. catch any such error
                 # and try again next time.
                 try:
-                    self.motor.set_speed(next_speed)
+                    self.set_motor_speed(next_speed)
                 except OSError as e:
                     logging.error(f'Error while setting speed:  {e}')
 
@@ -917,11 +869,14 @@ class CartPole(MdpEnvironment):
         :return: State.
         """
 
-        self.cart_rotary_encoder.update_state_if_stale()
-        self.pole_rotary_encoder.update_state_if_stale()
+        self.cart_rotary_encoder.update_state()
+        cart_state: MultiprocessRotaryEncoder.State = self.cart_rotary_encoder.state
+
+        self.pole_rotary_encoder.update_state()
+        pole_state: MultiprocessRotaryEncoder.State = self.pole_rotary_encoder.state
 
         cart_mm_from_left_limit = abs(
-            self.cart_rotary_encoder.get_net_total_degrees() - self.left_limit_degrees
+            cart_state.net_total_degrees - self.left_limit_degrees
         ) * self.cart_mm_per_degree
 
         cart_mm_from_center = cart_mm_from_left_limit - self.limit_to_limit_mm / 2.0
@@ -936,7 +891,7 @@ class CartPole(MdpEnvironment):
                 )
 
         # get pole's degree from vertical at bottom
-        pole_angle_deg_from_bottom = self.pole_rotary_encoder.get_degrees() - self.pole_rotary_encoder_degrees_at_bottom
+        pole_angle_deg_from_bottom = pole_state.degrees - self.pole_rotary_encoder_degrees_at_bottom
 
         # translate to [-180,180] degrees from bottom. if the degrees value is beyond these bounds, then subtract a
         # complete rotation in the appropriate direction in order to get the same degree orientation but within the
@@ -954,10 +909,10 @@ class CartPole(MdpEnvironment):
             environment=self,
             cart_mm_from_center=cart_mm_from_center,
             cart_velocity_mm_per_sec=(
-                -self.cart_rotary_encoder.get_degrees_per_second() * self.cart_mm_per_degree
+                cart_state.degrees_per_second * self.cart_mm_per_degree
             ),
             pole_angle_deg_from_upright=pole_angle_deg_from_upright,
-            pole_angular_velocity_deg_per_sec=-self.pole_rotary_encoder.get_degrees_per_second(),
+            pole_angular_velocity_deg_per_sec=pole_state.degrees_per_second,
             agent=self.agent,
             terminal=terminal,
             truncated=t is not None and self.T is not None and t >= self.T

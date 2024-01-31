@@ -45,7 +45,7 @@ class TestAgent(MdpAgent):
 
         super().__init__('test', RandomState(12345), DummyPolicy(), 1.0)
 
-        self.increment = 2.0
+        self.increment = 1.0
         self.curr_motor_speed = 0
         self.motor_speed_state_speeds: List[Tuple[int, float]] = []
 
@@ -74,7 +74,7 @@ class TestAgent(MdpAgent):
 
     def __act__(self, t: int) -> Action:
 
-        motor_speed_increment = self.increment if t < 50 else 0.0
+        motor_speed_increment = self.increment if t < 20 else 0.0
         self.curr_motor_speed += motor_speed_increment
 
         return ContinuousMultiDimensionalAction(
