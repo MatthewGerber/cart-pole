@@ -39,13 +39,6 @@ class CartRotaryEncoder(MultiprocessRotaryEncoder):
         :param midline_mm: Midline mm.
         """
 
-        print(
-            f'{originally_left_of_center}\n'
-            f'{left_limit_degrees}\n'
-            f'{cart_mm_per_degree}\n'
-            f'{midline_mm}\n'
-        )
-
         def is_left_of_center() -> bool:
             """
             Check whether the cart is left of the midline.
@@ -451,8 +444,6 @@ class CartPole(MdpEnvironment):
 
         logging.info('Calibrating.')
 
-        self.cart_rotary_encoder.update_state()
-
         # mark degrees at left and right limits. do this in whatever order is the most efficient given the cart's
         # current position. we can only do this efficiency trick after the initial calibration, since determining left
         # of center depends on having a value for the left limit. regardless, capture the rotary encoder's state at the
@@ -470,16 +461,11 @@ class CartPole(MdpEnvironment):
 
         # calibrate mm/degree and the midline
         self.limit_to_limit_degrees = abs(self.left_limit_degrees - self.right_limit_degrees)
-        print(
-            f'Left limit degrees:  {self.left_limit_degrees}\n'
-            f'Right limit degrees:  {self.right_limit_degrees}\n'
-            f'Limit to limit degrees:  {self.limit_to_limit_degrees}\n'
-        )
         self.cart_mm_per_degree = self.limit_to_limit_mm / self.limit_to_limit_degrees
         self.midline_degrees = (self.left_limit_degrees + self.right_limit_degrees) / 2.0
 
         # center cart and capture initial conditions of the rotary encoders for subsequent restoration. we captured the
-        # limit state above, and the cart hasn't moved. and we're about to center the cart and captured the center
+        # limit state above, and the cart hasn't moved. and we're about to center the cart and capture the center
         # state. so, no need to restore either of these.
         self.center_cart(False, False)
         self.cart_rotary_encoder_phase_change_index_at_center = self.cart_rotary_encoder.phase_change_index.value
