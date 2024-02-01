@@ -74,7 +74,7 @@ class TestAgent(MdpAgent):
 
     def __act__(self, t: int) -> Action:
 
-        motor_speed_increment = self.increment if t < 20 else 0.0
+        motor_speed_increment = self.increment if t < 100 else 0.0
         self.curr_motor_speed += motor_speed_increment
 
         return ContinuousMultiDimensionalAction(
@@ -118,7 +118,7 @@ def main():
         pole_rotary_encoder_phase_b_pin=CkPin.GPIO27,
         left_limit_switch_input_pin=CkPin.GPIO20,
         right_limit_switch_input_pin=CkPin.GPIO16,
-        timesteps_per_second=10.0
+        timesteps_per_second=50.0
     )
 
     agent = TestAgent()

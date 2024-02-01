@@ -429,7 +429,7 @@ class CartPole(MdpEnvironment):
         self.pole_rotary_encoder = MultiprocessRotaryEncoder(
             phase_a_pin=self.pole_rotary_encoder_phase_a_pin,
             phase_b_pin=self.pole_rotary_encoder_phase_b_pin,
-            phase_change_mode=RotaryEncoder.PhaseChangeMode.UNIPHASE_UNIDIRECTIONAL,
+            phase_change_mode=RotaryEncoder.PhaseChangeMode.BIPHASE,
             phase_changes_per_rotation=1200,
             degrees_per_second_step_size=1.0
         )
@@ -518,19 +518,20 @@ class CartPole(MdpEnvironment):
         # nonlinearity of motor speed and cart velocity will confuse the controller.
         state = self.get_state(None, True)
         self.minimum_motor_speed_left = 0
-        while state.cart_velocity_mm_per_second > -15.0:
+        deadzone_speed = 5.0
+        while state.cart_velocity_mm_per_second > -deadzone_speed:
             self.minimum_motor_speed_left -= 1
             self.set_motor_speed(self.minimum_motor_speed_left)
-            time.sleep(0.5)
+            time.sleep(0.25)
             state = self.get_state(None, True)
             logging.debug(f'Velocity:  {state.cart_velocity_mm_per_second:.2f} mm/sec')
         self.stop_cart()
         state = self.get_state(None, True)
         self.minimum_motor_speed_right = 0
-        while state.cart_velocity_mm_per_second < 15.0:
+        while state.cart_velocity_mm_per_second < deadzone_speed:
             self.minimum_motor_speed_right += 1
             self.set_motor_speed(self.minimum_motor_speed_right)
-            time.sleep(0.5)
+            time.sleep(0.25)
             state = self.get_state(None, True)
             logging.debug(f'Velocity:  {state.cart_velocity_mm_per_second:.2f} mm/sec')
         self.stop_cart()
@@ -712,7 +713,7 @@ class CartPole(MdpEnvironment):
                 self.cart_rotary_encoder.phase_change_index.value = self.cart_phase_change_index_at_right_limit
 
         # center once quickly, which will overshoot, and then slowly to get more accurate.
-        self.center_cart_at_speed(self.fast_transfer_motor_speed, original_position)
+        original_position = self.center_cart_at_speed(self.fast_transfer_motor_speed, original_position)
         self.center_cart_at_speed(self.slow_transfer_motor_speed, original_position)
         logging.info('Cart centered.\n')
 
@@ -728,21 +729,23 @@ class CartPole(MdpEnvironment):
             self,
             speed: int,
             original_position: 'CartPole.CartPosition'
-    ):
+    ) -> 'CartPole.CartPosition':
         """
         Center the cart.
 
         :param speed: Speed at which to center the cart.
         :param original_position: Original cart position.
+        :return: Final position.
         """
 
         if original_position == CartPole.CartPosition.CENTERED:
-            return
-
-        speed = abs(speed)
+            logging.info('Cart already centered.')
+            return original_position
 
         # move toward the center, wait for the center to be reached, and stop the cart.
-        self.set_motor_speed(speed if original_position == CartPole.CartPosition.LEFT_OF_CENTER else speed)
+        centering_speed = abs(speed) if original_position == CartPole.CartPosition.LEFT_OF_CENTER else -abs(speed)
+        logging.info(f'Centering cart at speed:  {centering_speed}')
+        self.set_motor_speed(centering_speed)
         self.cart_rotary_encoder.wait_for_cart_to_cross_center(
             original_position=original_position,
             left_limit_degrees=self.left_limit_degrees,
@@ -751,6 +754,15 @@ class CartPole(MdpEnvironment):
             check_delay_seconds=0.05
         )
         self.stop_cart()
+
+        centered_position = CartPole.get_cart_position(
+            cart_net_total_degrees=self.cart_rotary_encoder.get_net_total_degrees(),
+            left_limit_degrees=self.left_limit_degrees,
+            cart_mm_per_degree=self.cart_mm_per_degree,
+            midline_mm=self.midline_mm
+        )
+
+        return centered_position
 
     def stop_cart(
             self
@@ -774,7 +786,17 @@ class CartPole(MdpEnvironment):
         :param speed: Speed.
         """
 
-        self.motor.set_speed(speed)
+        # we occasionally get i/o errors from the underlying interface to the pwm. this probably has something
+        # to do with attempting to write new values at a high rate like we're doing here. catch any such error
+        # and try again.
+        while True:
+            try:
+                self.motor.set_speed(speed)
+                break
+            except OSError as e:
+                logging.error(f'Error while setting speed:  {e}')
+                time.sleep(0.1)
+
         self.cart_rotary_encoder.clockwise.value = speed > 0
 
     def reset_for_new_run(
