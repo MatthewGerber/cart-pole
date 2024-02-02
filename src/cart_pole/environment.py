@@ -392,8 +392,8 @@ class CartPole(MdpEnvironment):
         self.actions = [
             ContinuousMultiDimensionalAction(
                 value=None,
-                min_values=np.array([-5.0]),
-                max_values=np.array([5.0]),
+                min_values=np.array([-5.0, -100.0]),
+                max_values=np.array([5.0, 100.0]),
                 name='motor-speed-change'
             )
         ]
@@ -863,10 +863,17 @@ class CartPole(MdpEnvironment):
             else:
 
                 assert isinstance(a, ContinuousMultiDimensionalAction)
-                assert a.value.shape == (1,)
+                assert a.value.shape == (2,)
 
-                speed_change = round(float(a.value[0]))
-                next_speed = self.motor.get_speed() + speed_change
+                speed_change, speed = a.value[0], a.value[1]
+
+                if not np.isnan(speed_change):
+                    next_speed = self.motor.get_speed() + round(float(speed_change))
+                elif not np.isnan(speed):
+                    next_speed = round(float(speed))
+                    speed_change = speed - self.motor.get_speed()
+                else:
+                    raise ValueError('Must provide speed change or speed.')
 
                 # if the next speed falls into the motor's dead zone, bump it to the minimum speed based on the
                 # direction of speed change.

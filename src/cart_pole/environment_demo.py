@@ -1,5 +1,5 @@
 import logging
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -30,7 +30,7 @@ class DummyPolicy(Policy):
         return {}
 
 
-class TestAgent(MdpAgent):
+class StraightLineAgent(MdpAgent):
 
     @classmethod
     def init_from_arguments(
@@ -93,6 +93,66 @@ class TestAgent(MdpAgent):
         self.motor_speed_state_speeds.append((self.curr_motor_speed, float(state.cart_velocity_mm_per_second)))
 
 
+class OscillatingAgent(MdpAgent):
+
+    @classmethod
+    def init_from_arguments(
+            cls,
+            args: List[str],
+            random_state: RandomState,
+            environment: Environment
+    ) -> Tuple[List[Agent], List[str]]:
+        pass
+
+    def __init__(self):
+
+        super().__init__('test', RandomState(12345), DummyPolicy(), 1.0)
+
+        self.speed = 0
+        self.change_direction_mm = 15.0
+        self.oscillation_count = 0
+        self.curr_state: Optional[CartPoleState] = None
+
+    def reset_for_new_run(
+            self,
+            state: State
+    ):
+        super().reset_for_new_run(state)
+
+        self.speed = 50
+        self.oscillation_count = 0
+        self.curr_state = state
+
+    def __act__(self, t: int) -> Action:
+
+        if (
+            self.oscillation_count < 10 and
+            (
+                0.0 < self.change_direction_mm <= self.curr_state.cart_mm_from_center
+            ) or
+            (
+                0.0 > self.change_direction_mm >= self.curr_state.cart_mm_from_center
+            )
+        ):
+            self.speed = -self.speed
+            self.change_direction_mm = -self.change_direction_mm
+            self.oscillation_count += 1
+
+        return ContinuousMultiDimensionalAction(
+            value=np.array([np.nan, self.speed]),
+            min_values=None,
+            max_values=None
+        )
+
+    def sense(
+            self,
+            state: State,
+            t: int
+    ):
+        assert isinstance(state, CartPoleState)
+        self.curr_state = state
+
+
 def main():
     """
     Demonstrate the cart-pole environment.
@@ -121,7 +181,7 @@ def main():
         timesteps_per_second=50.0
     )
 
-    agent = TestAgent()
+    agent = OscillatingAgent()
     for _ in range(20):
         initial_state = env.reset_for_new_run(agent)
         agent.reset_for_new_run(initial_state)
