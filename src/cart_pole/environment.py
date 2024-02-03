@@ -178,11 +178,11 @@ class CartPole(MdpEnvironment):
         )
 
         parser.add_argument(
-            '--motor-negative-speed-is-left',
+            '--motor-negative-speed-is-right',
             type=bool,
-            default='true',
-            action='store_false',
-            help='Whether negative motor speed moves the cart to the left.'
+            default='false',
+            action='store_true',
+            help='Whether negative motor speed moves the cart to the right.'
         )
 
         parser.add_argument(
@@ -329,7 +329,7 @@ class CartPole(MdpEnvironment):
             cart_width_mm: float,
             motor_pwm_channel: int,
             motor_pwm_direction_pin: CkPin,
-            motor_negative_speed_is_left: bool,
+            motor_negative_speed_is_right: bool,
             cart_rotary_encoder_phase_a_pin: CkPin,
             cart_rotary_encoder_phase_b_pin: CkPin,
             pole_rotary_encoder_phase_a_pin: CkPin,
@@ -349,7 +349,7 @@ class CartPole(MdpEnvironment):
         :param cart_width_mm: Width (mm) of the cart that hits the limits.
         :param motor_pwm_channel: Pulse-wave modulation (PWM) channel to use for motor control.
         :param motor_pwm_direction_pin: Motor's PWM direction pin.
-        :param motor_negative_speed_is_left: Whether negative motor speeds move the cart to the left.
+        :param motor_negative_speed_is_right: Whether negative motor speeds move the cart to the right.
         :param cart_rotary_encoder_phase_a_pin: Cart rotary encoder phase-a pin.
         :param cart_rotary_encoder_phase_b_pin: Cart rotary encoder phase-b pin.
         :param pole_rotary_encoder_phase_a_pin: Pole rotary encoder phase-a pin.
@@ -370,7 +370,7 @@ class CartPole(MdpEnvironment):
         self.cart_width_mm = cart_width_mm
         self.motor_pwm_channel = motor_pwm_channel
         self.motor_pwm_direction_pin = motor_pwm_direction_pin
-        self.motor_negative_speed_is_left = motor_negative_speed_is_left
+        self.motor_negative_speed_is_right = motor_negative_speed_is_right
         self.cart_rotary_encoder_phase_a_pin = cart_rotary_encoder_phase_a_pin
         self.cart_rotary_encoder_phase_b_pin = cart_rotary_encoder_phase_b_pin
         self.pole_rotary_encoder_phase_a_pin = pole_rotary_encoder_phase_a_pin
@@ -409,7 +409,7 @@ class CartPole(MdpEnvironment):
                 pca9685pw=self.pca9685pw,
                 pwm_channel=self.motor_pwm_channel,
                 direction_pin=self.motor_pwm_direction_pin,
-                reverse=not self.motor_negative_speed_is_left
+                reverse=self.motor_negative_speed_is_right
             ),
             speed=0
         )
@@ -863,17 +863,10 @@ class CartPole(MdpEnvironment):
             else:
 
                 assert isinstance(a, ContinuousMultiDimensionalAction)
-                assert a.value.shape == (2,)
+                assert a.value.shape == (1,)
+                speed_change = round(float(a.value[0]))
 
-                speed_change, speed = a.value[0], a.value[1]
-
-                if not np.isnan(speed_change):
-                    next_speed = self.motor.get_speed() + round(float(speed_change))
-                elif not np.isnan(speed):
-                    next_speed = round(float(speed))
-                    speed_change = speed - self.motor.get_speed()
-                else:
-                    raise ValueError('Must provide speed change or speed.')
+                next_speed = self.motor.get_speed() + round(float(speed_change))
 
                 # if the next speed falls into the motor's dead zone, bump it to the minimum speed based on the
                 # direction of speed change.

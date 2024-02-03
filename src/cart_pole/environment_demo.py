@@ -1,5 +1,5 @@
 import logging
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -74,11 +74,10 @@ class StraightLineAgent(MdpAgent):
 
     def __act__(self, t: int) -> Action:
 
-        motor_speed_increment = self.increment if t < 100 else 0.0
-        self.curr_motor_speed += motor_speed_increment
+        self.curr_motor_speed += self.increment
 
         return ContinuousMultiDimensionalAction(
-            value=np.array([motor_speed_increment]),
+            value=np.array([self.increment]),
             min_values=None,
             max_values=None
         )
@@ -91,66 +90,6 @@ class StraightLineAgent(MdpAgent):
         assert isinstance(state, CartPoleState)
 
         self.motor_speed_state_speeds.append((self.curr_motor_speed, float(state.cart_velocity_mm_per_second)))
-
-
-class OscillatingAgent(MdpAgent):
-
-    @classmethod
-    def init_from_arguments(
-            cls,
-            args: List[str],
-            random_state: RandomState,
-            environment: Environment
-    ) -> Tuple[List[Agent], List[str]]:
-        pass
-
-    def __init__(self):
-
-        super().__init__('test', RandomState(12345), DummyPolicy(), 1.0)
-
-        self.speed = 0
-        self.change_direction_mm = 15.0
-        self.oscillation_count = 0
-        self.curr_state: Optional[CartPoleState] = None
-
-    def reset_for_new_run(
-            self,
-            state: State
-    ):
-        super().reset_for_new_run(state)
-
-        self.speed = 50
-        self.oscillation_count = 0
-        self.curr_state = state
-
-    def __act__(self, t: int) -> Action:
-
-        if (
-            self.oscillation_count < 10 and
-            (
-                0.0 < self.change_direction_mm <= self.curr_state.cart_mm_from_center
-            ) or
-            (
-                0.0 > self.change_direction_mm >= self.curr_state.cart_mm_from_center
-            )
-        ):
-            self.speed = -self.speed
-            self.change_direction_mm = -self.change_direction_mm
-            self.oscillation_count += 1
-
-        return ContinuousMultiDimensionalAction(
-            value=np.array([np.nan, self.speed]),
-            min_values=None,
-            max_values=None
-        )
-
-    def sense(
-            self,
-            state: State,
-            t: int
-    ):
-        assert isinstance(state, CartPoleState)
-        self.curr_state = state
 
 
 def main():
@@ -171,17 +110,17 @@ def main():
         cart_width_mm=45.0,
         motor_pwm_channel=0,
         motor_pwm_direction_pin=CkPin.GPIO21,
-        motor_negative_speed_is_left=False,
+        motor_negative_speed_is_right=True,
         cart_rotary_encoder_phase_a_pin=CkPin.GPIO22,
         cart_rotary_encoder_phase_b_pin=CkPin.GPIO26,
         pole_rotary_encoder_phase_a_pin=CkPin.GPIO17,
         pole_rotary_encoder_phase_b_pin=CkPin.GPIO27,
         left_limit_switch_input_pin=CkPin.GPIO20,
         right_limit_switch_input_pin=CkPin.GPIO16,
-        timesteps_per_second=50.0
+        timesteps_per_second=10.0
     )
 
-    agent = OscillatingAgent()
+    agent = StraightLineAgent()
     for _ in range(20):
         initial_state = env.reset_for_new_run(agent)
         agent.reset_for_new_run(initial_state)
