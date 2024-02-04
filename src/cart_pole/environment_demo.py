@@ -30,7 +30,7 @@ class DummyPolicy(Policy):
         return {}
 
 
-class StraightLineAgent(MdpAgent):
+class TestAgent(MdpAgent):
 
     @classmethod
     def init_from_arguments(
@@ -39,7 +39,7 @@ class StraightLineAgent(MdpAgent):
             random_state: RandomState,
             environment: Environment
     ) -> Tuple[List[Agent], List[str]]:
-        pass
+        raise ValueError('Cannot construct via CLI.')
 
     def __init__(self):
 
@@ -62,7 +62,7 @@ class StraightLineAgent(MdpAgent):
             )
             df.boxplot('cart_velocity', by='motor_speed', figsize=(8.0, 8.0))
             ticks, labels = plt.xticks()
-            plt.xticks(ticks, [label if int(float(label.get_text())) % 5 == 0 else '' for label in labels])
+            plt.xticks(ticks, [label.get_text() if int(float(label.get_text())) % 5 == 0 else '' for label in labels])
             plt.xticks(rotation=45, ha='right')
             plt.xlabel('Motor speed [-100,100] (unitless)')
             plt.ylabel('Cart velocity (mm/sec)')
@@ -120,7 +120,7 @@ def main():
         timesteps_per_second=10.0
     )
 
-    agent = StraightLineAgent()
+    agent = TestAgent()
     for _ in range(20):
         initial_state = env.reset_for_new_run(agent)
         agent.reset_for_new_run(initial_state)

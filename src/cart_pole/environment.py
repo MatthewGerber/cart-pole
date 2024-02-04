@@ -383,20 +383,13 @@ class CartPole(MdpEnvironment):
         self.soft_limit_mm_from_midline = self.midline_mm - self.soft_limit_standoff_mm - self.cart_width_mm / 2.0
         self.fast_transfer_motor_speed = 25
         self.slow_transfer_motor_speed = 15
+        self.cart_minimum_velocity_mm_per_second = 5.0
         self.agent: Optional[MdpAgent] = None
         self.state_lock = RLock()
         self.previous_timestep_epoch: Optional[float] = None
         self.current_timesteps_per_second = IncrementalSampleAverager(initial_value=0.0, alpha=0.25)
         self.timestep_sleep_seconds = 1.0 / self.timesteps_per_second
-
-        self.actions = [
-            ContinuousMultiDimensionalAction(
-                value=None,
-                min_values=np.array([-5.0, -100.0]),
-                max_values=np.array([5.0, 100.0]),
-                name='motor-speed-change'
-            )
-        ]
+        self.min_seconds_for_full_motor_speed_range = 0.5
 
         self.pca9685pw = PulseWaveModulatorPCA9685PW(
             bus=SMBus('/dev/i2c-1'),
@@ -413,6 +406,20 @@ class CartPole(MdpEnvironment):
             ),
             speed=0
         )
+
+        self.max_motor_speed_change_per_step = (
+            (self.motor.max_speed - self.motor.min_speed) /
+            (self.timesteps_per_second * self.min_seconds_for_full_motor_speed_range)
+        )
+
+        self.actions = [
+            ContinuousMultiDimensionalAction(
+                value=None,
+                min_values=np.array([-self.max_motor_speed_change_per_step]),
+                max_values=np.array([self.max_motor_speed_change_per_step]),
+                name='motor-speed-change'
+            )
+        ]
 
         self.cart_rotary_encoder = CartRotaryEncoder(
             phase_a_pin=self.cart_rotary_encoder_phase_a_pin,
@@ -468,8 +475,8 @@ class CartPole(MdpEnvironment):
         self.limit_to_limit_degrees: Optional[float] = None
         self.cart_mm_per_degree: Optional[float] = None
         self.midline_degrees: Optional[float] = None
-        self.minimum_motor_speed_left: Optional[int] = None
-        self.minimum_motor_speed_right: Optional[int] = None
+        self.motor_deadzone_speed_left: Optional[int] = None
+        self.motor_deadzone_speed_right: Optional[int] = None
 
     def calibrate(
             self
@@ -515,24 +522,25 @@ class CartPole(MdpEnvironment):
 
         # identify the minimum motor speeds that will get the cart to move left and right. there's a deadzone in the
         # middle that depends on the logic of the motor circuitry, mass and friction of the assembly, etc. this
-        # nonlinearity of motor speed and cart velocity will confuse the controller.
-        state = self.get_state(None, True)
-        self.minimum_motor_speed_left = 0
-        deadzone_speed = 5.0
-        while state.cart_velocity_mm_per_second > -deadzone_speed:
-            self.minimum_motor_speed_left -= 1
-            self.set_motor_speed(self.minimum_motor_speed_left)
-            time.sleep(0.25)
-            state = self.get_state(None, True)
+        # nonlinearity of motor speed and cart velocity will confuse the controller. mark the current state first, so
+        # that we get accurate velocity estimates.
+        state = self.get_state()
+        self.motor_deadzone_speed_left = 0
+        deadzone_check_delay_secs = 0.25
+        while state.cart_velocity_mm_per_second > -self.cart_minimum_velocity_mm_per_second:
+            self.motor_deadzone_speed_left -= 1
+            self.set_motor_speed(self.motor_deadzone_speed_left)
+            time.sleep(deadzone_check_delay_secs)
+            state = self.get_state()
             logging.debug(f'Velocity:  {state.cart_velocity_mm_per_second:.2f} mm/sec')
         self.stop_cart()
-        state = self.get_state(None, True)
-        self.minimum_motor_speed_right = 0
-        while state.cart_velocity_mm_per_second < deadzone_speed:
-            self.minimum_motor_speed_right += 1
-            self.set_motor_speed(self.minimum_motor_speed_right)
-            time.sleep(0.25)
-            state = self.get_state(None, True)
+        state = self.get_state()
+        self.motor_deadzone_speed_right = 0
+        while state.cart_velocity_mm_per_second < self.cart_minimum_velocity_mm_per_second:
+            self.motor_deadzone_speed_right += 1
+            self.set_motor_speed(self.motor_deadzone_speed_right)
+            time.sleep(deadzone_check_delay_secs)
+            state = self.get_state()
             logging.debug(f'Velocity:  {state.cart_velocity_mm_per_second:.2f} mm/sec')
         self.stop_cart()
 
@@ -547,8 +555,8 @@ class CartPole(MdpEnvironment):
             f'\tCart mm / degree:  {self.cart_mm_per_degree}\n'
             f'\tMidline degree:  {self.midline_degrees}\n'
             f'\tPole degrees at bottom:  {self.pole_degrees_at_bottom}\n'
-            f'\tMinimum motor speed left:  {self.minimum_motor_speed_left}\n'
-            f'\tMinimum motor speed right:  {self.minimum_motor_speed_right}\n'
+            f'\tMotor deadzone speed left:  {self.motor_deadzone_speed_left}\n'
+            f'\tMotor deadzone speed right:  {self.motor_deadzone_speed_right}\n'
         )
 
     def move_cart_to_left_limit(
@@ -654,8 +662,9 @@ class CartPole(MdpEnvironment):
 
                 # hitting a limit switch in the middle of an episode means that we've lost calibration. the soft limits
                 # should have prevented this, but this failed. end the episode and calibrate upon the next episod reset.
+                self.state: MdpState
                 if self.state is not None and not self.state.terminal:
-                    self.state = self.get_state(None, True)
+                    self.state = self.get_state(terminal=True)
                     self.calibrate_on_next_reset = True
 
             # another thread may attempt to wait for the switch to be released immediately upon the pressed event being
@@ -687,6 +696,9 @@ class CartPole(MdpEnvironment):
         movements away from the center will be equivalent to previous such movements.
         at that position.
         """
+
+        assert self.left_limit_degrees is not None, 'Must calibrate before centering.'
+        assert self.cart_mm_per_degree is not None, 'Must calibrate before centering.'
 
         original_position = CartPole.get_cart_position(
             self.cart_rotary_encoder.get_net_total_degrees(),
@@ -737,6 +749,9 @@ class CartPole(MdpEnvironment):
         :param original_position: Original cart position.
         :return: Final position.
         """
+
+        assert self.left_limit_degrees is not None, 'Must calibrate before centering.'
+        assert self.cart_mm_per_degree is not None, 'Must calibrate before centering.'
 
         if original_position == CartPole.CartPosition.CENTERED:
             logging.info('Cart already centered.')
@@ -828,8 +843,8 @@ class CartPole(MdpEnvironment):
             self.center_cart(True, True)
 
         # issue a double-call to get state so that velocity is ensured to be 0.0
-        self.get_state(None, False)
-        self.state = self.get_state(None, False)
+        self.get_state()
+        self.state = self.get_state(terminal=False)
         self.previous_timestep_epoch = None
         self.current_timesteps_per_second.reset()
 
@@ -866,15 +881,15 @@ class CartPole(MdpEnvironment):
                 assert a.value.shape == (1,)
                 speed_change = round(float(a.value[0]))
 
-                next_speed = self.motor.get_speed() + round(float(speed_change))
+                next_speed = self.motor.get_speed() + speed_change
 
-                # if the next speed falls into the motor's dead zone, bump it to the minimum speed based on the
+                # if the next speed falls into the motor's deadzone, bump it to the minimum speed based on the
                 # direction of speed change.
-                if self.minimum_motor_speed_left < next_speed < self.minimum_motor_speed_right:
+                if self.motor_deadzone_speed_left < next_speed < self.motor_deadzone_speed_right:
                     if speed_change < 0:
-                        next_speed = self.minimum_motor_speed_left
+                        next_speed = self.motor_deadzone_speed_left
                     elif speed_change > 0:
-                        next_speed = self.minimum_motor_speed_right
+                        next_speed = self.motor_deadzone_speed_right
 
                 # we occasionally get i/o errors from the underlying interface to the pwm. this probably has something
                 # to do with attempting to write new values at a high rate like we're doing here. catch any such error
@@ -884,7 +899,7 @@ class CartPole(MdpEnvironment):
                 except OSError as e:
                     logging.error(f'Error while setting speed:  {e}')
 
-                self.state = self.get_state(t, None)
+                self.state = self.get_state(t)
 
                 if self.state.terminal:
                     self.stop_cart()
@@ -924,13 +939,13 @@ class CartPole(MdpEnvironment):
 
     def get_state(
             self,
-            t: Optional[int],
-            terminal: Optional[bool]
+            t: Optional[int] = None,
+            terminal: Optional[bool] = None
     ) -> CartPoleState:
         """
         Get the current state.
 
-        :param t: Time step to consider for truncation, or None if not in an episode.
+        :param t: Time step to consider for episode truncation, or None if not in an episode.
         :param terminal: Whether to force a terminal state, or None for natural assessment.
         :return: State.
         """
