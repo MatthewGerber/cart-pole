@@ -3,19 +3,19 @@ import time
 from argparse import ArgumentParser
 from enum import Enum, auto
 from threading import Event, RLock
-from typing import List, Tuple, Any, Optional
+from typing import List, Tuple, Any, Optional, Dict
 
 import numpy as np
 from numpy.random import RandomState
 from smbus2 import SMBus
 
-from raspberry_py.gpio import CkPin, get_ck_pin
+from raspberry_py.gpio import CkPin, get_ck_pin, setup, cleanup
 from raspberry_py.gpio.controls import LimitSwitch
 from raspberry_py.gpio.integrated_circuits import PulseWaveModulatorPCA9685PW
 from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectPCA9685PW
 from raspberry_py.gpio.sensors import MultiprocessRotaryEncoder, RotaryEncoder
 from rlai.core import MdpState, Action, Agent, Reward, Environment, MdpAgent, ContinuousMultiDimensionalAction
-from rlai.core.environments.mdp import MdpEnvironment
+from rlai.core.environments.mdp import ContinuousMdpEnvironment
 from rlai.utils import parse_arguments, IncrementalSampleAverager
 
 
@@ -121,7 +121,7 @@ class CartPoleState(MdpState):
         )
 
 
-class CartPole(MdpEnvironment):
+class CartPole(ContinuousMdpEnvironment):
     """
     Cart-pole environment for the Raspberry Pi.
     """
@@ -179,7 +179,6 @@ class CartPole(MdpEnvironment):
 
         parser.add_argument(
             '--motor-negative-speed-is-right',
-            type=bool,
             default='false',
             action='store_true',
             help='Whether negative motor speed moves the cart to the right.'
@@ -291,6 +290,15 @@ class CartPole(MdpEnvironment):
         # Cart is right of center.
         RIGHT_OF_CENTER = auto()
 
+    class CartDirection(Enum):
+        """
+        Cart direction.
+        """
+
+        LEFT = auto()
+
+        RIGHT = auto()
+
     @staticmethod
     def get_cart_position(
             cart_net_total_degrees: float,
@@ -365,6 +373,8 @@ class CartPole(MdpEnvironment):
             T=T
         )
 
+        setup()
+
         self.limit_to_limit_mm = limit_to_limit_mm
         self.soft_limit_standoff_mm = soft_limit_standoff_mm
         self.cart_width_mm = cart_width_mm
@@ -381,9 +391,6 @@ class CartPole(MdpEnvironment):
 
         self.midline_mm = self.limit_to_limit_mm / 2.0
         self.soft_limit_mm_from_midline = self.midline_mm - self.soft_limit_standoff_mm - self.cart_width_mm / 2.0
-        self.fast_transfer_motor_speed = 25
-        self.slow_transfer_motor_speed = 15
-        self.cart_minimum_velocity_mm_per_second = 5.0
         self.agent: Optional[MdpAgent] = None
         self.state_lock = RLock()
         self.previous_timestep_epoch: Optional[float] = None
@@ -470,13 +477,101 @@ class CartPole(MdpEnvironment):
 
         # calibration state and values
         self.calibrate_on_next_reset = True
+        self.motor_deadzone_speed_left: Optional[int] = None
+        self.motor_deadzone_speed_right: Optional[int] = None
         self.left_limit_degrees: Optional[float] = None
         self.right_limit_degrees: Optional[float] = None
         self.limit_to_limit_degrees: Optional[float] = None
         self.cart_mm_per_degree: Optional[float] = None
         self.midline_degrees: Optional[float] = None
-        self.motor_deadzone_speed_left: Optional[int] = None
-        self.motor_deadzone_speed_right: Optional[int] = None
+
+    def __getstate__(
+            self
+    ) -> Dict:
+        """
+        Get state to picle.
+
+        :return: State.
+        """
+
+        state = dict(self.__dict__)
+
+        state['left_limit_switch'] = None
+        state['left_limit_pressed'] = None
+        state['left_limit_released'] = None
+        state['right_limit_switch'] = None
+        state['right_limit_pressed'] = None
+        state['right_limit_released'] = None
+        state['state_lock'] = None
+        state['cart_rotary_encoder'] = None
+        state['pole_rotary_encoder'] = None
+        state['pca9685pw'] = None
+        state['motor'] = None
+
+        return state
+
+    def __setstate__(
+            self,
+            state: Dict
+    ):
+        """
+        Set state from pickle.
+
+        :param state: State.
+        """
+
+        self.__dict__ = state
+
+        self.state_lock = RLock()
+
+    def get_state_space_dimensionality(
+            self
+    ) -> int:
+        """
+        Get the dimensionality of the state space.
+
+        :return: Number of dimensions.
+        """
+
+        return 4
+
+    def get_state_dimension_names(
+            self
+    ) -> List[str]:
+        """
+        Get names of state dimensions.
+
+        :return: List of names.
+        """
+
+        return [
+            'cart-position',
+            'cart-velocity',
+            'pole-angle',
+            'pole-angular-velocity'
+        ]
+
+    def get_action_space_dimensionality(
+            self
+    ) -> int:
+        """
+        Get the dimensionality of the action space.
+
+        :return: Number of dimensions.
+        """
+
+        return 1
+
+    def get_action_dimension_names(
+            self
+    ) -> List[str]:
+        """
+        Get action names.
+
+        :return: List of names.
+        """
+
+        return ['motor-speed-change']
 
     def calibrate(
             self
@@ -486,6 +581,20 @@ class CartPole(MdpEnvironment):
         """
 
         logging.info('Calibrating.')
+
+        # create some space to do deadzone identification
+        self.set_motor_speed(30)
+        time.sleep(0.5)
+        self.set_motor_speed(-30)
+        time.sleep(0.5)
+        assert not self.right_limit_switch.is_pressed()
+        assert not self.left_limit_switch.is_pressed()
+
+        # identify the minimum motor speeds that will get the cart to move left and right. there's a deadzone in the
+        # middle that depends on the logic of the motor circuitry, mass and friction of the assembly, etc. this
+        # nonlinearity of motor speed and cart velocity will confuse the controller.
+        self.motor_deadzone_speed_left = self.identify_motor_speed_deadzone_limit(CartPole.CartDirection.LEFT)
+        self.motor_deadzone_speed_right = self.identify_motor_speed_deadzone_limit(CartPole.CartDirection.RIGHT)
 
         # mark degrees at left and right limits. do this in whatever order is the most efficient given the cart's
         # current position. we can only do this efficiency trick after the initial calibration, since determining left
@@ -520,44 +629,57 @@ class CartPole(MdpEnvironment):
         self.pole_phase_change_index_at_bottom = self.pole_rotary_encoder.phase_change_index.value
         self.pole_degrees_at_bottom = self.pole_rotary_encoder.get_degrees()
 
-        # identify the minimum motor speeds that will get the cart to move left and right. there's a deadzone in the
-        # middle that depends on the logic of the motor circuitry, mass and friction of the assembly, etc. this
-        # nonlinearity of motor speed and cart velocity will confuse the controller. mark the current state first, so
-        # that we get accurate velocity estimates.
-        state = self.get_state()
-        self.motor_deadzone_speed_left = 0
-        deadzone_check_delay_secs = 0.25
-        while state.cart_velocity_mm_per_second > -self.cart_minimum_velocity_mm_per_second:
-            self.motor_deadzone_speed_left -= 1
-            self.set_motor_speed(self.motor_deadzone_speed_left)
-            time.sleep(deadzone_check_delay_secs)
-            state = self.get_state()
-            logging.debug(f'Velocity:  {state.cart_velocity_mm_per_second:.2f} mm/sec')
-        self.stop_cart()
-        state = self.get_state()
-        self.motor_deadzone_speed_right = 0
-        while state.cart_velocity_mm_per_second < self.cart_minimum_velocity_mm_per_second:
-            self.motor_deadzone_speed_right += 1
-            self.set_motor_speed(self.motor_deadzone_speed_right)
-            time.sleep(deadzone_check_delay_secs)
-            state = self.get_state()
-            logging.debug(f'Velocity:  {state.cart_velocity_mm_per_second:.2f} mm/sec')
-        self.stop_cart()
-
-        # recenter the cart and restore the center state. the limit states should be fine.
-        self.center_cart(False, True)
-
         logging.info(
             f'Calibrated:\n'
+            f'\tMotor deadzone speed left:  {self.motor_deadzone_speed_left}\n'
+            f'\tMotor deadzone speed right:  {self.motor_deadzone_speed_right}\n'
             f'\tLeft-limit degrees:  {self.left_limit_degrees}\n'
             f'\tRight-limit degrees:  {self.right_limit_degrees}\n'
             f'\tLimit-to-limit degrees:  {self.limit_to_limit_degrees}\n'
             f'\tCart mm / degree:  {self.cart_mm_per_degree}\n'
             f'\tMidline degree:  {self.midline_degrees}\n'
             f'\tPole degrees at bottom:  {self.pole_degrees_at_bottom}\n'
-            f'\tMotor deadzone speed left:  {self.motor_deadzone_speed_left}\n'
-            f'\tMotor deadzone speed right:  {self.motor_deadzone_speed_right}\n'
         )
+
+    def identify_motor_speed_deadzone_limit(
+            self,
+            direction: 'CartPole.CartDirection'
+    ) -> int:
+        """
+        Identify the deadzone in a direction.
+
+        :param direction: Direction.
+        :return: Motor speed that cause the cart to begin moving in the given direction.
+        """
+
+        self.stop_cart()
+
+        if direction == CartPole.CartDirection.LEFT:
+            increment = -1
+            limit_switch = self.left_limit_switch
+        elif direction == CartPole.CartDirection.RIGHT:
+            increment = 1
+            limit_switch = self.right_limit_switch
+        else:
+            raise ValueError(f'Unknown direction:  {direction}')
+
+        moving_ticks_required = 5
+        moving_ticks_remaining = moving_ticks_required
+        speed = self.motor.get_speed()
+        self.cart_rotary_encoder.update_state()
+        while moving_ticks_remaining > 0:
+            time.sleep(0.25)
+            assert not limit_switch.is_pressed()
+            if np.isclose(self.cart_rotary_encoder.get_degrees_per_second(), 0.0):
+                moving_ticks_remaining = moving_ticks_required
+                speed += increment
+                self.set_motor_speed(speed)
+            else:
+                moving_ticks_remaining -= 1
+
+        self.stop_cart()
+
+        return speed
 
     def move_cart_to_left_limit(
             self
@@ -570,11 +692,11 @@ class CartPole(MdpEnvironment):
 
         if not self.left_limit_pressed.is_set():
             logging.info('Moving cart to the left and waiting for limit switch.')
-            self.set_motor_speed(-self.fast_transfer_motor_speed)
+            self.set_motor_speed(2 * self.motor_deadzone_speed_left)
             self.left_limit_pressed.wait()
 
         logging.info('Moving cart away from left limit switch.')
-        self.set_motor_speed(self.slow_transfer_motor_speed)
+        self.set_motor_speed(self.motor_deadzone_speed_right)
         self.left_limit_released.wait()
         self.stop_cart()
 
@@ -608,11 +730,11 @@ class CartPole(MdpEnvironment):
 
         if not self.right_limit_pressed.is_set():
             logging.info('Moving cart to the right and waiting for limit switch.')
-            self.set_motor_speed(self.fast_transfer_motor_speed)
+            self.set_motor_speed(2 * self.motor_deadzone_speed_right)
             self.right_limit_pressed.wait()
 
         logging.info('Moving cart away from right limit switch.')
-        self.set_motor_speed(-self.slow_transfer_motor_speed)
+        self.set_motor_speed(self.motor_deadzone_speed_left)
         self.right_limit_released.wait()
         self.stop_cart()
 
@@ -725,8 +847,8 @@ class CartPole(MdpEnvironment):
                 self.cart_rotary_encoder.phase_change_index.value = self.cart_phase_change_index_at_right_limit
 
         # center once quickly, which will overshoot, and then slowly to get more accurate.
-        original_position = self.center_cart_at_speed(self.fast_transfer_motor_speed, original_position)
-        self.center_cart_at_speed(self.slow_transfer_motor_speed, original_position)
+        original_position = self.center_cart_at_speed(True, original_position)
+        self.center_cart_at_speed(False, original_position)
         logging.info('Cart centered.\n')
 
         logging.info('Waiting for stationary pole.')
@@ -739,13 +861,13 @@ class CartPole(MdpEnvironment):
 
     def center_cart_at_speed(
             self,
-            speed: int,
+            fast: bool,
             original_position: 'CartPole.CartPosition'
     ) -> 'CartPole.CartPosition':
         """
         Center the cart.
 
-        :param speed: Speed at which to center the cart.
+        :param fast: Center cart quickly (True) but with lower accuracy or slowly (False) and with higher accurancy.
         :param original_position: Original cart position.
         :return: Final position.
         """
@@ -757,8 +879,15 @@ class CartPole(MdpEnvironment):
             logging.info('Cart already centered.')
             return original_position
 
+        if original_position == CartPole.CartPosition.LEFT_OF_CENTER:
+            centering_speed = self.motor_deadzone_speed_right
+        else:
+            centering_speed = self.motor_deadzone_speed_left
+
+        if fast:
+            centering_speed *= 5
+
         # move toward the center, wait for the center to be reached, and stop the cart.
-        centering_speed = abs(speed) if original_position == CartPole.CartPosition.LEFT_OF_CENTER else -abs(speed)
         logging.info(f'Centering cart at speed:  {centering_speed}')
         self.set_motor_speed(centering_speed)
         self.cart_rotary_encoder.wait_for_cart_to_cross_center(
@@ -800,6 +929,11 @@ class CartPole(MdpEnvironment):
 
         :param speed: Speed.
         """
+
+        if speed < 0 and self.left_limit_switch.is_pressed():
+            logging.info('Left limit is pressed. Cannot set motor speed negative.')
+        elif speed > 0 and self.right_limit_switch.is_pressed():
+            logging.info('Right limit is pressed. Cannot set motor speed positive.')
 
         # we occasionally get i/o errors from the underlying interface to the pwm. this probably has something
         # to do with attempting to write new values at a high rate like we're doing here. catch any such error
@@ -933,9 +1067,26 @@ class CartPole(MdpEnvironment):
 
             time.sleep(self.timestep_sleep_seconds)
 
-            logging.debug(f'State after step {t}:  {self.state}')
+            logging.debug(
+                f'State after step {t}:  {self.state}\n'
+                f'Reward after step {t}:  {reward_value}\n'
+            )
 
             return self.state, Reward(None, reward_value)
+
+    def force_exiting_episode_after_truncation(
+            self
+    ):
+        """
+        Called when a learning procedure is force-exiting the episode after truncation. The episode will not reach a
+        natural termination state. Instead, the episode loop will exit. This function is called to provide the
+        environment an opportunity to clean up resources. This is not usually needed with simulation-based environments
+        since breaking the episode loop prevents any further episode advancement. However, in physicial environments the
+        system might continue to advance in the absence of further calls to the advance function. This function allows
+        the environment to perform any adjustments that are normally required upon termination.
+        """
+
+        self.stop_cart()
 
     def get_state(
             self,
@@ -1006,3 +1157,5 @@ class CartPole(MdpEnvironment):
 
         self.cart_rotary_encoder.wait_for_termination()
         self.pole_rotary_encoder.wait_for_termination()
+
+        cleanup()
