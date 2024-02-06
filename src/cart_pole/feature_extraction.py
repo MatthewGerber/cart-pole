@@ -122,8 +122,8 @@ class CartPoleFeatureExtractor(StateFeatureExtractor):
             1: [0.0],
 
             # pole angle
-            2: [0.0],
+            2: [-90.0, 0.0, 90],
 
             # pole angular velocity
-            3: [0.0]
+            3: [-5.0, 0.0, 5.0]
         })
