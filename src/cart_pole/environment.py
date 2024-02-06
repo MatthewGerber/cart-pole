@@ -397,6 +397,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.current_timesteps_per_second = IncrementalSampleAverager(initial_value=0.0, alpha=0.25)
         self.timestep_sleep_seconds = 1.0 / self.timesteps_per_second
         self.min_seconds_for_full_motor_speed_range = 0.5
+        self.original_agent_gamma: Optional[float] = None
 
         self.pca9685pw = PulseWaveModulatorPCA9685PW(
             bus=SMBus('/dev/i2c-1'),
@@ -496,17 +497,17 @@ class CartPole(ContinuousMdpEnvironment):
 
         state = dict(self.__dict__)
 
+        state['state_lock'] = None
+        state['pca9685pw'] = None
+        state['motor'] = None
+        state['cart_rotary_encoder'] = None
+        state['pole_rotary_encoder'] = None
         state['left_limit_switch'] = None
         state['left_limit_pressed'] = None
         state['left_limit_released'] = None
         state['right_limit_switch'] = None
         state['right_limit_pressed'] = None
         state['right_limit_released'] = None
-        state['state_lock'] = None
-        state['cart_rotary_encoder'] = None
-        state['pole_rotary_encoder'] = None
-        state['pca9685pw'] = None
-        state['motor'] = None
 
         return state
 
@@ -522,7 +523,64 @@ class CartPole(ContinuousMdpEnvironment):
 
         self.__dict__ = state
 
+        setup()
+
         self.state_lock = RLock()
+        self.pca9685pw = PulseWaveModulatorPCA9685PW(
+            bus=SMBus('/dev/i2c-1'),
+            address=PulseWaveModulatorPCA9685PW.PCA9685PW_ADDRESS,
+            frequency_hz=500
+        )
+        self.motor = DcMotor(
+            driver=DcMotorDriverIndirectPCA9685PW(
+                pca9685pw=self.pca9685pw,
+                pwm_channel=self.motor_pwm_channel,
+                direction_pin=self.motor_pwm_direction_pin,
+                reverse=self.motor_negative_speed_is_right
+            ),
+            speed=0
+        )
+        self.cart_rotary_encoder = CartRotaryEncoder(
+            phase_a_pin=self.cart_rotary_encoder_phase_a_pin,
+            phase_b_pin=self.cart_rotary_encoder_phase_b_pin,
+            phase_changes_per_rotation=1200,
+            phase_change_mode=RotaryEncoder.PhaseChangeMode.UNIPHASE_UNIDIRECTIONAL,
+            degrees_per_second_step_size=1.0
+        )
+        self.cart_rotary_encoder.wait_for_startup()
+        self.pole_rotary_encoder = MultiprocessRotaryEncoder(
+            phase_a_pin=self.pole_rotary_encoder_phase_a_pin,
+            phase_b_pin=self.pole_rotary_encoder_phase_b_pin,
+            phase_change_mode=RotaryEncoder.PhaseChangeMode.BIPHASE,
+            phase_changes_per_rotation=1200,
+            degrees_per_second_step_size=1.0
+        )
+        self.pole_rotary_encoder.wait_for_startup()
+        self.left_limit_switch = LimitSwitch(
+            input_pin=self.left_limit_switch_input_pin,
+            bounce_time_ms=5
+        )
+        self.left_limit_pressed = Event()
+        self.left_limit_released = Event()
+        if self.left_limit_switch.is_pressed():
+            self.left_limit_pressed.set()
+        else:
+            self.left_limit_released.set()
+        self.left_limit_switch.event(lambda s: self.left_limit_event(s.pressed))
+
+        self.right_limit_switch = LimitSwitch(
+            input_pin=self.right_limit_switch_input_pin,
+            bounce_time_ms=5
+        )
+        self.right_limit_pressed = Event()
+        self.right_limit_released = Event()
+        if self.right_limit_switch.is_pressed():
+            self.right_limit_pressed.set()
+        else:
+            self.right_limit_released.set()
+        self.right_limit_switch.event(lambda s: self.right_limit_event(s.pressed))
+
+        self.calibrate_on_next_reset = True
 
     def get_state_space_dimensionality(
             self
@@ -583,12 +641,23 @@ class CartPole(ContinuousMdpEnvironment):
         logging.info('Calibrating.')
 
         # create some space to do deadzone identification
-        self.set_motor_speed(30)
-        time.sleep(0.5)
-        self.set_motor_speed(-30)
-        time.sleep(0.5)
-        assert not self.right_limit_switch.is_pressed()
-        assert not self.left_limit_switch.is_pressed()
+        while True:
+            initial_degrees = self.cart_rotary_encoder.get_net_total_degrees()
+            self.set_motor_speed(30)
+            time.sleep(1.0)
+            self.set_motor_speed(-30)
+            time.sleep(1.0)
+            self.set_motor_speed(0)
+            if (
+                not self.right_limit_switch.is_pressed() and
+                not self.left_limit_switch.is_pressed() and
+                self.cart_rotary_encoder.get_net_total_degrees() != initial_degrees
+            ):
+                logging.info('Established deadzone identification space.')
+                break
+            else:
+                logging.info('Failed to establish deadline identification space. Retrying...')
+                time.sleep(5.0)
 
         # identify the minimum motor speeds that will get the cart to move left and right. there's a deadzone in the
         # middle that depends on the logic of the motor circuitry, mass and friction of the assembly, etc. this
@@ -639,6 +708,7 @@ class CartPole(ContinuousMdpEnvironment):
             f'\tCart mm / degree:  {self.cart_mm_per_degree}\n'
             f'\tMidline degree:  {self.midline_degrees}\n'
             f'\tPole degrees at bottom:  {self.pole_degrees_at_bottom}\n'
+            f'\tMaximum motor speed change per step:  {self.max_motor_speed_change_per_step}\n'
         )
 
     def identify_motor_speed_deadzone_limit(
@@ -668,7 +738,7 @@ class CartPole(ContinuousMdpEnvironment):
         speed = self.motor.get_speed()
         self.cart_rotary_encoder.update_state()
         while moving_ticks_remaining > 0:
-            time.sleep(0.25)
+            time.sleep(0.5)
             assert not limit_switch.is_pressed()
             if np.isclose(self.cart_rotary_encoder.get_degrees_per_second(), 0.0):
                 moving_ticks_remaining = moving_ticks_required
@@ -964,6 +1034,14 @@ class CartPole(ContinuousMdpEnvironment):
         super().reset_for_new_run(self.agent)
 
         self.agent = agent
+
+        # track or reset original agent gamma value (see advance for post-truncation convergence issue)
+        if self.original_agent_gamma is None:
+            self.original_agent_gamma = self.agent.gamma
+        else:
+            self.agent.gamma = self.original_agent_gamma
+            logging.info(f'Restored agent.gamma to {self.agent.gamma}.')
+
         self.motor.start()
 
         # calibrate if needed, which leaves the cart centered in its initial conditions with the state captured.
@@ -1038,11 +1116,20 @@ class CartPole(ContinuousMdpEnvironment):
                 if self.state.terminal:
                     self.stop_cart()
 
+                # post-truncation convergence to zero takes too long with gammas close to 1.0 and a slow physicial
+                # system. drop gamma
+                elif self.state.truncated:
+                    self.agent.gamma = 0.75
+                    logging.info(
+                        f'Episode was truncated. Decreased agent.gamma to {self.agent.gamma} to obtain faster '
+                        f'convergence to zero.'
+                    )
+
                 reward_value = np.exp(
                     -(
                         np.abs([
-                            self.state.cart_mm_from_center,
-                            self.state.pole_angle_deg_from_upright
+                            self.state.cart_mm_from_center / 100.0,
+                            self.state.pole_angle_deg_from_upright / 100.0
                         ]).sum()
                     )
                 )
