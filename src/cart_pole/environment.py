@@ -643,11 +643,9 @@ class CartPole(ContinuousMdpEnvironment):
         # create some space to do deadzone identification
         while True:
             initial_degrees = self.cart_rotary_encoder.get_net_total_degrees()
-            self.set_motor_speed(30)
-            time.sleep(1.0)
-            self.set_motor_speed(-30)
-            time.sleep(1.0)
-            self.set_motor_speed(0)
+            for speed, sleep in zip([20, -20, 20, 0], [1.0, 2.0, 1.0, 0]):
+                self.set_motor_speed(speed)
+                time.sleep(sleep)
             if (
                 not self.right_limit_switch.is_pressed() and
                 not self.left_limit_switch.is_pressed() and
@@ -1154,23 +1152,22 @@ class CartPole(ContinuousMdpEnvironment):
 
             time.sleep(self.timestep_sleep_seconds)
 
-            logging.debug(
-                f'State after step {t}:  {self.state}\n'
-                f'Reward after step {t}:  {reward_value}\n'
-            )
+            logging.debug(f'State after step {t}:  {self.state}')
+            logging.debug(f'Reward after step {t}:  {reward_value}')
 
             return self.state, Reward(None, reward_value)
 
-    def force_exiting_episode_after_truncation(
+    def exiting_episode_without_termination(
             self
     ):
         """
-        Called when a learning procedure is force-exiting the episode after truncation. The episode will not reach a
-        natural termination state. Instead, the episode loop will exit. This function is called to provide the
-        environment an opportunity to clean up resources. This is not usually needed with simulation-based environments
-        since breaking the episode loop prevents any further episode advancement. However, in physicial environments the
-        system might continue to advance in the absence of further calls to the advance function. This function allows
-        the environment to perform any adjustments that are normally required upon termination.
+        Called when a learning procedure is exiting the episode without natural termination (e.g., after truncation).
+        The episode will not reach a natural termination state. Instead, the episode loop will exit. This function is
+        called to provide the environment an opportunity to clean up resources. This is not usually needed with
+        simulation-based environments since breaking the episode loop prevents any further episode advancement. However,
+        in physicial environments the system might continue to advance in the absence of further calls to the advance
+        function. This function allows the environment to perform any adjustments that are normally required upon
+        termination.
         """
 
         self.stop_cart()
