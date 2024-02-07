@@ -642,20 +642,18 @@ class CartPole(ContinuousMdpEnvironment):
 
         # create some space to do deadzone identification
         while True:
-            initial_degrees = self.cart_rotary_encoder.get_net_total_degrees()
-            for speed, sleep in zip([20, -20, 20, 0], [1.0, 2.0, 1.0, 0]):
+            for speed, sleep in zip([20, -20, 20, 0], [1.0, 2.0, 1.0, 0.0]):
+                initial_degrees = self.cart_rotary_encoder.get_net_total_degrees()
                 self.set_motor_speed(speed)
                 time.sleep(sleep)
-            if (
-                not self.right_limit_switch.is_pressed() and
-                not self.left_limit_switch.is_pressed() and
-                self.cart_rotary_encoder.get_net_total_degrees() != initial_degrees
-            ):
-                logging.info('Established deadzone identification space.')
-                break
+                if self.cart_rotary_encoder.get_net_total_degrees() == initial_degrees:
+                    logging.info('Failed to move when creating deadzone identification space.')
+                    break
             else:
-                logging.info('Failed to establish deadline identification space. Retrying...')
-                time.sleep(5.0)
+                break
+
+            logging.info('Failed to establish deadline identification space. Retrying in 5 seconds.')
+            time.sleep(5.0)
 
         # identify the minimum motor speeds that will get the cart to move left and right. there's a deadzone in the
         # middle that depends on the logic of the motor circuitry, mass and friction of the assembly, etc. this
