@@ -1121,23 +1121,14 @@ class CartPole(ContinuousMdpEnvironment):
                         f'convergence to zero.'
                     )
 
-                # give no reward if the pole is falling down
-                if (
-                    np.sign(self.state.pole_angle_deg_from_upright) ==
-                    np.sign(self.state.pole_angular_velocity_deg_per_sec)
-                ):
-                    reward_value = 0.0
-
-                # reward according to how close the cart is to the center and how close the pole is to upright
-                else:
-                    reward_value = np.exp(
-                        -(
-                            np.abs([
-                                self.state.cart_mm_from_center / 100.0,
-                                self.state.pole_angle_deg_from_upright / 100.0
-                            ]).sum()
-                        )
+                reward_value = np.exp(
+                    -(
+                        np.abs([
+                            self.state.cart_mm_from_center / 100.0,
+                            self.state.pole_angle_deg_from_upright / 100.0
+                        ]).sum()
                     )
+                )
 
             if self.previous_timestep_epoch is None:
                 self.previous_timestep_epoch = time.time()
