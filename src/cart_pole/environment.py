@@ -642,7 +642,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         # create some space to do deadzone identification
         while True:
-            for speed, sleep in zip([20, -20, 20, 0], [1.0, 2.0, 1.0, 0.0]):
+            for speed, sleep in zip([20, -20, 20, 0], [3.0, 6.0, 3.0, 0.0]):
                 initial_degrees = self.cart_rotary_encoder.get_net_total_degrees()
                 self.set_motor_speed(speed)
                 time.sleep(sleep)
@@ -736,7 +736,7 @@ class CartPole(ContinuousMdpEnvironment):
         while moving_ticks_remaining > 0:
             time.sleep(0.5)
             assert not limit_switch.is_pressed()
-            if np.isclose(self.cart_rotary_encoder.get_degrees_per_second(), 0.0):
+            if abs(self.cart_rotary_encoder.get_degrees_per_second()) < 180.0:
                 moving_ticks_remaining = moving_ticks_required
                 speed += increment
                 self.set_motor_speed(speed)
@@ -1121,14 +1121,23 @@ class CartPole(ContinuousMdpEnvironment):
                         f'convergence to zero.'
                     )
 
-                reward_value = np.exp(
-                    -(
-                        np.abs([
-                            self.state.cart_mm_from_center / 100.0,
-                            self.state.pole_angle_deg_from_upright / 100.0
-                        ]).sum()
+                # give no reward if the pole is falling down
+                if (
+                    np.sign(self.state.pole_angle_deg_from_upright) ==
+                    np.sign(self.state.pole_angular_velocity_deg_per_sec)
+                ):
+                    reward_value = 0.0
+
+                # reward according to how close the cart is to the center and how close the pole is to upright
+                else:
+                    reward_value = np.exp(
+                        -(
+                            np.abs([
+                                self.state.cart_mm_from_center / 100.0,
+                                self.state.pole_angle_deg_from_upright / 100.0
+                            ]).sum()
+                        )
                     )
-                )
 
             if self.previous_timestep_epoch is None:
                 self.previous_timestep_epoch = time.time()
