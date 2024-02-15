@@ -1119,7 +1119,7 @@ class CartPole(ContinuousMdpEnvironment):
                     -(
                         np.abs([
                             self.state.cart_mm_from_center / 100.0,
-                            self.state.pole_angle_deg_from_upright / 100.0
+                            self.state.pole_angle_deg_from_upright / 50.0
                         ]).sum()
                     )
                 )
