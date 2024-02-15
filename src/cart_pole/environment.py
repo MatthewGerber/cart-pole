@@ -1081,7 +1081,12 @@ class CartPole(ContinuousMdpEnvironment):
 
                 assert isinstance(a, ContinuousMultiDimensionalAction)
                 assert a.value.shape == (1,)
-                speed_change = round(float(a.value[0]))
+
+                speed_change = float(a.value[0])
+                if np.isnan(speed_change):
+                    speed_change = 0
+                else:
+                    speed_change = round(speed_change)
 
                 next_speed = self.motor.get_speed() + speed_change
 
@@ -1107,7 +1112,7 @@ class CartPole(ContinuousMdpEnvironment):
                     self.stop_cart()
 
                 # post-truncation convergence to zero takes too long with gammas close to 1.0 and a slow physicial
-                # system. drop gamma
+                # system. decrease gamma to obtain faster convergence to zero.
                 elif self.state.truncated:
                     self.agent.gamma = 0.75
                     logging.info(
