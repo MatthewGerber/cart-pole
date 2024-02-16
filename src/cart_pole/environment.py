@@ -1081,12 +1081,7 @@ class CartPole(ContinuousMdpEnvironment):
 
                 assert isinstance(a, ContinuousMultiDimensionalAction)
                 assert a.value.shape == (1,)
-
-                speed_change = float(a.value[0])
-                if np.isnan(speed_change):
-                    speed_change = 0
-                else:
-                    speed_change = round(speed_change)
+                speed_change = round(float(a.value[0]))
 
                 next_speed = self.motor.get_speed() + speed_change
 
