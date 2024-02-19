@@ -120,6 +120,65 @@ class CartPoleState(MdpState):
             f'@ {self.pole_angular_velocity_deg_per_sec:.1f} deg/s'
         )
 
+    def __eq__(
+            self,
+            other
+    ) -> bool:
+        """
+        Check equality.
+
+        :param other: Other object.
+        """
+
+        if not isinstance(other, CartPoleState):
+            raise ValueError(f'Expected a {CartPoleState}')
+
+        return np.allclose(self.observation, other.observation, atol=0.0001)
+
+
+class CartPoleAction(ContinuousMultiDimensionalAction):
+    """
+    Cart-pole action.
+    """
+
+    def __init__(
+            self,
+            value: Optional[np.ndarray],
+            min_values: Optional[np.ndarray],
+            max_values: Optional[np.ndarray],
+            name: Optional[str] = None
+    ):
+        """
+        Initialize the action.
+
+        :param value: Value.
+        :param min_values: Minimum values.
+        :param max_values: Maximum values.
+        :param name: Name.
+        """
+
+        super().__init__(
+            value=value,
+            min_values=min_values,
+            max_values=max_values,
+            name=name
+        )
+
+    def __eq__(
+            self,
+            other
+    ) -> bool:
+        """
+        Check equality.
+
+        :param other: Other object.
+        """
+
+        if not isinstance(other, CartPoleAction):
+            raise ValueError(f'Expected a {CartPoleAction}')
+
+        return np.allclose(self.value, other.value, atol=0.0001)
+
 
 class CartPole(ContinuousMdpEnvironment):
     """
@@ -421,7 +480,7 @@ class CartPole(ContinuousMdpEnvironment):
         )
 
         self.actions = [
-            ContinuousMultiDimensionalAction(
+            CartPoleAction(
                 value=None,
                 min_values=np.array([-self.max_motor_speed_change_per_step]),
                 max_values=np.array([self.max_motor_speed_change_per_step]),
@@ -1079,7 +1138,7 @@ class CartPole(ContinuousMdpEnvironment):
 
             else:
 
-                assert isinstance(a, ContinuousMultiDimensionalAction)
+                assert isinstance(a, CartPoleAction)
                 assert a.value.shape == (1,)
                 speed_change = round(float(a.value[0]))
 
