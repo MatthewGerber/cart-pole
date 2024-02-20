@@ -116,7 +116,7 @@ class CartPoleFeatureExtractor(StateFeatureExtractor):
         self.state_category_interacter = OneHotStateSegmentFeatureInteracter({
 
             # cart position
-            0: [-222.0, -111.0, 0.0, 111.0, 222.0],
+            0: [-167.0, 0.0, 167.0],
 
             # cart velocity
             1: [0.0],
@@ -125,5 +125,5 @@ class CartPoleFeatureExtractor(StateFeatureExtractor):
             2: [-90.0, 0.0, 90],
 
             # pole angular velocity
-            3: [-180.0, 0.0, 180.0]
+            3: [-360.0, -180.0, 0.0, 180.0, 360.0]
         })

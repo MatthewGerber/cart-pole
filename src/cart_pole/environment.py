@@ -179,6 +179,15 @@ class CartPoleAction(ContinuousMultiDimensionalAction):
 
         return np.allclose(self.value, other.value, atol=0.0001)
 
+    def __hash__(self) -> int:
+        """
+        Get hash.
+
+        :return: Hash.
+        """
+
+        return super().__hash__()
+
 
 class CartPole(ContinuousMdpEnvironment):
     """
@@ -480,7 +489,7 @@ class CartPole(ContinuousMdpEnvironment):
         )
 
         self.actions = [
-            CartPoleAction(
+            ContinuousMultiDimensionalAction(
                 value=None,
                 min_values=np.array([-self.max_motor_speed_change_per_step]),
                 max_values=np.array([self.max_motor_speed_change_per_step]),
@@ -1138,7 +1147,7 @@ class CartPole(ContinuousMdpEnvironment):
 
             else:
 
-                assert isinstance(a, CartPoleAction)
+                assert isinstance(a, ContinuousMultiDimensionalAction)
                 assert a.value.shape == (1,)
                 speed_change = round(float(a.value[0]))
 
