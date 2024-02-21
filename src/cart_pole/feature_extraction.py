@@ -1,6 +1,5 @@
 from argparse import ArgumentParser
-from enum import Enum, auto
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 
 import numpy as np
 from cart_pole.environment import CartPoleState, CartPole
@@ -103,10 +102,39 @@ class CartPoleFeatureExtractor(StateFeatureExtractor):
 
         return state_category_feature_vector
 
-    class PoleAngularVelocity(Enum):
-        SLOW = auto()
-        MEDIUM = auto()
-        FAST = auto()
+    @staticmethod
+    def get_interacter() -> OneHotStateIndicatorFeatureInteracter:
+        """
+        Get interacter.
+
+        :return: Interacter.
+        """
+
+        return OneHotStateIndicatorFeatureInteracter([
+
+            # pole angle
+            StateDimensionLambda(
+                2,
+                lambda v: (
+                    0 if abs(v) <= 30.0
+                    else 1 if abs(v) <= 90.0
+                    else 2
+                ),
+                list(range(3))
+            ),
+
+            # pole angular velocity
+            StateDimensionLambda(
+                3,
+                lambda v: (
+                    0 if abs(v) <= 90.0
+                    else 1 if abs(v) <= 180.0
+                    else 2 if abs(v) <= 360.0
+                    else 3
+                ),
+                list(range(4))
+            )
+       ])
 
     def __init__(
             self
@@ -120,23 +148,33 @@ class CartPoleFeatureExtractor(StateFeatureExtractor):
         self.feature_scaler = StationaryFeatureScaler()
 
         # interact features with relevant state categories
-        self.state_category_interacter = OneHotStateIndicatorFeatureInteracter([
+        self.state_category_interacter = CartPoleFeatureExtractor.get_interacter()
 
-            # pole angle
-            StateDimensionLambda(2, lambda v: abs(v) <= 30.0, [True, False]),
+    def __getstate__(
+            self
+    ) -> Dict:
+        """
+        Get state for pickling.
 
-            # pole angular velocity
-            StateDimensionLambda(
-                3,
-                lambda v: (
-                    CartPoleFeatureExtractor.PoleAngularVelocity.SLOW if abs(v) <= 30.0
-                    else CartPoleFeatureExtractor.PoleAngularVelocity.MEDIUM if abs(v) <= 180.0
-                    else CartPoleFeatureExtractor.PoleAngularVelocity.FAST
-                ),
-                [
-                    CartPoleFeatureExtractor.PoleAngularVelocity.SLOW,
-                    CartPoleFeatureExtractor.PoleAngularVelocity.MEDIUM,
-                    CartPoleFeatureExtractor.PoleAngularVelocity.FAST
-                ]
-            )
-       ])
+        :return: State.
+        """
+
+        state = dict(self.__dict__)
+
+        state['state_category_interacter'] = None
+
+        return state
+
+    def __setstate__(
+            self,
+            state: Dict
+    ):
+        """
+        Set state from pickle.
+
+        :param state: State.
+        """
+
+        state['state_category_interacter'] = CartPoleFeatureExtractor.get_interacter()
+
+        self.__dict__ = state
