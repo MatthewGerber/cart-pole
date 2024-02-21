@@ -1,14 +1,15 @@
 from argparse import ArgumentParser
+from enum import Enum, auto
 from typing import List, Tuple
 
 import numpy as np
-
 from cart_pole.environment import CartPoleState, CartPole
+
 from rlai.models.feature_extraction import StationaryFeatureScaler, FeatureExtractor
 from rlai.state_value.function_approximation.models.feature_extraction import (
     StateFeatureExtractor,
     OneHotStateIndicatorFeatureInteracter,
-    StateDimensionSegment
+    StateDimensionLambda
 )
 from rlai.utils import parse_arguments
 
@@ -102,6 +103,11 @@ class CartPoleFeatureExtractor(StateFeatureExtractor):
 
         return state_category_feature_vector
 
+    class PoleAngularVelocity(Enum):
+        SLOW = auto()
+        MEDIUM = auto()
+        FAST = auto()
+
     def __init__(
             self
     ):
@@ -114,17 +120,23 @@ class CartPoleFeatureExtractor(StateFeatureExtractor):
         self.feature_scaler = StationaryFeatureScaler()
 
         # interact features with relevant state categories
-        self.state_category_interacter = OneHotStateIndicatorFeatureInteracter(StateDimensionSegment.get_segments({
-
-            # cart position
-            0: [0.0],
-
-            # cart velocity
-            1: [0.0],
+        self.state_category_interacter = OneHotStateIndicatorFeatureInteracter([
 
             # pole angle
-            2: [-90.0, -30.0, 0.0, 30.0, 90.0],
+            StateDimensionLambda(2, lambda v: abs(v) <= 30.0, [True, False]),
 
             # pole angular velocity
-            3: [-180.0, -30, 0.0, 30.0, 180.0]
-        }))
+            StateDimensionLambda(
+                3,
+                lambda v: (
+                    CartPoleFeatureExtractor.PoleAngularVelocity.SLOW if abs(v) <= 30.0
+                    else CartPoleFeatureExtractor.PoleAngularVelocity.MEDIUM if abs(v) <= 180.0
+                    else CartPoleFeatureExtractor.PoleAngularVelocity.FAST
+                ),
+                [
+                    CartPoleFeatureExtractor.PoleAngularVelocity.SLOW,
+                    CartPoleFeatureExtractor.PoleAngularVelocity.MEDIUM,
+                    CartPoleFeatureExtractor.PoleAngularVelocity.FAST
+                ]
+            )
+       ])
