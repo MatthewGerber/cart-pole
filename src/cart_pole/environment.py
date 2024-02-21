@@ -464,7 +464,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.previous_timestep_epoch: Optional[float] = None
         self.current_timesteps_per_second = IncrementalSampleAverager(initial_value=0.0, alpha=0.25)
         self.timestep_sleep_seconds = 1.0 / self.timesteps_per_second
-        self.min_seconds_for_full_motor_speed_range = 0.3
+        self.min_seconds_for_full_motor_speed_range = 0.25
         self.original_agent_gamma: Optional[float] = None
 
         self.pca9685pw = PulseWaveModulatorPCA9685PW(

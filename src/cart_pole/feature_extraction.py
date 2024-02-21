@@ -7,7 +7,8 @@ from cart_pole.environment import CartPoleState, CartPole
 from rlai.models.feature_extraction import StationaryFeatureScaler, FeatureExtractor
 from rlai.state_value.function_approximation.models.feature_extraction import (
     StateFeatureExtractor,
-    OneHotStateSegmentFeatureInteracter
+    OneHotStateIndicatorFeatureInteracter,
+    StateDimensionSegment
 )
 from rlai.utils import parse_arguments
 
@@ -113,17 +114,17 @@ class CartPoleFeatureExtractor(StateFeatureExtractor):
         self.feature_scaler = StationaryFeatureScaler()
 
         # interact features with relevant state categories
-        self.state_category_interacter = OneHotStateSegmentFeatureInteracter({
+        self.state_category_interacter = OneHotStateIndicatorFeatureInteracter(StateDimensionSegment.get_segments({
 
             # cart position
-            0: [-167.0, 0.0, 167.0],
+            0: [0.0],
 
             # cart velocity
             1: [0.0],
 
             # pole angle
-            2: [-90.0, 0.0, 90],
+            2: [-90.0, -30.0, 0.0, 30.0, 90.0],
 
             # pole angular velocity
-            3: [-360.0, -180.0, 0.0, 180.0, 360.0]
-        })
+            3: [-180.0, -30, 0.0, 30.0, 180.0]
+        }))
