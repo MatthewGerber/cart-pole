@@ -1122,6 +1122,31 @@ class CartPole(ContinuousMdpEnvironment):
 
         return self.state
 
+    def get_reward(
+            self,
+            state: CartPoleState
+    ) -> float:
+        """
+        Get reward for a state.
+
+        :param state: State.
+        :return: Reward.
+        """
+
+        if state.terminal:
+            reward_value = 0.0
+        else:
+            reward_value = np.exp(
+                -(
+                    np.abs([
+                        self.state.cart_mm_from_center / 100.0,
+                        self.state.pole_angle_deg_from_upright / 50.0
+                    ]).sum()
+                )
+            )
+
+        return reward_value
+
     def advance(
             self,
             state: MdpState,
@@ -1141,20 +1166,36 @@ class CartPole(ContinuousMdpEnvironment):
 
         with self.state_lock:
 
+            # update the current state if we haven't yet terminated
+            if not self.state.terminal:
+                self.state = self.get_state(t)
+
+            # stop the cart if we've terminated
             if self.state.terminal:
+                self.stop_cart()
 
-                reward_value = 0.0
+            # post-truncation convergence to zero takes too long with gammas close to 1.0 and a slow physicial system.
+            # decrease gamma to obtain faster convergence to zero.
+            elif self.state.truncated:
+                self.agent.gamma = 0.75
+                logging.info(
+                    f'Episode was truncated. Decreased agent.gamma to {self.agent.gamma} to obtain faster '
+                    f'convergence to zero.'
+                )
 
+            # perform nominal environment advancement
             else:
 
+                # extract the speed change from the action
                 assert isinstance(a, ContinuousMultiDimensionalAction)
                 assert a.value.shape == (1,)
                 speed_change = round(float(a.value[0]))
 
+                # calculate next speed
                 next_speed = self.motor.get_speed() + speed_change
 
-                # if the next speed falls into the motor's deadzone, bump it to the minimum speed based on the
-                # direction of speed change.
+                # if the next speed falls into the motor's deadzone, bump it to the minimum speed based on the direction
+                # of speed change.
                 if self.motor_deadzone_speed_left < next_speed < self.motor_deadzone_speed_right:
                     if speed_change < 0:
                         next_speed = self.motor_deadzone_speed_left
@@ -1169,29 +1210,7 @@ class CartPole(ContinuousMdpEnvironment):
                 except OSError as e:
                     logging.error(f'Error while setting speed:  {e}')
 
-                self.state = self.get_state(t)
-
-                if self.state.terminal:
-                    self.stop_cart()
-
-                # post-truncation convergence to zero takes too long with gammas close to 1.0 and a slow physicial
-                # system. decrease gamma to obtain faster convergence to zero.
-                elif self.state.truncated:
-                    self.agent.gamma = 0.75
-                    logging.info(
-                        f'Episode was truncated. Decreased agent.gamma to {self.agent.gamma} to obtain faster '
-                        f'convergence to zero.'
-                    )
-
-                reward_value = np.exp(
-                    -(
-                        np.abs([
-                            self.state.cart_mm_from_center / 100.0,
-                            self.state.pole_angle_deg_from_upright / 50.0
-                        ]).sum()
-                    )
-                )
-
+            # adapt the sleep time to obtain the desired steps per second
             if self.previous_timestep_epoch is None:
                 self.previous_timestep_epoch = time.time()
             else:
@@ -1211,6 +1230,9 @@ class CartPole(ContinuousMdpEnvironment):
                 logging.debug(f'Running at {self.current_timesteps_per_second:.1f} steps/sec')
 
             time.sleep(self.timestep_sleep_seconds)
+
+            # calculate reward
+            reward_value = self.get_reward(self.state)
 
             logging.debug(f'State after step {t}:  {self.state}')
             logging.debug(f'Reward after step {t}:  {reward_value}')
