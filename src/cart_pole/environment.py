@@ -1136,14 +1136,18 @@ class CartPole(ContinuousMdpEnvironment):
         if state.terminal:
             reward_value = 0.0
         else:
-            reward_value = np.exp(
-                -(
-                    np.abs([
-                        self.state.cart_mm_from_center / 100.0,
-                        self.state.pole_angle_deg_from_upright / 50.0
-                    ]).sum()
-                )
-            )
+            reward_value = -np.abs([
+                self.state.cart_mm_from_center,
+                self.state.cart_velocity_mm_per_second if (
+                    np.sign(self.state.cart_velocity_mm_per_second) ==
+                    np.sign(self.state.cart_mm_from_center)
+                ) else 0.0,
+                self.state.pole_angle_deg_from_upright,
+                self.state.pole_angular_velocity_deg_per_sec if (
+                    np.sign(self.state.pole_angular_velocity_deg_per_sec) ==
+                    np.sign(self.state.pole_angle_deg_from_upright)
+                ) else 0.0
+            ]).sum()
 
         return reward_value
 
@@ -1166,25 +1170,32 @@ class CartPole(ContinuousMdpEnvironment):
 
         with self.state_lock:
 
+            prev_state_terminal = self.state.terminal
+            prev_state_truncated = self.state.truncated
+
             # update the current state if we haven't yet terminated
-            if not self.state.terminal:
+            if not prev_state_terminal:
                 self.state = self.get_state(t)
 
-            # stop the cart if we've terminated
-            if self.state.terminal:
+            new_termination = not prev_state_terminal and self.state.terminal
+            new_truncation = not prev_state_truncated and self.state.truncated
+
+            # stop the cart if we just terminated
+            if new_termination:
                 self.stop_cart()
 
             # post-truncation convergence to zero takes too long with gammas close to 1.0 and a slow physicial system.
             # decrease gamma to obtain faster convergence to zero.
-            elif self.state.truncated:
+            if new_truncation:
                 self.agent.gamma = 0.75
                 logging.info(
-                    f'Episode was truncated. Decreased agent.gamma to {self.agent.gamma} to obtain faster '
-                    f'convergence to zero.'
+                    f'Episode was truncated. Decreased agent.gamma to {self.agent.gamma} to obtain faster convergence '
+                    'to zero.'
                 )
 
-            # perform nominal environment advancement
-            else:
+            # perform nominal environment advancement if we haven't terminated. we continue to do this after truncation,
+            # since we're waiting for the learning procedure to exit the episode.
+            if not self.state.terminal:
 
                 # extract the speed change from the action
                 assert isinstance(a, ContinuousMultiDimensionalAction)
@@ -1281,11 +1292,12 @@ class CartPole(ContinuousMdpEnvironment):
 
         # terminate for violation of soft limit
         if terminal is None:
-            terminal = abs(cart_mm_from_center) >= self.soft_limit_mm_from_midline
+            cart_abs_mm_from_center = abs(cart_mm_from_center)
+            terminal = cart_abs_mm_from_center >= self.soft_limit_mm_from_midline
             if terminal:
                 logging.info(
-                    f'Cart position ({cart_mm_from_center:.1f}) mm exceeded soft limit '
-                    f'({self.soft_limit_mm_from_midline}) mm. Terminating.'
+                    f'Cart distance from center ({cart_abs_mm_from_center:.1f} mm) exceeds soft limit '
+                    f'({self.soft_limit_mm_from_midline} mm). Terminating.'
                 )
 
         # get pole's degree from vertical at bottom
