@@ -798,7 +798,7 @@ class CartPole(ContinuousMdpEnvironment):
         while moving_ticks_remaining > 0:
             time.sleep(0.5)
             assert not limit_switch.is_pressed()
-            if abs(self.cart_rotary_encoder.get_degrees_per_second()) < 180.0:
+            if abs(self.cart_rotary_encoder.get_degrees_per_second()) < 100.0:
                 moving_ticks_remaining = moving_ticks_required
                 speed += increment
                 self.set_motor_speed(speed)
@@ -806,6 +806,8 @@ class CartPole(ContinuousMdpEnvironment):
                 moving_ticks_remaining -= 1
 
         self.stop_cart()
+
+        logging.info(f'Deadzone speed begins at {speed} in the {direction} direction.')
 
         return speed
 
@@ -1136,18 +1138,20 @@ class CartPole(ContinuousMdpEnvironment):
         if state.terminal:
             reward_value = 0.0
         else:
-            reward_value = -np.abs([
-                self.state.cart_mm_from_center,
-                self.state.cart_velocity_mm_per_second if (
-                    np.sign(self.state.cart_velocity_mm_per_second) ==
-                    np.sign(self.state.cart_mm_from_center)
-                ) else 0.0,
-                self.state.pole_angle_deg_from_upright,
-                self.state.pole_angular_velocity_deg_per_sec if (
-                    np.sign(self.state.pole_angular_velocity_deg_per_sec) ==
-                    np.sign(self.state.pole_angle_deg_from_upright)
-                ) else 0.0
-            ]).sum()
+            reward_value = np.exp(
+                -np.abs([
+                    self.state.cart_mm_from_center,
+                    self.state.cart_velocity_mm_per_second if (
+                        np.sign(self.state.cart_velocity_mm_per_second) ==
+                        np.sign(self.state.cart_mm_from_center)
+                    ) else 0.0,
+                    self.state.pole_angle_deg_from_upright,
+                    self.state.pole_angular_velocity_deg_per_sec if (
+                        np.sign(self.state.pole_angular_velocity_deg_per_sec) ==
+                        np.sign(self.state.pole_angle_deg_from_upright)
+                    ) else 0.0
+                ]).sum() / 100.0
+            )
 
         return reward_value
 
