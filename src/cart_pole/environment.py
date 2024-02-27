@@ -796,9 +796,9 @@ class CartPole(ContinuousMdpEnvironment):
         speed = self.motor.get_speed()
         self.cart_rotary_encoder.update_state()
         while moving_ticks_remaining > 0:
-            time.sleep(0.5)
+            time.sleep(0.75)
             assert not limit_switch.is_pressed()
-            if abs(self.cart_rotary_encoder.get_degrees_per_second()) < 100.0:
+            if abs(self.cart_rotary_encoder.get_degrees_per_second()) < 180.0:
                 moving_ticks_remaining = moving_ticks_required
                 speed += increment
                 self.set_motor_speed(speed)

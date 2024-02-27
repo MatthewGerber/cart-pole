@@ -1,6 +1,7 @@
+import itertools
 import math
 from argparse import ArgumentParser
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 
 import numpy as np
 from cart_pole.environment import CartPoleState, CartPole
@@ -188,20 +189,32 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         :return: State-feature vector.
         """
 
+        if self.term_indices is None:
+            indices = list(range(len(state.observation)))
+            self.term_indices = [
+                list(term_indices_tuple)
+                for term_order in range(1, len(state.observation) + 1)
+                for term_indices_tuple in itertools.combinations(indices, term_order)
+            ]
+
+        scaled_features = self.feature_scaler.scale_features(
+            np.array([
+                [
+                    state.cart_mm_from_center,
+                    state.cart_velocity_mm_per_second,
+                    state.pole_angle_deg_from_upright,
+                    state.pole_angular_velocity_deg_per_sec
+                ]
+            ]),
+            refit_before_scaling=refit_scaler
+        )[0]
+
         state_feature_vector = np.append(
             [0.01],
-            self.feature_scaler.scale_features(
-                np.array([
-                    [
-                        state.cart_mm_from_center,
-                        state.cart_velocity_mm_per_second,
-                        state.pole_angle_deg_from_upright,
-                        state.pole_angular_velocity_deg_per_sec,
-                        state.pole_angle_deg_from_upright * state.pole_angular_velocity_deg_per_sec
-                    ]
-                ]),
-                refit_before_scaling=refit_scaler
-            )[0]
+            [
+                np.prod(scaled_features[term_indices])
+                for term_indices in self.term_indices
+            ]
         )
 
         state_category_feature_vector = self.state_category_interacter.interact(
@@ -221,28 +234,16 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
 
         return OneHotStateIndicatorFeatureInteracter([
 
-            # pole angle
+            # use a separate policy when the pole is nearly upright
             StateDimensionLambda(
                 2,
                 lambda v: (
                     0 if abs(v) <= 30.0
-                    else 1 if abs(v) <= 90.0
-                    else 2
+                    else 1
                 ),
-                list(range(3))
-            ),
-
-            # pole angular velocity
-            StateDimensionLambda(
-                3,
-                lambda v: (
-                    0 if abs(v) <= 90.0
-                    else 1 if abs(v) <= 180.0
-                    else 2 if abs(v) <= 360.0
-                    else 3
-                ),
-                list(range(4))
+                list(range(2))
             )
+
        ])
 
     def __init__(
@@ -255,6 +256,7 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         super().__init__()
 
         self.feature_scaler = StationaryFeatureScaler()
+        self.term_indices: Optional[List[Tuple]] = None
 
         # interact features with relevant state categories
         self.state_category_interacter = CartPolePolicyFeatureExtractor.get_interacter()
