@@ -198,7 +198,7 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
             ]
 
         scaled_features = self.feature_scaler.scale_features(
-            np.array([
+            feature_matrix=np.array([
                 [
                     state.cart_mm_from_center,
                     state.cart_velocity_mm_per_second,
