@@ -721,11 +721,12 @@ class CartPole(ContinuousMdpEnvironment):
         # middle that depends on the logic of the motor circuitry, mass and friction of the assembly, etc. this
         # nonlinearity of motor speed and cart velocity will confuse the controller. use the same speed in each
         # direction, choosing the max if they are different.
-        self.motor_deadzone_speed_left = self.identify_motor_speed_deadzone_limit(CartPole.CartDirection.LEFT)
-        self.motor_deadzone_speed_right = max(
-            -self.motor_deadzone_speed_left,
-            self.identify_motor_speed_deadzone_limit(CartPole.CartDirection.RIGHT)
+        deadzone_speed = max(
+            abs(self.identify_motor_speed_deadzone_limit(CartPole.CartDirection.LEFT)),
+            abs(self.identify_motor_speed_deadzone_limit(CartPole.CartDirection.RIGHT))
         )
+        self.motor_deadzone_speed_left = -deadzone_speed
+        self.motor_deadzone_speed_right = deadzone_speed
 
         # mark degrees at left and right limits. do this in whatever order is the most efficient given the cart's
         # current position. we can only do this efficiency trick after the initial calibration, since determining left
@@ -811,7 +812,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         self.stop_cart()
 
-        logging.info(f'Deadzone speed begins at {speed} in the {direction} direction.')
+        logging.info(f'Deadzone ends at speed {speed} in the {direction} direction.')
 
         return speed
 
