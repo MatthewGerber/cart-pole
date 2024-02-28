@@ -719,9 +719,13 @@ class CartPole(ContinuousMdpEnvironment):
 
         # identify the minimum motor speeds that will get the cart to move left and right. there's a deadzone in the
         # middle that depends on the logic of the motor circuitry, mass and friction of the assembly, etc. this
-        # nonlinearity of motor speed and cart velocity will confuse the controller.
+        # nonlinearity of motor speed and cart velocity will confuse the controller. use the same speed in each
+        # direction, choosing the max if they are different.
         self.motor_deadzone_speed_left = self.identify_motor_speed_deadzone_limit(CartPole.CartDirection.LEFT)
-        self.motor_deadzone_speed_right = self.identify_motor_speed_deadzone_limit(CartPole.CartDirection.RIGHT)
+        self.motor_deadzone_speed_right = max(
+            -self.motor_deadzone_speed_left,
+            self.identify_motor_speed_deadzone_limit(CartPole.CartDirection.RIGHT)
+        )
 
         # mark degrees at left and right limits. do this in whatever order is the most efficient given the cart's
         # current position. we can only do this efficiency trick after the initial calibration, since determining left
