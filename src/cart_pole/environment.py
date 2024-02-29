@@ -1252,7 +1252,10 @@ class CartPole(ContinuousMdpEnvironment):
             time.sleep(self.timestep_sleep_seconds)
 
             # calculate reward
-            reward_value = self.get_reward(self.state)
+            if new_termination:
+                reward_value = -5.0
+            else:
+                reward_value = self.get_reward(self.state)
 
             logging.debug(f'State after step {t}:  {self.state}')
             logging.debug(f'Reward after step {t}:  {reward_value}')
