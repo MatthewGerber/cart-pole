@@ -1141,20 +1141,12 @@ class CartPole(ContinuousMdpEnvironment):
         """
 
         if state.terminal:
-            reward_value = 0.0
+            reward_value = -1.0
         else:
             reward_value = np.exp(
                 -np.abs([
                     self.state.cart_mm_from_center,
-                    self.state.cart_velocity_mm_per_second if (
-                        np.sign(self.state.cart_velocity_mm_per_second) ==
-                        np.sign(self.state.cart_mm_from_center)
-                    ) else 0.0,
                     self.state.pole_angle_deg_from_upright,
-                    self.state.pole_angular_velocity_deg_per_sec if (
-                        np.sign(self.state.pole_angular_velocity_deg_per_sec) ==
-                        np.sign(self.state.pole_angle_deg_from_upright)
-                    ) else 0.0
                 ]).sum() / 100.0
             )
 
@@ -1252,10 +1244,7 @@ class CartPole(ContinuousMdpEnvironment):
             time.sleep(self.timestep_sleep_seconds)
 
             # calculate reward
-            if new_termination:
-                reward_value = -5.0
-            else:
-                reward_value = self.get_reward(self.state)
+            reward_value = self.get_reward(self.state)
 
             logging.debug(f'State after step {t}:  {self.state}')
             logging.debug(f'Reward after step {t}:  {reward_value}')
