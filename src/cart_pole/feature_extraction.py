@@ -202,15 +202,19 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
                 [
                     state.cart_mm_from_center,
                     state.cart_velocity_mm_per_second,
-                    state.pole_angle_deg_from_upright,
                     state.pole_angular_velocity_deg_per_sec
                 ]
             ]),
             refit_before_scaling=refit_scaler
         )[0]
 
+        scaled_features = np.append(
+            scaled_features,
+            math.cos(math.pi * (state.pole_angle_deg_from_upright / 180.0))
+        )
+
         state_feature_vector = np.append(
-            [0.01],
+            [1.0],
             [
                 np.prod(scaled_features[term_indices])
                 for term_indices in self.term_indices

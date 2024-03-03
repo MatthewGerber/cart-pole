@@ -1,4 +1,5 @@
 import logging
+import math
 import time
 from argparse import ArgumentParser
 from enum import Enum, auto
@@ -464,7 +465,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.previous_timestep_epoch: Optional[float] = None
         self.current_timesteps_per_second = IncrementalSampleAverager(initial_value=0.0, alpha=0.25)
         self.timestep_sleep_seconds = 1.0 / self.timesteps_per_second
-        self.min_seconds_for_full_motor_speed_range = 0.25
+        self.min_seconds_for_full_motor_speed_range = 0.5
         self.original_agent_gamma: Optional[float] = None
 
         self.pca9685pw = PulseWaveModulatorPCA9685PW(
@@ -1081,6 +1082,8 @@ class CartPole(ContinuousMdpEnvironment):
                 logging.error(f'Error while setting speed:  {e}')
                 time.sleep(0.1)
 
+        # the cart's rotary encoder uses uniphase tracking. it requires an external signal telling it which direction it
+        # is moving. provide that signal based on the input speed of the motor.
         self.cart_rotary_encoder.clockwise.value = speed > 0
 
     def reset_for_new_run(
@@ -1129,8 +1132,8 @@ class CartPole(ContinuousMdpEnvironment):
 
         return self.state
 
+    @staticmethod
     def get_reward(
-            self,
             state: CartPoleState
     ) -> float:
         """
@@ -1141,14 +1144,9 @@ class CartPole(ContinuousMdpEnvironment):
         """
 
         if state.terminal:
-            reward_value = -1.0
+            reward_value = 0.0
         else:
-            reward_value = np.exp(
-                -np.abs([
-                    self.state.cart_mm_from_center,
-                    self.state.pole_angle_deg_from_upright,
-                ]).sum() / 100.0
-            )
+            reward_value = (math.cos(math.pi * (state.pole_angle_deg_from_upright / 180.0)) + 1.0) / 2.0
 
         return reward_value
 
