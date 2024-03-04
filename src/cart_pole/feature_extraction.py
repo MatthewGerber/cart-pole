@@ -89,16 +89,44 @@ class CartPoleBaselineFeatureExtractor(StateFeatureExtractor):
         :return: State-feature vector.
         """
 
-        # assume that the state will remain fixed and calculate discounted return until the stepwise rewards converge to
-        # a very small value.
-        reward = self.environment.get_reward(state)
-        steps_to_zero = 1 + math.ceil(math.log(0.00001) / math.log(self.environment.agent.gamma))
-        return_value = np.sum([
-            reward * (self.environment.agent.gamma ** step)
-            for step in range(steps_to_zero)
+        # evolve the state forward with constant cart and pole velocities
+        evolution_seconds = 0.5
+        evolution_steps = math.ceil(evolution_seconds * self.environment.timesteps_per_second)
+
+        # noinspection PyUnresolvedReferences
+        terminal_values = [
+            self.environment.is_terminal(
+                state.cart_mm_from_center +
+                (step / self.environment.timesteps_per_second) * state.cart_velocity_mm_per_second
+            )
+            for step in range(evolution_steps)
+        ]
+        if terminal_values[-1]:
+            terminal_values = terminal_values[0:terminal_values.index(True) + 1]
+
+        baseline_return = np.sum([
+            self.environment.get_reward(
+                CartPoleState(
+                    environment=self.environment,
+                    cart_mm_from_center=(
+                        state.cart_mm_from_center +
+                        (step / self.environment.timesteps_per_second) * state.cart_velocity_mm_per_second
+                    ),
+                    cart_velocity_mm_per_sec=state.cart_velocity_mm_per_second,
+                    pole_angle_deg_from_upright=(
+                        state.pole_angle_deg_from_upright +
+                        (step / self.environment.timesteps_per_second) * state.pole_angular_velocity_deg_per_sec
+                    ),
+                    pole_angular_velocity_deg_per_sec=state.pole_angular_velocity_deg_per_sec,
+                    agent=self.environment.agent,
+                    terminal=terminal,
+                    truncated=state.truncated
+                )
+            ) * (self.environment.agent.gamma ** step)
+            for step, terminal in enumerate(terminal_values)
         ])
 
-        return np.array([0.01, return_value])
+        return np.array([baseline_return])
 
     def __init__(
             self,

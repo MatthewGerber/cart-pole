@@ -802,9 +802,9 @@ class CartPole(ContinuousMdpEnvironment):
         speed = self.motor.get_speed()
         self.cart_rotary_encoder.update_state()
         while moving_ticks_remaining > 0:
-            time.sleep(0.75)
+            time.sleep(1.0)
             assert not limit_switch.is_pressed()
-            if abs(self.cart_rotary_encoder.get_degrees_per_second()) < 180.0:
+            if abs(self.cart_rotary_encoder.get_degrees_per_second()) < 50.0:
                 moving_ticks_remaining = moving_ticks_required
                 speed += increment
                 self.set_motor_speed(speed)
@@ -1144,11 +1144,26 @@ class CartPole(ContinuousMdpEnvironment):
         """
 
         if state.terminal:
-            reward_value = 0.0
+            reward_value = -1.0
         else:
-            reward_value = (math.cos(math.pi * (state.pole_angle_deg_from_upright / 180.0)) + 1.0) / 2.0
+            reward_value = (
+                0.0 if np.sign(state.pole_angle_deg_from_upright) == np.sign(state.pole_angular_velocity_deg_per_sec)
+                else (math.cos(math.pi * (state.pole_angle_deg_from_upright / 180.0)) + 1.0) / 2.0
+            )
 
         return reward_value
+
+    def is_terminal(
+            self,
+            cart_mm_from_center: float
+    ) -> bool:
+        """
+        Get whether a distance from center is terminal.
+
+        :param cart_mm_from_center: Distance (mm) from center.
+        """
+
+        return abs(cart_mm_from_center) >= self.soft_limit_mm_from_midline
 
     def advance(
             self,
@@ -1291,11 +1306,10 @@ class CartPole(ContinuousMdpEnvironment):
 
         # terminate for violation of soft limit
         if terminal is None:
-            cart_abs_mm_from_center = abs(cart_mm_from_center)
-            terminal = cart_abs_mm_from_center >= self.soft_limit_mm_from_midline
+            terminal = self.is_terminal(cart_mm_from_center)
             if terminal:
                 logging.info(
-                    f'Cart distance from center ({cart_abs_mm_from_center:.1f} mm) exceeds soft limit '
+                    f'Cart distance from center ({abs(cart_mm_from_center):.1f} mm) exceeds soft limit '
                     f'({self.soft_limit_mm_from_midline} mm). Terminating.'
                 )
 
