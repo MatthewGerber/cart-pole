@@ -288,7 +288,7 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
 
         scaled_features = np.append(
             scaled_features,
-            math.cos(math.pi * (state.pole_angle_deg_from_upright / 180.0))
+            CartPole.zero_to_one_pole_angle(state.pole_angle_deg_from_upright)
         )
 
         state_feature_vector = np.append(

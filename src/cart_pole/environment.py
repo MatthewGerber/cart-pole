@@ -1152,7 +1152,7 @@ class CartPole(ContinuousMdpEnvironment):
                 else CartPole.zero_to_one_pole_angle(state.pole_angle_deg_from_upright)
             )
 
-        return reward_value
+        return reward_value / 100.0
 
     @staticmethod
     def zero_to_one_pole_angle(
