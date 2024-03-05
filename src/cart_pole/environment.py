@@ -467,6 +467,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.timestep_sleep_seconds = 1.0 / self.timesteps_per_second
         self.min_seconds_for_full_motor_speed_range = 0.5
         self.original_agent_gamma: Optional[float] = None
+        self.truncation_gamma = 0.75
 
         self.pca9685pw = PulseWaveModulatorPCA9685PW(
             bus=SMBus('/dev/i2c-1'),
@@ -1021,7 +1022,7 @@ class CartPole(ContinuousMdpEnvironment):
             centering_speed = self.motor_deadzone_speed_left
 
         if fast:
-            centering_speed *= 5
+            centering_speed *= 3
 
         # move toward the center, wait for the center to be reached, and stop the cart.
         logging.info(f'Centering cart at speed:  {centering_speed}')
@@ -1147,11 +1148,37 @@ class CartPole(ContinuousMdpEnvironment):
             reward_value = -1.0
         else:
             reward_value = (
-                0.0 if np.sign(state.pole_angle_deg_from_upright) == np.sign(state.pole_angular_velocity_deg_per_sec)
-                else (math.cos(math.pi * (state.pole_angle_deg_from_upright / 180.0)) + 1.0) / 2.0
+                0.0 if CartPole.pole_is_falling(state)
+                else CartPole.zero_to_one_pole_angle(state.pole_angle_deg_from_upright)
             )
 
         return reward_value
+
+    @staticmethod
+    def zero_to_one_pole_angle(
+            pole_angle_deg_from_upright: float
+    ) -> float:
+        """
+        Convert pole angle from (a) degrees from upright in [-180.0, 180.0] with -180.0 and 180.0 being straight down
+        to (b) [0.0, 1.0] with 0.0 being straight down.
+        """
+
+        return (math.cos(math.pi * (pole_angle_deg_from_upright / 180.0)) + 1.0) / 2.0
+
+    @staticmethod
+    def pole_is_falling(
+            state: CartPoleState
+    ) -> bool:
+        """
+        Get whether the pole is falling.
+
+        :param state: State.
+        """
+
+        return (
+            CartPole.zero_to_one_pole_angle(state.pole_angle_deg_from_upright) >
+            CartPole.zero_to_one_pole_angle(state.pole_angle_deg_from_upright + state.pole_angular_velocity_deg_per_sec)
+        )
 
     def is_terminal(
             self,
@@ -1201,7 +1228,7 @@ class CartPole(ContinuousMdpEnvironment):
             # post-truncation convergence to zero takes too long with gammas close to 1.0 and a slow physicial system.
             # decrease gamma to obtain faster convergence to zero.
             if new_truncation:
-                self.agent.gamma = 0.75
+                self.agent.gamma = self.truncation_gamma
                 logging.info(
                     f'Episode was truncated. Decreased agent.gamma to {self.agent.gamma} to obtain faster convergence '
                     'to zero.'

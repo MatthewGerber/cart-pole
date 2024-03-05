@@ -1,4 +1,5 @@
 import itertools
+import logging
 import math
 from argparse import ArgumentParser
 from typing import List, Tuple, Dict, Optional
@@ -6,6 +7,7 @@ from typing import List, Tuple, Dict, Optional
 import numpy as np
 from cart_pole.environment import CartPoleState, CartPole
 
+from rlai.core import MdpState
 from rlai.models.feature_extraction import StationaryFeatureScaler, FeatureExtractor
 from rlai.state_value.function_approximation.models.feature_extraction import (
     StateFeatureExtractor,
@@ -93,40 +95,86 @@ class CartPoleBaselineFeatureExtractor(StateFeatureExtractor):
         evolution_seconds = 0.5
         evolution_steps = math.ceil(evolution_seconds * self.environment.timesteps_per_second)
 
-        # noinspection PyUnresolvedReferences
-        terminal_values = [
-            self.environment.is_terminal(
-                state.cart_mm_from_center +
-                (step / self.environment.timesteps_per_second) * state.cart_velocity_mm_per_second
-            )
+        step_seconds = [
+            step / self.environment.timesteps_per_second
             for step in range(evolution_steps)
         ]
-        if terminal_values[-1]:
-            terminal_values = terminal_values[0:terminal_values.index(True) + 1]
 
+        step_cart_distance_mm = [
+            seconds * state.cart_velocity_mm_per_second
+            for seconds in step_seconds
+        ]
+
+        # precalculate terminal values
+        step_terminal = [
+            self.environment.is_terminal(state.cart_mm_from_center + cart_distance_mm)
+            for cart_distance_mm in step_cart_distance_mm
+        ]
+
+        # only evolve up until termination
+        if step_terminal[-1]:
+            terminated_length = step_terminal.index(True) + 1
+            step_seconds = step_seconds[0:terminated_length]
+            step_cart_distance_mm = step_cart_distance_mm[0:terminated_length]
+            step_terminal = step_terminal[0:terminated_length]
+
+        step_pole_distance_deg = [
+            seconds * state.pole_angular_velocity_deg_per_sec
+            for seconds in step_seconds
+        ]
+
+        step_gamma = [
+            (
+                1.0 if step == 0
+                else self.pre_truncation_gamma if step < self.environment.T
+                else self.post_truncation_gamma
+            )
+            for step in range(len(step_seconds))
+        ]
+
+        step_discount = [
+            np.prod(step_gamma[0:step + 1])
+            for step in range(len(step_gamma))
+        ]
+
+        # calculate baseline return as sum of discounted evolved rewards
         baseline_return = np.sum([
-            self.environment.get_reward(
+            discount * self.environment.get_reward(
                 CartPoleState(
                     environment=self.environment,
-                    cart_mm_from_center=(
-                        state.cart_mm_from_center +
-                        (step / self.environment.timesteps_per_second) * state.cart_velocity_mm_per_second
-                    ),
+                    cart_mm_from_center=state.cart_mm_from_center + cart_distance_mm,
                     cart_velocity_mm_per_sec=state.cart_velocity_mm_per_second,
-                    pole_angle_deg_from_upright=(
-                        state.pole_angle_deg_from_upright +
-                        (step / self.environment.timesteps_per_second) * state.pole_angular_velocity_deg_per_sec
-                    ),
+                    pole_angle_deg_from_upright=state.pole_angle_deg_from_upright + pole_distance_deg,
                     pole_angular_velocity_deg_per_sec=state.pole_angular_velocity_deg_per_sec,
                     agent=self.environment.agent,
                     terminal=terminal,
                     truncated=state.truncated
                 )
-            ) * (self.environment.agent.gamma ** step)
-            for step, terminal in enumerate(terminal_values)
+            )
+            for cart_distance_mm, pole_distance_deg, terminal, discount in zip(
+                step_cart_distance_mm, step_pole_distance_deg, step_terminal, step_discount
+            )
         ])
 
         return np.array([baseline_return])
+
+    def reset_for_new_run(
+            self,
+            state: MdpState
+    ):
+        """
+        Reset for new run.
+
+        :param state: State.
+        """
+
+        self.pre_truncation_gamma = self.environment.agent.gamma
+        self.post_truncation_gamma = self.environment.truncation_gamma
+
+        logging.info(
+            f'Baseline feature extractor reset with pre-truncation gamma={self.pre_truncation_gamma} and '
+            f'post-truncation gamma={self.post_truncation_gamma}.'
+        )
 
     def __init__(
             self,
@@ -141,6 +189,8 @@ class CartPoleBaselineFeatureExtractor(StateFeatureExtractor):
         super().__init__()
 
         self.environment = environment
+        self.pre_truncation_gamma: Optional[float] = None
+        self.post_truncation_gamma: Optional[float] = None
 
 
 class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
