@@ -92,7 +92,7 @@ class CartPoleBaselineFeatureExtractor(StateFeatureExtractor):
         """
 
         # evolve the state forward with constant cart and pole velocities
-        evolution_seconds = 0.5
+        evolution_seconds = 1.0
         evolution_steps = math.ceil(evolution_seconds * self.environment.timesteps_per_second)
 
         step_seconds = [
@@ -299,12 +299,12 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
             ]
         )
 
-        state_category_feature_vector = self.state_category_interacter.interact(
-            np.array([state.observation]),
-            np.array([state_feature_vector])
-        )[0]
+        # state_category_feature_vector = self.state_category_interacter.interact(
+        #     np.array([state.observation]),
+        #     np.array([state_feature_vector])
+        # )[0]
 
-        return state_category_feature_vector
+        return state_feature_vector
 
     @staticmethod
     def get_interacter() -> OneHotStateIndicatorFeatureInteracter:
