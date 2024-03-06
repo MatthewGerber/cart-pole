@@ -1,5 +1,7 @@
 import logging
 import math
+import os.path
+import pickle
 import time
 from argparse import ArgumentParser
 from datetime import timedelta
@@ -109,6 +111,13 @@ class CartPoleState(MdpState):
             self.pole_angular_velocity_deg_per_sec
         ])
 
+        self.zero_to_one_pole_angle = CartPoleState.zero_to_one_pole_angle_from_degrees(
+            self.pole_angle_deg_from_upright
+        )
+        self.pole_is_falling = self.zero_to_one_pole_angle > self.zero_to_one_pole_angle_from_degrees(
+            self.pole_angle_deg_from_upright + self.pole_angular_velocity_deg_per_sec
+        )
+
         super().__init__(
             i=agent.pi.get_state_i(self.observation),
             AA=environment.actions,
@@ -126,10 +135,9 @@ class CartPoleState(MdpState):
         """
 
         return (
-            f'cart pos={self.cart_mm_from_center:.1f} mm '
-            f'@ {self.cart_velocity_mm_per_second:.1f} mm/s; '
-            f'pole angle={self.pole_angle_deg_from_upright:.1f} deg '
-            f'@ {self.pole_angular_velocity_deg_per_sec:.1f} deg/s'
+            f'cart position={self.cart_mm_from_center:.1f} mm @ {self.cart_velocity_mm_per_second:.1f} mm/s; '
+            f'pole angle={self.pole_angle_deg_from_upright:.1f} deg; 0-1 pole angle={self.zero_to_one_pole_angle}; '
+            f'pole falling={self.pole_is_falling} @ {self.pole_angular_velocity_deg_per_sec:.1f} deg/s'
         )
 
     def __eq__(
@@ -146,31 +154,6 @@ class CartPoleState(MdpState):
             raise ValueError(f'Expected a {CartPoleState}')
 
         return np.allclose(self.observation, other.observation, atol=0.0001)
-
-    def zero_to_one_pole_angle(
-            self
-    ) -> float:
-        """
-        Convert pole angle from (a) degrees from upright in [-180.0, 180.0] with -180.0 and 180.0 being straight down
-        to (b) [0.0, 1.0] with 0.0 being straight down.
-
-        :return: Equivalent pole angle in [0.0, 1.0].
-        """
-
-        return CartPoleState.zero_to_one_pole_angle_from_degrees(self.pole_angle_deg_from_upright)
-
-    def pole_is_falling(
-            self
-    ) -> bool:
-        """
-        Get whether the pole is falling.
-
-        :return: True if pole is falling.
-        """
-
-        return self.zero_to_one_pole_angle() > self.zero_to_one_pole_angle_from_degrees(
-            self.pole_angle_deg_from_upright + self.pole_angular_velocity_deg_per_sec
-        )
 
 
 class CartPoleAction(ContinuousMultiDimensionalAction):
@@ -355,6 +338,16 @@ class CartPole(ContinuousMdpEnvironment):
             help='Number of environment advancement steps to execute per second.'
         )
 
+        parser.add_argument(
+            '--calibration-path',
+            type=str,
+            help=(
+                'Path to calibration pickle file. A new calibration will be saved to this path if it does not exist. '
+                'If the path does exist, then its calibration values will be used instead of performing a new '
+                'calibration.'
+            )
+        )
+
         return parser
 
     @classmethod
@@ -443,13 +436,11 @@ class CartPole(ContinuousMdpEnvironment):
         :return: Reward.
         """
 
-        if state.terminal:
-            reward_value = -1.0
-        else:
-            reward_value = (
-                0.0 if state.pole_is_falling()
-                else state.pole_angle_deg_from_upright.zero_to_one_pole_angle()
-            )
+        reward_value = (
+            -1.0 if state.terminal
+            else 0.0 if state.pole_is_falling
+            else state.zero_to_one_pole_angle
+        )
 
         return reward_value
 
@@ -470,7 +461,8 @@ class CartPole(ContinuousMdpEnvironment):
             pole_rotary_encoder_phase_b_pin: CkPin,
             left_limit_switch_input_pin: CkPin,
             right_limit_switch_input_pin: CkPin,
-            timesteps_per_second: float
+            timesteps_per_second: float,
+            calibration_path: Optional[str]
     ):
         """
         Initialize the cart-pole environment.
@@ -491,6 +483,7 @@ class CartPole(ContinuousMdpEnvironment):
         :param left_limit_switch_input_pin: Left limit pin.
         :param right_limit_switch_input_pin: Right limit pin.
         :param timesteps_per_second: Number of environment advancement steps to execute per second.
+        :param calibration_path: Path to calibration pickle to read/write.
         """
 
         super().__init__(
@@ -514,7 +507,9 @@ class CartPole(ContinuousMdpEnvironment):
         self.left_limit_switch_input_pin = left_limit_switch_input_pin
         self.right_limit_switch_input_pin = right_limit_switch_input_pin
         self.timesteps_per_second = timesteps_per_second
+        self.calibration_path = os.path.expanduser(calibration_path)
 
+        # non-calibrated attributes
         self.midline_mm = self.limit_to_limit_mm / 2.0
         self.soft_limit_mm_from_midline = self.midline_mm - self.soft_limit_standoff_mm - self.cart_width_mm / 2.0
         self.agent: Optional[MdpAgent] = None
@@ -525,6 +520,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.min_seconds_for_full_motor_speed_range = 0.5
         self.original_agent_gamma: Optional[float] = None
         self.truncation_gamma = 0.75
+        self.max_pole_angular_speed_deg_per_second = 720.0
 
         self.pca9685pw = PulseWaveModulatorPCA9685PW(
             bus=SMBus('/dev/i2c-1'),
@@ -564,9 +560,6 @@ class CartPole(ContinuousMdpEnvironment):
             degrees_per_second_step_size=1.0
         )
         self.cart_rotary_encoder.wait_for_startup()
-        self.cart_phase_change_index_at_center: Optional[int] = None
-        self.cart_phase_change_index_at_left_limit: Optional[int] = None
-        self.cart_phase_change_index_at_right_limit: Optional[int] = None
 
         self.pole_rotary_encoder = MultiprocessRotaryEncoder(
             phase_a_pin=self.pole_rotary_encoder_phase_a_pin,
@@ -576,8 +569,6 @@ class CartPole(ContinuousMdpEnvironment):
             degrees_per_second_step_size=1.0
         )
         self.pole_rotary_encoder.wait_for_startup()
-        self.pole_phase_change_index_at_bottom: Optional[int] = None
-        self.pole_degrees_at_bottom: Optional[float] = None
 
         self.left_limit_switch = LimitSwitch(
             input_pin=self.left_limit_switch_input_pin,
@@ -603,17 +594,30 @@ class CartPole(ContinuousMdpEnvironment):
             self.right_limit_released.set()
         self.right_limit_switch.event(lambda s: self.right_limit_event(s.pressed))
 
-        # calibration state and values
-        self.calibrate_on_next_reset = True
-        self.motor_deadzone_speed_left: Optional[int] = None
-        self.motor_deadzone_speed_right: Optional[int] = None
-        self.left_limit_degrees: Optional[float] = None
-        self.right_limit_degrees: Optional[float] = None
-        self.limit_to_limit_degrees: Optional[float] = None
-        self.cart_mm_per_degree: Optional[float] = None
-        self.midline_degrees: Optional[float] = None
-        self.max_cart_speed_mm_per_second: Optional[float] = None
-        self.max_pole_angular_speed_deg_per_second = 720.0  # uncalibrated for now
+        if os.path.exists(self.calibration_path):
+            logging.info(f'Reusing calibration values stored at {self.calibration_path}')
+            try:
+                with open(self.calibration_path, 'rb') as f:
+                    self.__dict__.update(pickle.load(f))
+                self.calibrate_on_next_reset = False
+            except ValueError as e:
+                logging.error(f'Error setting calibration values {e}')
+                self.calibrate_on_next_reset = True
+        else:
+            self.motor_deadzone_speed_left: Optional[int] = None
+            self.motor_deadzone_speed_right: Optional[int] = None
+            self.left_limit_degrees: Optional[float] = None
+            self.right_limit_degrees: Optional[float] = None
+            self.limit_to_limit_degrees: Optional[float] = None
+            self.cart_mm_per_degree: Optional[float] = None
+            self.midline_degrees: Optional[float] = None
+            self.max_cart_speed_mm_per_second: Optional[float] = None
+            self.cart_phase_change_index_at_center: Optional[int] = None
+            self.cart_phase_change_index_at_left_limit: Optional[int] = None
+            self.cart_phase_change_index_at_right_limit: Optional[int] = None
+            self.pole_phase_change_index_at_bottom: Optional[int] = None
+            self.pole_degrees_at_bottom: Optional[float] = None
+            self.calibrate_on_next_reset = True
 
     def __getstate__(
             self
@@ -839,19 +843,31 @@ class CartPole(ContinuousMdpEnvironment):
         self.pole_phase_change_index_at_bottom = self.pole_rotary_encoder.phase_change_index.value
         self.pole_degrees_at_bottom = self.pole_rotary_encoder.get_degrees()
 
-        logging.info(
-            f'Calibrated:\n'
-            f'\tMotor deadzone speed left:  {self.motor_deadzone_speed_left}\n'
-            f'\tMotor deadzone speed right:  {self.motor_deadzone_speed_right}\n'
-            f'\tLeft-limit degrees:  {self.left_limit_degrees}\n'
-            f'\tRight-limit degrees:  {self.right_limit_degrees}\n'
-            f'\tLimit-to-limit degrees:  {self.limit_to_limit_degrees}\n'
-            f'\tCart mm / degree:  {self.cart_mm_per_degree}\n'
-            f'\tMidline degree:  {self.midline_degrees}\n'
-            f'\tPole degrees at bottom:  {self.pole_degrees_at_bottom}\n'
-            f'\tMaximum motor speed change per step:  {self.max_motor_speed_change_per_step}\n'
-            f'\tMaximum cart speed (mm/sec):  {self.max_cart_speed_mm_per_second}\n'
-        )
+        calibration = {
+            'motor_deadzone_speed_left': self.motor_deadzone_speed_left,
+            'motor_deadzone_speed_right': self.motor_deadzone_speed_right,
+            'left_limit_degrees': self.left_limit_degrees,
+            'cart_phase_change_index_at_left_limit': self.cart_phase_change_index_at_left_limit,
+            'right_limit_degrees': self.right_limit_degrees,
+            'cart_phase_change_index_at_right_limit': self.cart_phase_change_index_at_right_limit,
+            'limit_to_limit_degrees': self.limit_to_limit_degrees,
+            'cart_mm_per_degree': self.cart_mm_per_degree,
+            'midline_degrees': self.midline_degrees,
+            'max_cart_speed_mm_per_second': self.max_cart_speed_mm_per_second,
+            'cart_phase_change_index_at_center': self.cart_phase_change_index_at_center,
+            'pole_phase_change_index_at_bottom': self.pole_phase_change_index_at_bottom,
+            'pole_degrees_at_bottom': self.pole_degrees_at_bottom
+        }
+
+        logging.info(f'Calibration:  {calibration}')
+
+        if self.calibration_path != '':
+            logging.info(f'Saving calibration at {self.calibration_path}')
+            try:
+                with open(self.calibration_path, 'wb') as f:
+                    pickle.dump(calibration, f)
+            except ValueError as e:
+                logging.error(f'Error saving calibration:  {e}')
 
     def identify_motor_speed_deadzone_limit(
             self,

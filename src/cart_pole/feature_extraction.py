@@ -284,7 +284,7 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
             ),
             state.cart_velocity_mm_per_second / self.environment.max_cart_speed_mm_per_second,
             state.pole_angular_velocity_deg_per_sec / self.environment.max_pole_angular_speed_deg_per_second,
-            2.0 * state.zero_to_one_pole_angle() - 1.0
+            2.0 * state.zero_to_one_pole_angle - 1.0
         ])
 
         # prepend constant intercept and add multiplicative terms
