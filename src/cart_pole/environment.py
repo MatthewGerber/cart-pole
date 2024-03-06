@@ -2,6 +2,7 @@ import logging
 import math
 import time
 from argparse import ArgumentParser
+from datetime import timedelta
 from enum import Enum, auto
 from threading import Event, RLock
 from typing import List, Tuple, Any, Optional, Dict
@@ -56,6 +57,16 @@ class CartPoleState(MdpState):
     """
     Cart-pole state.
     """
+
+    @staticmethod
+    def zero_to_one_pole_angle_from_degrees(
+            degrees: float
+    ) -> float:
+        """
+        Get [0.0, 1.0] pole angle.
+        """
+
+        return (math.cos(math.pi * (degrees / 180.0)) + 1.0) / 2.0
 
     def __init__(
             self,
@@ -135,6 +146,31 @@ class CartPoleState(MdpState):
             raise ValueError(f'Expected a {CartPoleState}')
 
         return np.allclose(self.observation, other.observation, atol=0.0001)
+
+    def zero_to_one_pole_angle(
+            self
+    ) -> float:
+        """
+        Convert pole angle from (a) degrees from upright in [-180.0, 180.0] with -180.0 and 180.0 being straight down
+        to (b) [0.0, 1.0] with 0.0 being straight down.
+
+        :return: Equivalent pole angle in [0.0, 1.0].
+        """
+
+        return CartPoleState.zero_to_one_pole_angle_from_degrees(self.pole_angle_deg_from_upright)
+
+    def pole_is_falling(
+            self
+    ) -> bool:
+        """
+        Get whether the pole is falling.
+
+        :return: True if pole is falling.
+        """
+
+        return self.zero_to_one_pole_angle() > self.zero_to_one_pole_angle_from_degrees(
+            self.pole_angle_deg_from_upright + self.pole_angular_velocity_deg_per_sec
+        )
 
 
 class CartPoleAction(ContinuousMultiDimensionalAction):
@@ -396,6 +432,27 @@ class CartPole(ContinuousMdpEnvironment):
 
         return position
 
+    @staticmethod
+    def get_reward(
+            state: CartPoleState
+    ) -> float:
+        """
+        Get reward for a state.
+
+        :param state: State.
+        :return: Reward.
+        """
+
+        if state.terminal:
+            reward_value = -1.0
+        else:
+            reward_value = (
+                0.0 if state.pole_is_falling()
+                else state.pole_angle_deg_from_upright.zero_to_one_pole_angle()
+            )
+
+        return reward_value
+
     def __init__(
             self,
             name: str,
@@ -555,6 +612,8 @@ class CartPole(ContinuousMdpEnvironment):
         self.limit_to_limit_degrees: Optional[float] = None
         self.cart_mm_per_degree: Optional[float] = None
         self.midline_degrees: Optional[float] = None
+        self.max_cart_speed_mm_per_second: Optional[float] = None
+        self.max_pole_angular_speed_deg_per_second = 720.0  # uncalibrated for now
 
     def __getstate__(
             self
@@ -744,21 +803,38 @@ class CartPole(ContinuousMdpEnvironment):
             self.cart_phase_change_index_at_left_limit = self.cart_rotary_encoder.phase_change_index.value
             self.right_limit_degrees = self.move_cart_to_right_limit()
             self.cart_phase_change_index_at_right_limit = self.cart_rotary_encoder.phase_change_index.value
+            cart_position = CartPole.CartPosition.RIGHT_OF_CENTER
         else:
             self.right_limit_degrees = self.move_cart_to_right_limit()
             self.cart_phase_change_index_at_right_limit = self.cart_rotary_encoder.phase_change_index.value
             self.left_limit_degrees = self.move_cart_to_left_limit()
             self.cart_phase_change_index_at_left_limit = self.cart_rotary_encoder.phase_change_index.value
+            cart_position = CartPole.CartPosition.LEFT_OF_CENTER
 
         # calibrate mm/degree and the midline
         self.limit_to_limit_degrees = abs(self.left_limit_degrees - self.right_limit_degrees)
         self.cart_mm_per_degree = self.limit_to_limit_mm / self.limit_to_limit_degrees
         self.midline_degrees = (self.left_limit_degrees + self.right_limit_degrees) / 2.0
 
-        # center cart and capture initial conditions of the rotary encoders for subsequent restoration. we captured the
-        # limit state above, the cart hasn't moved, and we're about to center the cart and capture the center state. so,
-        # no need to restore either of these.
-        self.center_cart(False, False)
+        # identify maximum cart speed
+        logging.info('Identifing maximum cart speed...')
+        self.set_motor_speed(
+            speed=-100 if cart_position == CartPole.CartPosition.RIGHT_OF_CENTER else 100,
+            acceleration_interval=timedelta(seconds=0.5)
+        )
+        self.cart_rotary_encoder.wait_for_cart_to_cross_center(
+            original_position=cart_position,
+            left_limit_degrees=self.left_limit_degrees,
+            cart_mm_per_degree=self.cart_mm_per_degree,
+            midline_mm=self.midline_mm,
+            check_delay_seconds=0.1
+        )
+        cart_state: MultiprocessRotaryEncoder.State = self.cart_rotary_encoder.state
+        self.max_cart_speed_mm_per_second = abs(cart_state.degrees_per_second * self.cart_mm_per_degree)
+        self.stop_cart()
+
+        # center cart and capture initial conditions of the rotary encoders at center for subsequent restoration
+        self.center_cart(True, False)
         self.cart_phase_change_index_at_center = self.cart_rotary_encoder.phase_change_index.value
         self.pole_phase_change_index_at_bottom = self.pole_rotary_encoder.phase_change_index.value
         self.pole_degrees_at_bottom = self.pole_rotary_encoder.get_degrees()
@@ -774,6 +850,7 @@ class CartPole(ContinuousMdpEnvironment):
             f'\tMidline degree:  {self.midline_degrees}\n'
             f'\tPole degrees at bottom:  {self.pole_degrees_at_bottom}\n'
             f'\tMaximum motor speed change per step:  {self.max_motor_speed_change_per_step}\n'
+            f'\tMaximum cart speed (mm/sec):  {self.max_cart_speed_mm_per_second}\n'
         )
 
     def identify_motor_speed_deadzone_limit(
@@ -803,7 +880,7 @@ class CartPole(ContinuousMdpEnvironment):
         speed = self.motor.get_speed()
         self.cart_rotary_encoder.update_state()
         while moving_ticks_remaining > 0:
-            time.sleep(1.0)
+            time.sleep(0.5)
             assert not limit_switch.is_pressed()
             if abs(self.cart_rotary_encoder.get_degrees_per_second()) < 50.0:
                 moving_ticks_remaining = moving_ticks_required
@@ -1059,33 +1136,57 @@ class CartPole(ContinuousMdpEnvironment):
 
     def set_motor_speed(
             self,
-            speed: int
+            speed: int,
+            acceleration_interval: Optional[timedelta] = None
     ):
         """
         Set the motor speed.
 
         :param speed: Speed.
+        :param acceleration_interval: Interval of time in which to change to the given speed, or None to do it
+        instantaneously.
         """
 
         if speed < 0 and self.left_limit_switch.is_pressed():
             logging.info('Left limit is pressed. Cannot set motor speed negative.')
         elif speed > 0 and self.right_limit_switch.is_pressed():
             logging.info('Right limit is pressed. Cannot set motor speed positive.')
+        else:
 
-        # we occasionally get i/o errors from the underlying interface to the pwm. this probably has something
-        # to do with attempting to write new values at a high rate like we're doing here. catch any such error
-        # and try again.
-        while True:
-            try:
-                self.motor.set_speed(speed)
-                break
-            except OSError as e:
-                logging.error(f'Error while setting speed:  {e}')
-                time.sleep(0.1)
+            if acceleration_interval is None:
+                intermediate_speeds = [speed]
+                per_speed_sleep_seconds = None
+            else:
+                intermediate_speeds = list(dict.fromkeys([
+                    int(intermediate_speed)
+                    for intermediate_speed in np.linspace(
+                        start=self.motor.get_speed(),
+                        stop=speed,
+                        num=10,
+                        endpoint=True
+                    )
+                ]))
+                per_speed_sleep_seconds = acceleration_interval.total_seconds() / len(intermediate_speeds)
 
-        # the cart's rotary encoder uses uniphase tracking. it requires an external signal telling it which direction it
-        # is moving. provide that signal based on the input speed of the motor.
-        self.cart_rotary_encoder.clockwise.value = speed > 0
+            for intermediate_speed in intermediate_speeds:
+
+                # we occasionally get i/o errors from the underlying interface to the pwm. this probably has something
+                # to do with attempting to write new values at a high rate like we're doing here. catch any such error
+                # and try again.
+                while True:
+                    try:
+                        self.motor.set_speed(intermediate_speed)
+                        break
+                    except OSError as e:
+                        logging.error(f'Error while setting speed:  {e}')
+                        time.sleep(0.1)
+
+                if per_speed_sleep_seconds is not None:
+                    time.sleep(per_speed_sleep_seconds)
+
+            # the cart's rotary encoder uses uniphase tracking. it requires an external signal telling it which
+            # direction it is moving. provide that signal based on the input speed of the motor.
+            self.cart_rotary_encoder.clockwise.value = speed > 0
 
     def reset_for_new_run(
             self,
@@ -1132,53 +1233,6 @@ class CartPole(ContinuousMdpEnvironment):
         logging.info(f'State after reset:  {self.state}')
 
         return self.state
-
-    @staticmethod
-    def get_reward(
-            state: CartPoleState
-    ) -> float:
-        """
-        Get reward for a state.
-
-        :param state: State.
-        :return: Reward.
-        """
-
-        if state.terminal:
-            reward_value = -1.0
-        else:
-            reward_value = (
-                0.0 if CartPole.pole_is_falling(state)
-                else CartPole.zero_to_one_pole_angle(state.pole_angle_deg_from_upright)
-            )
-
-        return reward_value / 10.0
-
-    @staticmethod
-    def zero_to_one_pole_angle(
-            pole_angle_deg_from_upright: float
-    ) -> float:
-        """
-        Convert pole angle from (a) degrees from upright in [-180.0, 180.0] with -180.0 and 180.0 being straight down
-        to (b) [0.0, 1.0] with 0.0 being straight down.
-        """
-
-        return (math.cos(math.pi * (pole_angle_deg_from_upright / 180.0)) + 1.0) / 2.0
-
-    @staticmethod
-    def pole_is_falling(
-            state: CartPoleState
-    ) -> bool:
-        """
-        Get whether the pole is falling.
-
-        :param state: State.
-        """
-
-        return (
-            CartPole.zero_to_one_pole_angle(state.pole_angle_deg_from_upright) >
-            CartPole.zero_to_one_pole_angle(state.pole_angle_deg_from_upright + state.pole_angular_velocity_deg_per_sec)
-        )
 
     def is_terminal(
             self,

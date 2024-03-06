@@ -8,7 +8,7 @@ import numpy as np
 from cart_pole.environment import CartPoleState, CartPole
 
 from rlai.core import MdpState
-from rlai.models.feature_extraction import StationaryFeatureScaler, FeatureExtractor
+from rlai.models.feature_extraction import FeatureExtractor
 from rlai.state_value.function_approximation.models.feature_extraction import (
     StateFeatureExtractor,
     OneHotStateIndicatorFeatureInteracter,
@@ -105,18 +105,17 @@ class CartPoleBaselineFeatureExtractor(StateFeatureExtractor):
             for seconds in step_seconds
         ]
 
-        # precalculate terminal values
         step_terminal = [
             self.environment.is_terminal(state.cart_mm_from_center + cart_distance_mm)
             for cart_distance_mm in step_cart_distance_mm
         ]
 
-        # only evolve up until termination
+        # only evolve up until first terminal distance
         if step_terminal[-1]:
-            terminated_length = step_terminal.index(True) + 1
-            step_seconds = step_seconds[0:terminated_length]
-            step_cart_distance_mm = step_cart_distance_mm[0:terminated_length]
-            step_terminal = step_terminal[0:terminated_length]
+            num_steps_until_termination = step_terminal.index(True) + 1
+            step_seconds = step_seconds[0:num_steps_until_termination]
+            step_cart_distance_mm = step_cart_distance_mm[0:num_steps_until_termination]
+            step_terminal = step_terminal[0:num_steps_until_termination]
 
         step_pole_distance_deg = [
             seconds * state.pole_angular_velocity_deg_per_sec
@@ -151,8 +150,8 @@ class CartPoleBaselineFeatureExtractor(StateFeatureExtractor):
                     truncated=state.truncated
                 )
             )
-            for cart_distance_mm, pole_distance_deg, terminal, discount in zip(
-                step_cart_distance_mm, step_pole_distance_deg, step_terminal, step_discount
+            for discount, cart_distance_mm, pole_distance_deg, terminal in zip(
+                step_discount, step_cart_distance_mm, step_pole_distance_deg, step_terminal
             )
         ])
 
@@ -237,7 +236,7 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         if len(vars(parsed_args)) > 0:  # pragma no cover
             raise ValueError('Parsed args remain. Need to pass to constructor.')
 
-        fex = cls()
+        fex = cls(environment)
 
         return fex, unparsed_args
 
@@ -267,42 +266,35 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         :return: State-feature vector.
         """
 
-        if self.term_indices is None:
+        if self.interaction_term_indices is None:
             indices = list(range(len(state.observation)))
-            self.term_indices = [
+            self.interaction_term_indices = [
                 list(term_indices_tuple)
                 for term_order in range(1, len(state.observation) + 1)
                 for term_indices_tuple in itertools.combinations(indices, term_order)
             ]
 
-        scaled_features = self.feature_scaler.scale_features(
-            feature_matrix=np.array([
-                [
-                    state.cart_mm_from_center,
-                    state.cart_velocity_mm_per_second,
-                    state.pole_angular_velocity_deg_per_sec
-                ]
-            ]),
-            refit_before_scaling=refit_scaler
-        )[0]
+        # scale all features to be in a nominal range of approximately [-1.0, 1.0]. this is only approximate because
+        # the minimum and maximum values of some state dimensions (e.g., pole angular velocity) are unlimited in theory
+        # and uncalibrated in practice.
+        scaled_feature_vector = np.array([
+            (
+                np.sign(state.cart_mm_from_center) *
+                (abs(state.cart_mm_from_center) / self.environment.soft_limit_mm_from_midline)
+            ),
+            state.cart_velocity_mm_per_second / self.environment.max_cart_speed_mm_per_second,
+            state.pole_angular_velocity_deg_per_sec / self.environment.max_pole_angular_speed_deg_per_second,
+            2.0 * state.zero_to_one_pole_angle() - 1.0
+        ])
 
-        scaled_features = np.append(
-            scaled_features,
-            CartPole.zero_to_one_pole_angle(state.pole_angle_deg_from_upright)
-        )
-
+        # prepend constant intercept and add multiplicative terms
         state_feature_vector = np.append(
             [1.0],
             [
-                np.prod(scaled_features[term_indices])
-                for term_indices in self.term_indices
+                np.prod(scaled_feature_vector[term_indices])
+                for term_indices in self.interaction_term_indices
             ]
         )
-
-        # state_category_feature_vector = self.state_category_interacter.interact(
-        #     np.array([state.observation]),
-        #     np.array([state_feature_vector])
-        # )[0]
 
         return state_feature_vector
 
@@ -329,19 +321,20 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
        ])
 
     def __init__(
-            self
+            self,
+            environment: CartPole
     ):
         """
         Initialize the feature extractor.
+
+        :param environment: Environment.
         """
 
         super().__init__()
 
-        self.feature_scaler = StationaryFeatureScaler()
-        self.term_indices: Optional[List[Tuple]] = None
+        self.environment = environment
 
-        # interact features with relevant state categories
-        self.state_category_interacter = CartPolePolicyFeatureExtractor.get_interacter()
+        self.interaction_term_indices: Optional[List[Tuple]] = None
 
     def __getstate__(
             self
