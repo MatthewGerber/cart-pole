@@ -557,6 +557,8 @@ class CartPole(ContinuousMdpEnvironment):
             phase_b_pin=self.cart_rotary_encoder_phase_b_pin,
             phase_changes_per_rotation=1200,
             phase_change_mode=RotaryEncoder.PhaseChangeMode.UNIPHASE_UNIDIRECTIONAL,
+
+            # the rotary encoder's state is updated at a rate of steps/sec. additional smoothing shouldn't be needed.
             degrees_per_second_step_size=1.0
         )
         self.cart_rotary_encoder.wait_for_startup()
@@ -566,6 +568,8 @@ class CartPole(ContinuousMdpEnvironment):
             phase_b_pin=self.pole_rotary_encoder_phase_b_pin,
             phase_change_mode=RotaryEncoder.PhaseChangeMode.BIPHASE,
             phase_changes_per_rotation=1200,
+
+            # the rotary encoder's state is updated at a rate of steps/sec. additional smoothing shouldn't be needed.
             degrees_per_second_step_size=1.0
         )
         self.pole_rotary_encoder.wait_for_startup()
@@ -1324,13 +1328,7 @@ class CartPole(ContinuousMdpEnvironment):
                     elif speed_change > 0:
                         next_speed = self.motor_deadzone_speed_right
 
-                # we occasionally get i/o errors from the underlying interface to the pwm. this probably has something
-                # to do with attempting to write new values at a high rate like we're doing here. catch any such error
-                # and try again next time.
-                try:
-                    self.set_motor_speed(next_speed)
-                except OSError as e:
-                    logging.error(f'Error while setting speed:  {e}')
+                self.set_motor_speed(next_speed)
 
             # adapt the sleep time to obtain the desired steps per second
             if self.previous_timestep_epoch is None:

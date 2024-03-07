@@ -266,6 +266,8 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         :return: State-feature vector.
         """
 
+        # obtain the list of term indices that comprise the fully-interacted model. this includes all combinations of
+        # terms of each order (e.g., single terms, two-way interactions, three-way, etc.).
         if self.interaction_term_indices is None:
             indices = list(range(len(state.observation)))
             self.interaction_term_indices = [
@@ -334,6 +336,7 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
 
         self.environment = environment
 
+        self.state_category_interacter = CartPolePolicyFeatureExtractor.get_interacter()
         self.interaction_term_indices: Optional[List[Tuple]] = None
 
     def __getstate__(
