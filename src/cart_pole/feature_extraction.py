@@ -155,7 +155,7 @@ class CartPoleBaselineFeatureExtractor(StateFeatureExtractor):
             )
         ])
 
-        return np.array([baseline_return])
+        return np.array([1.0, baseline_return])
 
     def reset_for_new_run(
             self,
