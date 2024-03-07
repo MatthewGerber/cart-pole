@@ -1354,8 +1354,8 @@ class CartPole(ContinuousMdpEnvironment):
             # calculate reward
             reward_value = self.get_reward(self.state)
 
-            logging.debug(f'State after step {t}:  {self.state}')
-            logging.debug(f'Reward after step {t}:  {reward_value}')
+            logging.debug(f'State {t}:  {self.state}')
+            logging.debug(f'Reward {t}:  {reward_value}')
 
             return self.state, Reward(None, reward_value)
 
@@ -1428,7 +1428,7 @@ class CartPole(ContinuousMdpEnvironment):
             cart_mm_from_center=cart_mm_from_center,
             cart_velocity_mm_per_sec=(cart_state.degrees_per_second * self.cart_mm_per_degree),
             pole_angle_deg_from_upright=pole_angle_deg_from_upright,
-            pole_angular_velocity_deg_per_sec=pole_state.degrees_per_second,
+            pole_angular_velocity_deg_per_sec=-pole_state.degrees_per_second,  # degrees are reversed
             agent=self.agent,
             terminal=terminal,
             truncated=t is not None and self.T is not None and t >= self.T
