@@ -436,13 +436,11 @@ class CartPole(ContinuousMdpEnvironment):
         :return: Reward.
         """
 
-        reward_value = (
+        return (
             -1.0 if state.terminal
             else 0.0 if state.pole_is_falling
             else state.zero_to_one_pole_angle
         )
-
-        return reward_value
 
     def __init__(
             self,

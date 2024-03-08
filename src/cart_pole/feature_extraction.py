@@ -8,7 +8,7 @@ import numpy as np
 from cart_pole.environment import CartPoleState, CartPole
 
 from rlai.core import MdpState
-from rlai.models.feature_extraction import FeatureExtractor
+from rlai.models.feature_extraction import FeatureExtractor, StationaryFeatureScaler
 from rlai.state_value.function_approximation.models.feature_extraction import (
     StateFeatureExtractor,
     OneHotStateIndicatorFeatureInteracter,
@@ -289,6 +289,8 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
             state.pole_angular_velocity_deg_per_sec / self.environment.max_pole_angular_speed_deg_per_second
         ])
 
+        scaled_feature_vector = self.scaler.scale_features(np.array([scaled_feature_vector]), refit_scaler)[0]
+
         # prepend constant intercept and add multiplicative terms
         state_feature_vector = np.append(
             [1.0],
@@ -336,6 +338,7 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
 
         self.environment = environment
 
+        self.scaler = StationaryFeatureScaler()
         self.state_category_interacter = CartPolePolicyFeatureExtractor.get_interacter()
         self.interaction_term_indices: Optional[List[Tuple]] = None
 
