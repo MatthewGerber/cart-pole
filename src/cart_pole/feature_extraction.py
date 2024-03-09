@@ -289,6 +289,10 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
             state.pole_angular_velocity_deg_per_sec / self.environment.max_pole_angular_speed_deg_per_second
         ])
 
+        # scaling the features to be in [-1.0, 1.0] given their theoretical bounds doesn't mean that the resulting
+        # values will be on comparable scales in practice. for example, the cart or pole velocities might be quite
+        # small relative to their theoretical maximum values, and this will cause issues when fitting the baseline
+        # model and updating the policy. next, standardize them to get comparable scales in practice.
         scaled_feature_vector = self.scaler.scale_features(np.array([scaled_feature_vector]), refit_scaler)[0]
 
         # prepend constant intercept and add multiplicative terms
