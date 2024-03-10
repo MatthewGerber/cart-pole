@@ -114,8 +114,18 @@ class CartPoleState(MdpState):
         self.zero_to_one_pole_angle = CartPoleState.zero_to_one_pole_angle_from_degrees(
             self.pole_angle_deg_from_upright
         )
+
+        # evaluate the pole angle a small fraction of a second (0.00001) from the current time to determine whether it
+        # is falling. if we look too far ahead, we'll go beyond the point where the pole is vertical and the calculation
+        # will provide the wrong answer.
         self.pole_is_falling = self.zero_to_one_pole_angle > self.zero_to_one_pole_angle_from_degrees(
-            self.pole_angle_deg_from_upright + self.pole_angular_velocity_deg_per_sec
+            self.pole_angle_deg_from_upright + (self.pole_angular_velocity_deg_per_sec * 0.00001)
+        )
+
+        # distance from center in range [0.0, 1.0] where 0.0 is the extreme far end and 1.0 is exactly centered.
+        self.zero_to_one_distance_from_center = 1.0 - min(
+            1.0,
+            abs(self.cart_mm_from_center) / environment.soft_limit_mm_from_midline
         )
 
         super().__init__(
@@ -135,9 +145,10 @@ class CartPoleState(MdpState):
         """
 
         return (
-            f'cart position={self.cart_mm_from_center:.1f} mm @ {self.cart_velocity_mm_per_second:.1f} mm/s; '
-            f'pole angle={self.pole_angle_deg_from_upright:.1f} deg; 0-1 pole angle={self.zero_to_one_pole_angle}; '
-            f'pole falling={self.pole_is_falling} @ {self.pole_angular_velocity_deg_per_sec:.1f} deg/s'
+            f'cart pos={self.cart_mm_from_center:.1f} mm; 0-1 pos={self.zero_to_one_distance_from_center:.4f}; '
+            f'vel={self.cart_velocity_mm_per_second:.1f} mm/s; ' 
+            f'pole pos={self.pole_angle_deg_from_upright:.1f} deg; 0-1 pos={self.zero_to_one_pole_angle}; '
+            f'falling={self.pole_is_falling} @ {self.pole_angular_velocity_deg_per_sec:.1f} deg/s'
         )
 
     def __eq__(
@@ -437,9 +448,8 @@ class CartPole(ContinuousMdpEnvironment):
         """
 
         return (
-            -1.0 if state.terminal
-            else 0.0 if state.pole_is_falling
-            else state.zero_to_one_pole_angle
+            0.0 if state.terminal or state.pole_is_falling
+            else state.zero_to_one_pole_angle * state.zero_to_one_distance_from_center
         )
 
     def __init__(
@@ -596,15 +606,8 @@ class CartPole(ContinuousMdpEnvironment):
             self.right_limit_released.set()
         self.right_limit_switch.event(lambda s: self.right_limit_event(s.pressed))
 
-        if os.path.exists(self.calibration_path):
-            logging.info(f'Reusing calibration values stored at {self.calibration_path}')
-            try:
-                with open(self.calibration_path, 'rb') as f:
-                    self.__dict__.update(pickle.load(f))
-                self.calibrate_on_next_reset = False
-            except ValueError as e:
-                logging.error(f'Error setting calibration values {e}')
-                self.calibrate_on_next_reset = True
+        if self.load_calibration():
+            self.calibrate_on_next_reset = False
         else:
             self.motor_deadzone_speed_left: Optional[int] = None
             self.motor_deadzone_speed_right: Optional[int] = None
@@ -715,7 +718,29 @@ class CartPole(ContinuousMdpEnvironment):
             self.right_limit_released.set()
         self.right_limit_switch.event(lambda s: self.right_limit_event(s.pressed))
 
-        self.calibrate_on_next_reset = True
+        self.calibrate_on_next_reset = not self.load_calibration()
+
+    def load_calibration(
+            self
+    ) -> bool:
+        """
+        Load calibration.
+
+        :return: True if calibration was loaded.
+        """
+
+        loaded = False
+
+        if os.path.exists(self.calibration_path):
+            logging.info(f'Loading calibration values stored at {self.calibration_path}')
+            try:
+                with open(self.calibration_path, 'rb') as f:
+                    self.__dict__.update(pickle.load(f))
+                loaded = True
+            except ValueError as e:
+                logging.error(f'Error loading calibration values {e}')
+
+        return loaded
 
     def get_state_space_dimensionality(
             self
