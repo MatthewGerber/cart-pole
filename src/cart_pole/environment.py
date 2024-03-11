@@ -77,6 +77,7 @@ class CartPoleState(MdpState):
             cart_velocity_mm_per_sec: float,
             pole_angle_deg_from_upright: float,
             pole_angular_velocity_deg_per_sec: float,
+            step: int,
             agent: MdpAgent,
             terminal: bool,
             truncated: bool
@@ -90,6 +91,7 @@ class CartPoleState(MdpState):
         :param pole_angle_deg_from_upright: Pole angle as degrees left of (negative), right of (positive), or at (zero)
         upright.
         :param pole_angular_velocity_deg_per_sec: Pole angular velocity (deg/sec).
+        :param step: Time step.
         :param agent: Agent.
         :param terminal: Whether the state is terminal, meaning the episode has terminated naturally due to the
         dynamics of the environment. For example, the natural dynamics of the environment terminate when the cart goes
@@ -103,6 +105,7 @@ class CartPoleState(MdpState):
         self.cart_velocity_mm_per_second = cart_velocity_mm_per_sec
         self.pole_angle_deg_from_upright = pole_angle_deg_from_upright
         self.pole_angular_velocity_deg_per_sec = pole_angular_velocity_deg_per_sec
+        self.step = step
 
         self.observation = np.array([
             self.cart_mm_from_center,
@@ -145,9 +148,9 @@ class CartPoleState(MdpState):
         """
 
         return (
-            f'cart pos={self.cart_mm_from_center:.1f} mm; 0-1 pos={self.zero_to_one_distance_from_center:.4f}; '
+            f'cart pos={self.cart_mm_from_center:.1f} mm; 0-1 pos={self.zero_to_one_distance_from_center:.2f}; '
             f'vel={self.cart_velocity_mm_per_second:.1f} mm/s; ' 
-            f'pole pos={self.pole_angle_deg_from_upright:.1f} deg; 0-1 pos={self.zero_to_one_pole_angle}; '
+            f'pole pos={self.pole_angle_deg_from_upright:.1f} deg; 0-1 pos={self.zero_to_one_pole_angle:.2f}; '
             f'falling={self.pole_is_falling} @ {self.pole_angular_velocity_deg_per_sec:.1f} deg/s'
         )
 
@@ -436,8 +439,8 @@ class CartPole(ContinuousMdpEnvironment):
 
         return position
 
-    @staticmethod
     def get_reward(
+            self,
             state: CartPoleState
     ) -> float:
         """
@@ -447,10 +450,17 @@ class CartPole(ContinuousMdpEnvironment):
         :return: Reward.
         """
 
-        return (
-            0.0 if state.terminal or state.pole_is_falling
-            else state.zero_to_one_pole_angle * state.zero_to_one_distance_from_center
-        )
+        reward = 0.0
+
+        if not state.terminal and len(self.rewards_pole_positions_full_limit_seconds) > 0:
+            reward_pole_position, full_limit_seconds = self.rewards_pole_positions_full_limit_seconds[0]
+            if state.zero_to_one_pole_angle > reward_pole_position:
+                full_limit_steps = self.timesteps_per_second * full_limit_seconds
+                reward_efficiency = full_limit_steps / state.step
+                reward = state.zero_to_one_pole_angle * reward_efficiency
+                self.rewards_pole_positions_full_limit_seconds = self.rewards_pole_positions_full_limit_seconds[1:]
+
+        return reward
 
     def __init__(
             self,
@@ -529,6 +539,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.original_agent_gamma: Optional[float] = None
         self.truncation_gamma = 0.75
         self.max_pole_angular_speed_deg_per_second = 720.0
+        self.rewards_pole_positions_full_limit_seconds = []
 
         self.pca9685pw = PulseWaveModulatorPCA9685PW(
             bus=SMBus('/dev/i2c-1'),
@@ -1246,6 +1257,20 @@ class CartPole(ContinuousMdpEnvironment):
 
         super().reset_for_new_run(self.agent)
 
+        # incremental reward positions and the maximum seconds permitted to obtain full reward
+        self.rewards_pole_positions_full_limit_seconds = [
+            (position, (idx + 1) / 10.0)
+            for idx, position in enumerate(np.linspace(
+                start=0.0,
+                stop=1.0,
+                num=100,
+                endpoint=True
+            ).tolist())
+        ]
+        logging.debug(
+            f'Reward positions and full-reward limits (seconds):  {self.rewards_pole_positions_full_limit_seconds}'
+        )
+
         self.agent = agent
 
         # track or reset original agent gamma value (see advance for post-truncation convergence issue)
@@ -1452,6 +1477,7 @@ class CartPole(ContinuousMdpEnvironment):
             cart_velocity_mm_per_sec=(cart_state.degrees_per_second * self.cart_mm_per_degree),
             pole_angle_deg_from_upright=pole_angle_deg_from_upright,
             pole_angular_velocity_deg_per_sec=-pole_state.degrees_per_second,  # degrees are reversed
+            step=t,
             agent=self.agent,
             terminal=terminal,
             truncated=t is not None and self.T is not None and t >= self.T

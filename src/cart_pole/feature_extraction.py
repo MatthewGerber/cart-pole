@@ -145,14 +145,15 @@ class CartPoleBaselineFeatureExtractor(StateFeatureExtractor):
                     cart_velocity_mm_per_sec=state.cart_velocity_mm_per_second,
                     pole_angle_deg_from_upright=state.pole_angle_deg_from_upright + pole_distance_deg,
                     pole_angular_velocity_deg_per_sec=state.pole_angular_velocity_deg_per_sec,
+                    step=state.step + step,
                     agent=self.environment.agent,
                     terminal=terminal,
                     truncated=state.truncated
                 )
             )
-            for discount, cart_distance_mm, pole_distance_deg, terminal in zip(
+            for step, (discount, cart_distance_mm, pole_distance_deg, terminal) in enumerate(zip(
                 step_discount, step_cart_distance_mm, step_pole_distance_deg, step_terminal
-            )
+            ))
         ])
 
         return np.array([1.0, baseline_return])
