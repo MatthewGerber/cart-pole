@@ -452,12 +452,14 @@ class CartPole(ContinuousMdpEnvironment):
 
         reward = 0.0
 
-        if not state.terminal and len(self.rewards_pole_positions_full_limit_seconds) > 0:
+        if state.terminal:
+            reward = -0.1
+        elif len(self.rewards_pole_positions_full_limit_seconds) > 0:
             reward_pole_position, full_limit_seconds = self.rewards_pole_positions_full_limit_seconds[0]
             if state.zero_to_one_pole_angle > reward_pole_position:
                 full_limit_steps = self.timesteps_per_second * full_limit_seconds
                 reward_efficiency = full_limit_steps / state.step
-                reward = state.zero_to_one_pole_angle * reward_efficiency
+                reward = state.zero_to_one_pole_angle * state.zero_to_one_distance_from_center * reward_efficiency
                 self.rewards_pole_positions_full_limit_seconds = self.rewards_pole_positions_full_limit_seconds[1:]
 
         return reward
@@ -1258,12 +1260,14 @@ class CartPole(ContinuousMdpEnvironment):
         super().reset_for_new_run(self.agent)
 
         # incremental reward positions and the maximum seconds permitted to obtain full reward
+        num_reward_increments = 500
+        num_seconds_to_upright = 10.0
         self.rewards_pole_positions_full_limit_seconds = [
-            (position, (idx + 1) / 10.0)
+            (position, num_seconds_to_upright * ((idx + 1) / num_reward_increments))
             for idx, position in enumerate(np.linspace(
                 start=0.0,
                 stop=1.0,
-                num=100,
+                num=num_reward_increments,
                 endpoint=True
             ).tolist())
         ]
