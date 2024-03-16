@@ -453,14 +453,16 @@ class CartPole(ContinuousMdpEnvironment):
         reward = 0.0
 
         if state.terminal:
-            reward = -0.1
-        elif len(self.rewards_pole_positions_full_limit_seconds) > 0:
-            reward_pole_position, full_limit_seconds = self.rewards_pole_positions_full_limit_seconds[0]
-            if state.zero_to_one_pole_angle > reward_pole_position:
-                full_limit_steps = self.timesteps_per_second * full_limit_seconds
-                reward_efficiency = full_limit_steps / state.step
+            reward = -0.25
+        elif len(self.incremental_rewards_pole_positions) > 0:
+            incremental_reward_pole_position = self.incremental_rewards_pole_positions[0]
+            if state.zero_to_one_pole_angle > incremental_reward_pole_position:
+                reward_efficiency = (
+                    self.max_steps_for_full_incremental_reward / (state.step - self.previous_incremental_reward_step)
+                )
                 reward = state.zero_to_one_pole_angle * state.zero_to_one_distance_from_center * reward_efficiency
-                self.rewards_pole_positions_full_limit_seconds = self.rewards_pole_positions_full_limit_seconds[1:]
+                self.incremental_rewards_pole_positions = self.incremental_rewards_pole_positions[1:]
+                self.previous_incremental_reward_step = state.step
 
         return reward
 
@@ -537,11 +539,17 @@ class CartPole(ContinuousMdpEnvironment):
         self.previous_timestep_epoch: Optional[float] = None
         self.current_timesteps_per_second = IncrementalSampleAverager(initial_value=0.0, alpha=0.25)
         self.timestep_sleep_seconds = 1.0 / self.timesteps_per_second
-        self.min_seconds_for_full_motor_speed_range = 0.5
+        self.min_seconds_for_full_motor_speed_range = 0.25
         self.original_agent_gamma: Optional[float] = None
         self.truncation_gamma = 0.75
         self.max_pole_angular_speed_deg_per_second = 720.0
-        self.rewards_pole_positions_full_limit_seconds = []
+        self.num_incremental_rewards = 500
+        self.max_seconds_to_upright_for_full_credit = 10.0
+        self.max_steps_for_full_incremental_reward = (
+            self.timesteps_per_second * (self.max_seconds_to_upright_for_full_credit / self.num_incremental_rewards)
+        )
+        self.incremental_rewards_pole_positions = []
+        self.previous_incremental_reward_step = 0
 
         self.pca9685pw = PulseWaveModulatorPCA9685PW(
             bus=SMBus('/dev/i2c-1'),
@@ -1259,21 +1267,14 @@ class CartPole(ContinuousMdpEnvironment):
 
         super().reset_for_new_run(self.agent)
 
-        # incremental reward positions and the maximum seconds permitted to obtain full reward
-        num_reward_increments = 500
-        num_seconds_to_upright = 10.0
-        self.rewards_pole_positions_full_limit_seconds = [
-            (position, num_seconds_to_upright * ((idx + 1) / num_reward_increments))
-            for idx, position in enumerate(np.linspace(
-                start=0.0,
-                stop=1.0,
-                num=num_reward_increments,
-                endpoint=True
-            ).tolist())
-        ]
-        logging.debug(
-            f'Reward positions and full-reward limits (seconds):  {self.rewards_pole_positions_full_limit_seconds}'
-        )
+        # reset incremental rewards
+        self.incremental_rewards_pole_positions = np.linspace(
+            start=0.0,
+            stop=1.0,
+            num=self.num_incremental_rewards,
+            endpoint=True
+        ).tolist()
+        self.previous_incremental_reward_step = 0
 
         self.agent = agent
 
