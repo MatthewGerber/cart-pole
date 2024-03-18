@@ -453,7 +453,7 @@ class CartPole(ContinuousMdpEnvironment):
         reward = 0.0
 
         if state.terminal:
-            reward = -0.25
+            reward = -1.0
         elif len(self.incremental_rewards_pole_positions) > 0:
             incremental_reward_pole_position = self.incremental_rewards_pole_positions[0]
             if state.zero_to_one_pole_angle > incremental_reward_pole_position:
@@ -543,8 +543,8 @@ class CartPole(ContinuousMdpEnvironment):
         self.original_agent_gamma: Optional[float] = None
         self.truncation_gamma = 0.75
         self.max_pole_angular_speed_deg_per_second = 720.0
-        self.num_incremental_rewards = 500
-        self.max_seconds_to_upright_for_full_credit = 10.0
+        self.num_incremental_rewards = 180
+        self.max_seconds_to_upright_for_full_credit = 5.0
         self.max_steps_for_full_incremental_reward = (
             self.timesteps_per_second * (self.max_seconds_to_upright_for_full_credit / self.num_incremental_rewards)
         )
