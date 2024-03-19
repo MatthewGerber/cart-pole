@@ -452,15 +452,21 @@ class CartPole(ContinuousMdpEnvironment):
 
         reward = 0.0
 
+        pole_angle_cart_distance_reward = state.zero_to_one_pole_angle * (state.zero_to_one_distance_from_center ** 5)
+
         if state.terminal:
             reward = -1.0
+        elif abs(state.pole_angle_deg_from_upright) <= 10.0:
+            if abs(state.pole_angular_velocity_deg_per_sec) <= 10.0:
+                reward = pole_angle_cart_distance_reward
         elif len(self.incremental_rewards_pole_positions) > 0:
             incremental_reward_pole_position = self.incremental_rewards_pole_positions[0]
             if state.zero_to_one_pole_angle > incremental_reward_pole_position:
-                reward_efficiency = (
+                reward_efficiency = min(
+                    1.0,
                     self.max_steps_for_full_incremental_reward / (state.step - self.previous_incremental_reward_step)
                 )
-                reward = state.zero_to_one_pole_angle * state.zero_to_one_distance_from_center * reward_efficiency
+                reward = pole_angle_cart_distance_reward * reward_efficiency
                 self.incremental_rewards_pole_positions = self.incremental_rewards_pole_positions[1:]
                 self.previous_incremental_reward_step = state.step
 
@@ -539,11 +545,11 @@ class CartPole(ContinuousMdpEnvironment):
         self.previous_timestep_epoch: Optional[float] = None
         self.current_timesteps_per_second = IncrementalSampleAverager(initial_value=0.0, alpha=0.25)
         self.timestep_sleep_seconds = 1.0 / self.timesteps_per_second
-        self.min_seconds_for_full_motor_speed_range = 0.25
+        self.min_seconds_for_full_motor_speed_range = 0.1
         self.original_agent_gamma: Optional[float] = None
         self.truncation_gamma = 0.75
         self.max_pole_angular_speed_deg_per_second = 720.0
-        self.num_incremental_rewards = 180
+        self.num_incremental_rewards = 250
         self.max_seconds_to_upright_for_full_credit = 5.0
         self.max_steps_for_full_incremental_reward = (
             self.timesteps_per_second * (self.max_seconds_to_upright_for_full_credit / self.num_incremental_rewards)
@@ -1286,6 +1292,10 @@ class CartPole(ContinuousMdpEnvironment):
             logging.info(f'Restored agent.gamma to {self.agent.gamma}.')
 
         self.motor.start()
+
+        # need to wait for stationary pole, in case the apparatus is too close to a wall and will hit it while moving
+        # to the limit with the pole swinging.
+        self.pole_rotary_encoder.wait_for_stationarity()
 
         # calibrate if needed, which leaves the cart centered in its initial conditions with the state captured.
         if self.calibrate_on_next_reset:

@@ -305,7 +305,13 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
             ]
         )
 
-        return state_feature_vector
+        # interact the feature vector according to its state segment
+        state_indicator_feature_vector = self.state_category_interacter.interact(
+            np.array([state.observation]),
+            np.array([state_feature_vector])
+        )[0]
+
+        return state_indicator_feature_vector
 
     @staticmethod
     def get_interacter() -> OneHotStateIndicatorFeatureInteracter:
@@ -321,7 +327,7 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
             StateDimensionLambda(
                 2,
                 lambda v: (
-                    0 if abs(v) <= 30.0
+                    0 if abs(v) <= 10.0
                     else 1
                 ),
                 list(range(2))
