@@ -469,6 +469,7 @@ class CartPole(ContinuousMdpEnvironment):
         elif abs(state.pole_angle_deg_from_upright) <= self.pole_upright_window_degrees:
             if abs(state.pole_angular_velocity_deg_per_sec) <= self.pole_upright_window_degrees:
                 reward = pole_angle_cart_distance_reward
+                self.time_step_axv_lines[state.step] = 'v-reward'
         elif len(self.incremental_rewards_pole_positions) > 0:
             incremental_reward_pole_position = self.incremental_rewards_pole_positions[0]
             if state.zero_to_one_pole_angle > incremental_reward_pole_position:
