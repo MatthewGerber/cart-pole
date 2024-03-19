@@ -60,6 +60,16 @@ class CartPoleState(MdpState):
     Cart-pole state.
     """
 
+    class Dimension(Enum):
+        """
+        Dimensions.
+        """
+
+        CartPosition = 0
+        CartVelocity = 1
+        PoleAngle = 2
+        PoleVelocity = 3
+
     @staticmethod
     def zero_to_one_pole_angle_from_degrees(
             degrees: float
@@ -456,8 +466,8 @@ class CartPole(ContinuousMdpEnvironment):
 
         if state.terminal:
             reward = -1.0
-        elif abs(state.pole_angle_deg_from_upright) <= 10.0:
-            if abs(state.pole_angular_velocity_deg_per_sec) <= 10.0:
+        elif abs(state.pole_angle_deg_from_upright) <= self.pole_upright_window_degrees:
+            if abs(state.pole_angular_velocity_deg_per_sec) <= self.pole_upright_window_degrees:
                 reward = pole_angle_cart_distance_reward
         elif len(self.incremental_rewards_pole_positions) > 0:
             incremental_reward_pole_position = self.incremental_rewards_pole_positions[0]
@@ -556,6 +566,7 @@ class CartPole(ContinuousMdpEnvironment):
         )
         self.incremental_rewards_pole_positions = []
         self.previous_incremental_reward_step = 0
+        self.pole_upright_window_degrees = 15.0
 
         self.pca9685pw = PulseWaveModulatorPCA9685PW(
             bus=SMBus('/dev/i2c-1'),

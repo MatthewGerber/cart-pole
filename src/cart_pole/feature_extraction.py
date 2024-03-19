@@ -290,10 +290,11 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
             state.pole_angular_velocity_deg_per_sec / self.environment.max_pole_angular_speed_deg_per_second
         ])
 
-        # scaling the features to be in [-1.0, 1.0] given their theoretical bounds doesn't mean that the resulting
-        # values will be on comparable scales in practice. for example, the cart or pole velocities might be quite
-        # small relative to their theoretical maximum values, and this will cause issues when fitting the baseline
-        # model and updating the policy. next, standardize them to get comparable scales in practice.
+        # scaling the features to be in [-1.0, 1.0] according to their theoretical bounds doesn't mean that the
+        # resulting actual values will be on comparable scales when running. for example, the observed cart and pole
+        # velocities might be quite small relative to their ranges and the observed values of cart and pole positions.
+        # these differences in observed scale across features result in the usual issues pertaining to step sizes.
+        # standardize the scaled feature vector so that a single step size will be feasible.
         scaled_feature_vector = self.scaler.scale_features(np.array([scaled_feature_vector]), refit_scaler)[0]
 
         # prepend constant intercept and add multiplicative terms
@@ -313,8 +314,9 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
 
         return state_indicator_feature_vector
 
-    @staticmethod
-    def get_interacter() -> OneHotStateIndicatorFeatureInteracter:
+    def get_interacter(
+            self
+    ) -> OneHotStateIndicatorFeatureInteracter:
         """
         Get interacter.
 
@@ -325,9 +327,9 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
 
             # use a separate policy when the pole is nearly upright
             StateDimensionLambda(
-                2,
+                CartPoleState.Dimension.PoleAngle.value,
                 lambda v: (
-                    0 if abs(v) <= 10.0
+                    0 if abs(v) <= self.environment.pole_upright_window_degrees
                     else 1
                 ),
                 list(range(2))
@@ -350,7 +352,7 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         self.environment = environment
 
         self.scaler = StationaryFeatureScaler()
-        self.state_category_interacter = CartPolePolicyFeatureExtractor.get_interacter()
+        self.state_category_interacter = self.get_interacter()
         self.interaction_term_indices: Optional[List[Tuple]] = None
 
     def __getstate__(
@@ -378,6 +380,6 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         :param state: State.
         """
 
-        state['state_category_interacter'] = CartPolePolicyFeatureExtractor.get_interacter()
-
         self.__dict__ = state
+
+        state['state_category_interacter'] = self.get_interacter()
