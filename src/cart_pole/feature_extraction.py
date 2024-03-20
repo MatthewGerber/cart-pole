@@ -290,53 +290,29 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
             state.pole_angular_velocity_deg_per_sec / self.environment.max_pole_angular_speed_deg_per_second
         ])
 
-        state_matrix = np.array([state.observation])
-
-        # ranging the features to be in [-1.0, 1.0] according to their theoretical bounds doesn't mean that the
-        # resulting observed values will be on comparable scales when running. for example, the observed cart and pole
+        # scaling the features to be in [-1.0, 1.0] according to their theoretical bounds doesn't mean that the
+        # resulting actual values will be on comparable scales when running. for example, the observed cart and pole
         # velocities might be quite small relative to their ranges and the observed values of cart and pole positions.
         # these differences in observed scale across features result in the usual issues pertaining to step sizes.
-        # standardize the scaled feature vector so that a single step size will be feasible. there's a wrinkle here, in
-        # that we are doing state-segmented feature extraction. so we want to standardize the features in their state-
-        # segmented representation. first get the state-segmented representation of the ranged feature vector, along
-        # with a mask that will help us pull out the standardized feature vector later.
-        state_segment_ranged_feature_vector_with_mask = self.state_category_interacter.interact(
-            state_matrix,
-            np.array([
-                ranged_feature_vector,
-                np.ones_like(ranged_feature_vector)
-            ])
+        # standardize the scaled feature vector so that a single step size will be feasible.
+        scaled_feature_vector = self.scaler.scale_features(np.array([ranged_feature_vector]), refit_scaler)[0]
+
+        # prepend constant intercept and add multiplicative terms
+        state_feature_vector = np.append(
+            [1.0],
+            [
+                np.prod(scaled_feature_vector[term_indices])
+                for term_indices in self.interaction_term_indices
+            ]
         )
 
-        # now standardize the state-segmented ranged feature vector and pull out the resulting values using the mask
-        state_segment_ranged_feature_vector = state_segment_ranged_feature_vector_with_mask[0]
-        scaled_feature_vector = self.scaler.scale_features(
-            np.array([state_segment_ranged_feature_vector]),
-            refit_scaler
-        )[0]
-        mask = state_segment_ranged_feature_vector_with_mask[1]
-        scaled_feature_vector = scaled_feature_vector[np.argwhere(mask == 1).flatten()]
-        assert len(scaled_feature_vector) == len(ranged_feature_vector)
-
-        # add multiplicative interaction terms based on the standardized features
-        interaction_term_feature_vector = np.array([
-            np.prod(scaled_feature_vector[term_indices])
-            for term_indices in self.interaction_term_indices
-        ])
-
         # interact the feature vector according to its state segment
-        state_segment_interaction_term_feature_vector = self.state_category_interacter.interact(
-            state_matrix,
-            np.array([interaction_term_feature_vector])
+        state_indicator_feature_vector = self.state_category_interacter.interact(
+            np.array([state.observation]),
+            np.array([state_feature_vector])
         )[0]
 
-        # add state-segmented intercepts
-        state_segment_intercepts = self.state_category_interacter.interact(
-            state_matrix,
-            np.array([1.0])
-        )[0]
-
-        return np.concatenate([state_segment_intercepts, state_segment_interaction_term_feature_vector])
+        return state_indicator_feature_vector
 
     def get_interacter(
             self
