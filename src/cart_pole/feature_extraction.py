@@ -329,7 +329,7 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
             StateDimensionLambda(
                 CartPoleState.Dimension.PoleAngle.value,
                 lambda v: (
-                    0 if abs(v) <= self.environment.pole_upright_window_degrees
+                    0 if abs(v) <= self.environment.pole_upright_policy_max_degrees
                     else 1
                 ),
                 list(range(2))

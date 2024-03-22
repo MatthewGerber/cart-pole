@@ -462,34 +462,26 @@ class CartPole(ContinuousMdpEnvironment):
 
         reward = 0.0
 
-        pole_angle_cart_distance_reward = state.zero_to_one_pole_angle * (state.zero_to_one_distance_from_center ** 5)
+        pole_angle_cart_distance_reward = (
+            state.zero_to_one_pole_angle *
+            max(0.0, state.zero_to_one_distance_from_center - 0.25)
+        )
 
         if state.terminal:
             reward = -1.0
         elif (
-            abs(state.pole_angle_deg_from_upright) <= self.pole_upright_window_degrees and
-            abs(state.pole_angular_velocity_deg_per_sec) <= self.pole_upright_window_degrees * 2.0
+            abs(state.pole_angle_deg_from_upright) <= self.pole_upright_policy_max_degrees and
+            abs(state.pole_angular_velocity_deg_per_sec) <= self.pole_upright_policy_max_degrees
         ):
             reward = pole_angle_cart_distance_reward
             self.time_step_axv_lines[state.step] = 'v-reward'
         else:
-
-            obtained_incremental_reward = False
-
             while (
                 len(self.incremental_rewards_pole_positions) > 0 and
                 state.zero_to_one_pole_angle > self.incremental_rewards_pole_positions[0]
             ):
-                reward_efficiency = min(
-                    1.0,
-                    self.max_steps_for_full_incremental_reward / (state.step - self.previous_incremental_reward_step)
-                )
-                reward += pole_angle_cart_distance_reward * reward_efficiency
+                reward += pole_angle_cart_distance_reward
                 self.incremental_rewards_pole_positions = self.incremental_rewards_pole_positions[1:]
-                obtained_incremental_reward = True
-
-            if obtained_incremental_reward:
-                self.previous_incremental_reward_step = state.step
 
         return reward
 
@@ -571,13 +563,8 @@ class CartPole(ContinuousMdpEnvironment):
         self.truncation_gamma = 0.75
         self.max_pole_angular_speed_deg_per_second = 720.0
         self.num_incremental_rewards = 250
-        self.max_seconds_to_upright_for_full_credit = 5.0
-        self.max_steps_for_full_incremental_reward = (
-            self.timesteps_per_second * (self.max_seconds_to_upright_for_full_credit / self.num_incremental_rewards)
-        )
         self.incremental_rewards_pole_positions = []
-        self.previous_incremental_reward_step = 0
-        self.pole_upright_window_degrees = 15.0
+        self.pole_upright_policy_max_degrees = 30.0
 
         self.pca9685pw = PulseWaveModulatorPCA9685PW(
             bus=SMBus('/dev/i2c-1'),
@@ -1302,7 +1289,6 @@ class CartPole(ContinuousMdpEnvironment):
             num=self.num_incremental_rewards,
             endpoint=True
         ).tolist()
-        self.previous_incremental_reward_step = 0
 
         self.agent = agent
 
