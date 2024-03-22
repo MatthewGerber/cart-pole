@@ -467,6 +467,9 @@ class CartPole(ContinuousMdpEnvironment):
             max(0.0, state.zero_to_one_distance_from_center - 0.25)
         )
 
+        # TODO:  Two issues to fix - (1) relative magnitudes of incremental reward spikes vs. upright rewards, and (2)
+        #  negative rewards for swinging the pole downward when it is already moving too fast.
+
         if state.terminal:
             reward = -1.0
         elif (
