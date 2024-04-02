@@ -467,8 +467,7 @@ class CartPole(ContinuousMdpEnvironment):
             max(0.0, state.zero_to_one_distance_from_center - 0.25)
         )
 
-        # TODO:  Two issues to fix - (1) relative magnitudes of incremental reward spikes vs. upright rewards, and (2)
-        #  negative rewards for swinging the pole downward when it is already moving too fast.
+        # TODO:  negative rewards for swinging the pole downward when it is already moving too fast
 
         if state.terminal:
             reward = -1.0
@@ -479,12 +478,24 @@ class CartPole(ContinuousMdpEnvironment):
             reward = pole_angle_cart_distance_reward
             self.time_step_axv_lines[state.step] = 'v-reward'
         else:
-            while (
-                len(self.incremental_rewards_pole_positions) > 0 and
-                state.zero_to_one_pole_angle > self.incremental_rewards_pole_positions[0]
-            ):
-                reward += pole_angle_cart_distance_reward
-                self.incremental_rewards_pole_positions = self.incremental_rewards_pole_positions[1:]
+
+            if len(self.incremental_rewards_pole_positions) == 0:
+                idx_of_reward_position_beyond_current = 0
+            else:
+                idx_of_reward_position_beyond_current = next(
+                    (
+                        idx
+                        for idx, position in enumerate(self.incremental_rewards_pole_positions)
+                        if position > state.zero_to_one_pole_angle
+                    ),
+                    len(self.incremental_rewards_pole_positions)
+                )
+
+            if idx_of_reward_position_beyond_current > 0:
+                reward = pole_angle_cart_distance_reward
+                self.incremental_rewards_pole_positions = (
+                    self.incremental_rewards_pole_positions[idx_of_reward_position_beyond_current:]
+                )
 
         return reward
 
@@ -1441,7 +1452,7 @@ class CartPole(ContinuousMdpEnvironment):
         The episode will not reach a natural termination state. Instead, the episode loop will exit. This function is
         called to provide the environment an opportunity to clean up resources. This is not usually needed with
         simulation-based environments since breaking the episode loop prevents any further episode advancement. However,
-        in physicial environments the system might continue to advance in the absence of further calls to the advance
+        in physical environments the system might continue to advance in the absence of further calls to the advance
         function. This function allows the environment to perform any adjustments that are normally required upon
         termination.
         """
