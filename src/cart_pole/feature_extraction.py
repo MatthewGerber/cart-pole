@@ -106,7 +106,7 @@ class CartPoleBaselineFeatureExtractor(StateFeatureExtractor):
         ]
 
         step_terminal = [
-            self.environment.is_terminal(state.cart_mm_from_center + cart_distance_mm)
+            self.environment.cart_violates_soft_limit(state.cart_mm_from_center + cart_distance_mm)
             for cart_distance_mm in step_cart_distance_mm
         ]
 
@@ -323,19 +323,14 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         :return: Interacter.
         """
 
+        # use a separate policy per phase
         return OneHotStateIndicatorFeatureInteracter([
-
-            # use a separate policy when the pole is nearly upright
             StateDimensionLambda(
                 CartPoleState.Dimension.PoleAngle.value,
-                lambda v: (
-                    0 if abs(v) <= self.environment.pole_upright_policy_max_degrees
-                    else 1
-                ),
-                list(range(2))
+                lambda _: self.environment.episode_phase.value,
+                [episode_phase.value for episode_phase in CartPole.EpisodePhase]
             )
-
-       ])
+        ])
 
     def __init__(
             self,

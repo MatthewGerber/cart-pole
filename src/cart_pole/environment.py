@@ -238,6 +238,15 @@ class CartPole(ContinuousMdpEnvironment):
     Cart-pole environment for the Raspberry Pi.
     """
 
+    class EpisodePhase(Enum):
+        """
+        Episode phases.
+        """
+
+        SWING_UP = auto()
+
+        BALANCE = auto()
+
     @classmethod
     def get_argument_parser(
             cls,
@@ -467,18 +476,12 @@ class CartPole(ContinuousMdpEnvironment):
             max(0.0, state.zero_to_one_distance_from_center - 0.25)
         )
 
-        # TODO:  negative rewards for swinging the pole downward when it is already moving too fast
-
         if state.terminal:
             reward = -1.0
-        elif (
-            abs(state.pole_angle_deg_from_upright) <= self.pole_upright_policy_max_degrees and
-            abs(state.pole_angular_velocity_deg_per_sec) <= self.pole_upright_policy_max_degrees
-        ):
+        elif self.episode_phase == CartPole.EpisodePhase.BALANCE:
             reward = pole_angle_cart_distance_reward
             self.time_step_axv_lines[state.step] = 'v-reward'
-        else:
-
+        elif self.episode_phase == CartPole.EpisodePhase.SWING_UP:
             if len(self.incremental_rewards_pole_positions) == 0:
                 idx_of_reward_position_beyond_current = 0
             else:
@@ -490,12 +493,13 @@ class CartPole(ContinuousMdpEnvironment):
                     ),
                     len(self.incremental_rewards_pole_positions)
                 )
-
             if idx_of_reward_position_beyond_current > 0:
                 reward = pole_angle_cart_distance_reward
                 self.incremental_rewards_pole_positions = (
                     self.incremental_rewards_pole_positions[idx_of_reward_position_beyond_current:]
                 )
+        else:
+            raise ValueError(f'Unknown episode phase:  {self.episode_phase}')
 
         return reward
 
@@ -578,7 +582,8 @@ class CartPole(ContinuousMdpEnvironment):
         self.max_pole_angular_speed_deg_per_second = 720.0
         self.num_incremental_rewards = 250
         self.incremental_rewards_pole_positions = []
-        self.pole_upright_policy_max_degrees = 30.0
+        self.pole_upright_policy_max_degrees = 45.0 / 2.0
+        self.episode_phase = CartPole.EpisodePhase.SWING_UP
 
         self.pca9685pw = PulseWaveModulatorPCA9685PW(
             bus=SMBus('/dev/i2c-1'),
@@ -1296,6 +1301,8 @@ class CartPole(ContinuousMdpEnvironment):
 
         super().reset_for_new_run(self.agent)
 
+        self.episode_phase = CartPole.EpisodePhase.SWING_UP
+
         # reset incremental rewards
         self.incremental_rewards_pole_positions = np.linspace(
             start=0.0,
@@ -1339,7 +1346,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         return self.state
 
-    def is_terminal(
+    def cart_violates_soft_limit(
             self,
             cart_mm_from_center: float
     ) -> bool:
@@ -1484,15 +1491,6 @@ class CartPole(ContinuousMdpEnvironment):
 
         cart_mm_from_center = cart_mm_from_left_limit - self.limit_to_limit_mm / 2.0
 
-        # terminate for violation of soft limit
-        if terminal is None:
-            terminal = self.is_terminal(cart_mm_from_center)
-            if terminal:
-                logging.info(
-                    f'Cart distance from center ({abs(cart_mm_from_center):.1f} mm) exceeds soft limit '
-                    f'({self.soft_limit_mm_from_midline} mm). Terminating.'
-                )
-
         # get pole's degree from vertical at bottom
         pole_angle_deg_from_bottom = pole_state.degrees - self.pole_degrees_at_bottom
 
@@ -1508,12 +1506,43 @@ class CartPole(ContinuousMdpEnvironment):
         else:
             pole_angle_deg_from_upright = np.sign(pole_angle_deg_from_bottom) * 180.0 - pole_angle_deg_from_bottom
 
+        # get angular velocity. degrees are reversed.
+        pole_angular_velocity_deg_per_sec = -pole_state.degrees_per_second
+
+        # advance to the balancing phase
+        if (
+            self.episode_phase == CartPole.EpisodePhase.SWING_UP and
+            abs(pole_angle_deg_from_upright) <= self.pole_upright_policy_max_degrees and
+            abs(pole_angular_velocity_deg_per_sec) <= self.pole_upright_policy_max_degrees
+        ):
+            self.episode_phase = CartPole.EpisodePhase.BALANCE
+
+        # check termination
+        if terminal is None:
+
+            # always terminate for violation of soft limit
+            terminal = self.cart_violates_soft_limit(cart_mm_from_center)
+            if terminal:
+                logging.info(
+                    f'Cart distance from center ({abs(cart_mm_from_center):.1f} mm) exceeds soft limit '
+                    f'({self.soft_limit_mm_from_midline} mm). Terminating.'
+                )
+
+            # also terminate for falling too far in the balance phase
+            if not terminal and self.episode_phase == CartPole.EpisodePhase.BALANCE:
+                terminal = abs(pole_angle_deg_from_upright) > self.pole_upright_policy_max_degrees
+                if terminal:
+                    logging.info(
+                        f'Pole has fallen while balancing. Angle {pole_angle_deg_from_upright:.2f} exceeds maximum '
+                        f'allowable of {self.pole_upright_policy_max_degrees:.2f}. Terminating.'
+                    )
+
         return CartPoleState(
             environment=self,
             cart_mm_from_center=cart_mm_from_center,
             cart_velocity_mm_per_sec=(cart_state.degrees_per_second * self.cart_mm_per_degree),
             pole_angle_deg_from_upright=pole_angle_deg_from_upright,
-            pole_angular_velocity_deg_per_sec=-pole_state.degrees_per_second,  # degrees are reversed
+            pole_angular_velocity_deg_per_sec=pole_angular_velocity_deg_per_sec,
             step=t,
             agent=self.agent,
             terminal=terminal,
