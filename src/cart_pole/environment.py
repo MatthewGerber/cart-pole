@@ -582,8 +582,9 @@ class CartPole(ContinuousMdpEnvironment):
         self.max_pole_angular_speed_deg_per_second = 720.0
         self.num_incremental_rewards = 250
         self.incremental_rewards_pole_positions = []
-        self.pole_upright_policy_max_degrees = 45.0 / 2.0
         self.episode_phase = CartPole.EpisodePhase.SWING_UP
+        self.balance_phase_start_degrees = 5.0
+        self.balance_phase_end_degrees = 45.0 / 2.0
 
         self.pca9685pw = PulseWaveModulatorPCA9685PW(
             bus=SMBus('/dev/i2c-1'),
@@ -1509,11 +1510,10 @@ class CartPole(ContinuousMdpEnvironment):
         # get angular velocity. degrees are reversed.
         pole_angular_velocity_deg_per_sec = -pole_state.degrees_per_second
 
-        # advance to the balancing phase
+        # transition to the balancing phase
         if (
             self.episode_phase == CartPole.EpisodePhase.SWING_UP and
-            abs(pole_angle_deg_from_upright) <= self.pole_upright_policy_max_degrees and
-            abs(pole_angular_velocity_deg_per_sec) <= self.pole_upright_policy_max_degrees
+            abs(pole_angle_deg_from_upright) <= self.balance_phase_start_degrees
         ):
             self.episode_phase = CartPole.EpisodePhase.BALANCE
 
@@ -1530,11 +1530,11 @@ class CartPole(ContinuousMdpEnvironment):
 
             # also terminate for falling too far in the balance phase
             if not terminal and self.episode_phase == CartPole.EpisodePhase.BALANCE:
-                terminal = abs(pole_angle_deg_from_upright) > self.pole_upright_policy_max_degrees
+                terminal = abs(pole_angle_deg_from_upright) > self.balance_phase_end_degrees
                 if terminal:
                     logging.info(
                         f'Pole has fallen while balancing. Angle {pole_angle_deg_from_upright:.2f} exceeds maximum '
-                        f'allowable of {self.pole_upright_policy_max_degrees:.2f}. Terminating.'
+                        f'allowable of {self.balance_phase_end_degrees:.2f}. Terminating.'
                     )
 
         return CartPoleState(
