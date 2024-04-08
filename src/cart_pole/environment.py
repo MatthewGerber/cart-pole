@@ -583,8 +583,8 @@ class CartPole(ContinuousMdpEnvironment):
         self.num_incremental_rewards = 250
         self.incremental_rewards_pole_positions = []
         self.episode_phase = CartPole.EpisodePhase.SWING_UP
-        self.balance_phase_start_degrees = 10.0
-        self.balance_phase_end_degrees = 20.0
+        self.balance_phase_start_degrees = 25.0
+        self.balance_phase_end_degrees = 25.0
 
         self.pca9685pw = PulseWaveModulatorPCA9685PW(
             bus=SMBus('/dev/i2c-1'),
