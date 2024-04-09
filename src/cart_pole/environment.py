@@ -72,13 +72,17 @@ class CartPoleState(MdpState):
 
     @staticmethod
     def zero_to_one_pole_angle_from_degrees(
-            degrees: float
+            degrees_from_upright: float
     ) -> float:
         """
-        Get [0.0, 1.0] pole angle.
+        Get [0.0, 1.0] pole angle, with 0.0 being straight down (the worst) and 1.0 being straight up (the best). Useful
+        in reward calculations.
+
+        :param degrees_from_upright: Degrees from upright, either negative or positive and unbounded.
+        :return: Pole angle in [0.0, 1.0].
         """
 
-        return (math.cos(math.pi * (degrees / 180.0)) + 1.0) / 2.0
+        return (math.cos(math.pi * (degrees_from_upright / 180.0)) + 1.0) / 2.0
 
     def __init__(
             self,
@@ -243,8 +247,11 @@ class CartPole(ContinuousMdpEnvironment):
         Episode phases.
         """
 
+        # The initial phase, in which the cart must oscillate left and right to build angular momentum that swings the
+        # pole to the vertical position. This phase ends when the pole is sufficiently upright given a threshold.
         SWING_UP = auto()
 
+        # Begins when swing-up ends. This phase then ends if and when the pole falls too far from vertical.
         BALANCE = auto()
 
     @classmethod
@@ -426,8 +433,10 @@ class CartPole(ContinuousMdpEnvironment):
         Cart direction.
         """
 
+        # Cart is moving to the left.
         LEFT = auto()
 
+        # Cart is moving to the right.
         RIGHT = auto()
 
     @staticmethod
@@ -471,33 +480,42 @@ class CartPole(ContinuousMdpEnvironment):
 
         reward = 0.0
 
+        # impose 0.0 reward when cart has less than 1/4 of the left/right track left. this ensures that the negative
+        # reward at soft-limit termination punishes the policy with a negative target.
         pole_angle_cart_distance_reward = (
             state.zero_to_one_pole_angle *
             max(0.0, state.zero_to_one_distance_from_center - 0.25)
         )
 
-        if state.terminal:
-            reward = -1.0
-        elif self.episode_phase == CartPole.EpisodePhase.BALANCE:
-            reward = pole_angle_cart_distance_reward
-            self.time_step_axv_lines[state.step] = 'v-reward'
-        elif self.episode_phase == CartPole.EpisodePhase.SWING_UP:
-            if len(self.incremental_rewards_pole_positions) == 0:
-                idx_of_reward_position_beyond_current = 0
+        # TODO:  consider something like the above for pole angle, to punish the policy for movements that lead to
+        #  balance termination.
+
+        if self.episode_phase == CartPole.EpisodePhase.BALANCE:
+            if state.terminal:
+                reward = 0.0
             else:
-                idx_of_reward_position_beyond_current = next(
-                    (
-                        idx
-                        for idx, position in enumerate(self.incremental_rewards_pole_positions)
-                        if position > state.zero_to_one_pole_angle
-                    ),
-                    len(self.incremental_rewards_pole_positions)
-                )
-            if idx_of_reward_position_beyond_current > 0:
                 reward = pole_angle_cart_distance_reward
-                self.incremental_rewards_pole_positions = (
-                    self.incremental_rewards_pole_positions[idx_of_reward_position_beyond_current:]
-                )
+                self.time_step_axv_lines[state.step] = 'v-reward'
+        elif self.episode_phase == CartPole.EpisodePhase.SWING_UP:
+            if state.terminal:
+                reward = -1.0
+            else:
+                if len(self.incremental_rewards_pole_positions) == 0:
+                    idx_of_reward_position_beyond_current = 0
+                else:
+                    idx_of_reward_position_beyond_current = next(
+                        (
+                            idx
+                            for idx, position in enumerate(self.incremental_rewards_pole_positions)
+                            if position > state.zero_to_one_pole_angle
+                        ),
+                        len(self.incremental_rewards_pole_positions)
+                    )
+                if idx_of_reward_position_beyond_current > 0:
+                    reward = pole_angle_cart_distance_reward
+                    self.incremental_rewards_pole_positions = (
+                        self.incremental_rewards_pole_positions[idx_of_reward_position_beyond_current:]
+                    )
         else:
             raise ValueError(f'Unknown episode phase:  {self.episode_phase}')
 
@@ -565,8 +583,12 @@ class CartPole(ContinuousMdpEnvironment):
         self.pole_rotary_encoder_phase_b_pin = pole_rotary_encoder_phase_b_pin
         self.left_limit_switch_input_pin = left_limit_switch_input_pin
         self.right_limit_switch_input_pin = right_limit_switch_input_pin
-        self.timesteps_per_second = timesteps_per_second
+        self.timesteps_per_second = timesteps_per_second  # TODO:  increase to 100 hz?
         self.calibration_path = os.path.expanduser(calibration_path)
+
+        # TODO:  Decrease gamma in balance phase? If we increase hz then this might not be needed.
+
+        # TODO:  Add weight to pole to slow down.?
 
         # non-calibrated attributes
         self.midline_mm = self.limit_to_limit_mm / 2.0
@@ -1392,7 +1414,7 @@ class CartPole(ContinuousMdpEnvironment):
             if new_termination:
                 self.stop_cart()
 
-            # post-truncation convergence to zero takes too long with gammas close to 1.0 and a slow physicial system.
+            # post-truncation convergence to zero takes too long with gammas close to 1.0 and a slow physical system.
             # decrease gamma to obtain faster convergence to zero.
             if new_truncation:
                 self.agent.gamma = self.truncation_gamma
