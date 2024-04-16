@@ -1268,10 +1268,10 @@ class CartPole(ContinuousMdpEnvironment):
 
         super().reset_for_new_run(self.agent)
         self.agent = agent
-        self.aux_plot_label_data_kwargs['motor-speed'] = (
+        self.plot_label_data_kwargs['motor-speed'] = (
             dict(),
             {
-                'linecolor': 'orange'
+                'color': 'orange'
             }
         )
 
@@ -1417,7 +1417,7 @@ class CartPole(ContinuousMdpEnvironment):
             logging.debug(f'State {t}:  {self.state}')
             logging.debug(f'Reward {t}:  {reward_value}')
 
-            self.aux_plot_label_data_kwargs['motor-speed'][0][t] = self.motor.get_speed()
+            self.plot_label_data_kwargs['motor-speed'][0][t] = self.motor.get_speed()
 
             return self.state, Reward(None, reward_value)
 
@@ -1437,8 +1437,8 @@ class CartPole(ContinuousMdpEnvironment):
         # impose 0.0 reward when cart has less than 1/4 of the left/right track left. this ensures that the negative
         # reward at soft-limit termination punishes the policy with a negative target.
         pole_angle_cart_distance_reward = (
-                state.zero_to_one_pole_angle *
-                max(0.0, state.zero_to_one_distance_from_center - 0.25)
+            state.zero_to_one_pole_angle *
+            max(0.0, state.zero_to_one_distance_from_center - 0.25)
         )
 
         if self.episode_phase == CartPole.EpisodePhase.BALANCE:
