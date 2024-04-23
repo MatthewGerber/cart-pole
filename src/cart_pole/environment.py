@@ -1,5 +1,4 @@
 import logging
-import math
 import os.path
 import pickle
 import time
@@ -78,11 +77,11 @@ class CartPoleState(MdpState):
         Get [0.0, 1.0] pole angle, with 0.0 being straight down (the worst) and 1.0 being straight up (the best). Useful
         in reward calculations.
 
-        :param degrees_from_upright: Degrees from upright, either negative or positive and unbounded.
+        :param degrees_from_upright: Degrees from upright.
         :return: Pole angle in [0.0, 1.0].
         """
 
-        return (math.cos(math.pi * (degrees_from_upright / 180.0)) + 1.0) / 2.0
+        return (180.0 - abs(degrees_from_upright)) / 180.0
 
     def __init__(
             self,
@@ -586,7 +585,7 @@ class CartPole(ContinuousMdpEnvironment):
             phase_a_pin=self.cart_rotary_encoder_phase_a_pin,
             phase_b_pin=self.cart_rotary_encoder_phase_b_pin,
             phase_changes_per_rotation=1200,
-            phase_change_mode=RotaryEncoder.PhaseChangeMode.UNIPHASE_UNIDIRECTIONAL,
+            phase_change_mode=RotaryEncoder.PhaseChangeMode.ONE_SIGNAL_ONE_EDGE,
 
             # the rotary encoder's state is updated at a rate of steps/sec. additional smoothing shouldn't be needed.
             degrees_per_second_step_size=1.0
@@ -596,7 +595,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.pole_rotary_encoder = MultiprocessRotaryEncoder(
             phase_a_pin=self.pole_rotary_encoder_phase_a_pin,
             phase_b_pin=self.pole_rotary_encoder_phase_b_pin,
-            phase_change_mode=RotaryEncoder.PhaseChangeMode.BIPHASE,
+            phase_change_mode=RotaryEncoder.PhaseChangeMode.TWO_SIGNAL_TWO_EDGE,
             phase_changes_per_rotation=1200,
 
             # the rotary encoder's state is updated at a rate of steps/sec. additional smoothing shouldn't be needed.
@@ -704,14 +703,14 @@ class CartPole(ContinuousMdpEnvironment):
             phase_a_pin=self.cart_rotary_encoder_phase_a_pin,
             phase_b_pin=self.cart_rotary_encoder_phase_b_pin,
             phase_changes_per_rotation=1200,
-            phase_change_mode=RotaryEncoder.PhaseChangeMode.UNIPHASE_UNIDIRECTIONAL,
+            phase_change_mode=RotaryEncoder.PhaseChangeMode.ONE_SIGNAL_ONE_EDGE,
             degrees_per_second_step_size=1.0
         )
         self.cart_rotary_encoder.wait_for_startup()
         self.pole_rotary_encoder = MultiprocessRotaryEncoder(
             phase_a_pin=self.pole_rotary_encoder_phase_a_pin,
             phase_b_pin=self.pole_rotary_encoder_phase_b_pin,
-            phase_change_mode=RotaryEncoder.PhaseChangeMode.BIPHASE,
+            phase_change_mode=RotaryEncoder.PhaseChangeMode.TWO_SIGNAL_TWO_EDGE,
             phase_changes_per_rotation=1200,
             degrees_per_second_step_size=1.0
         )
@@ -870,7 +869,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.midline_degrees = (self.left_limit_degrees + self.right_limit_degrees) / 2.0
 
         # identify maximum cart speed
-        logging.info('Identifing maximum cart speed...')
+        logging.info('Identifying maximum cart speed...')
         self.set_motor_speed(
             speed=-100 if cart_position == CartPole.CartPosition.RIGHT_OF_CENTER else 100,
             acceleration_interval=timedelta(seconds=0.5)
@@ -1114,7 +1113,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         logging.info('Centering cart.')
 
-        # restore the limit state by physicially positioning the cart at the limit and restoring the state to what is
+        # restore the limit state by physically positioning the cart at the limit and restoring the state to what it
         # was when we calibrated. this corrects any loss of calibration that occurred while moving the cart. do this in
         # whatever order is the most efficient given the cart's current position.
         if restore_limit_state:
@@ -1250,7 +1249,8 @@ class CartPole(ContinuousMdpEnvironment):
                     time.sleep(per_speed_sleep_seconds)
 
             # the cart's rotary encoder uses uniphase tracking. it requires an external signal telling it which
-            # direction it is moving. provide that signal based on the input speed of the motor.
+            # direction it is moving. provide that signal based on the input speed of the motor. this assumes negligible
+            # latency between setting the motor pwm input and registering the effect on rotary encoder output.
             self.cart_rotary_encoder.clockwise.value = speed > 0
 
     def reset_for_new_run(
@@ -1525,10 +1525,10 @@ class CartPole(ContinuousMdpEnvironment):
         if pole_angle_deg_from_bottom == 0.0:
             pole_angle_deg_from_upright = 180.0  # equivalent to -180.0
         else:
-            pole_angle_deg_from_upright = np.sign(pole_angle_deg_from_bottom) * 180.0 - pole_angle_deg_from_bottom
+            pole_angle_deg_from_upright = -np.sign(pole_angle_deg_from_bottom) * 180.0 + pole_angle_deg_from_bottom
 
-        # get angular velocity. degrees are reversed.
-        pole_angular_velocity_deg_per_sec = -pole_state.degrees_per_second
+        # get angular velocity
+        pole_angular_velocity_deg_per_sec = pole_state.degrees_per_second
 
         # transition to the balancing phase
         if (
