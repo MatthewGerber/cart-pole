@@ -1,5 +1,4 @@
 import logging
-import math
 import os.path
 import pickle
 import time
@@ -78,11 +77,11 @@ class CartPoleState(MdpState):
         Get [0.0, 1.0] pole angle, with 0.0 being straight down (the worst) and 1.0 being straight up (the best). Useful
         in reward calculations.
 
-        :param degrees_from_upright: Degrees from upright, either negative or positive and unbounded.
+        :param degrees_from_upright: Degrees from upright.
         :return: Pole angle in [0.0, 1.0].
         """
 
-        return (math.cos(math.pi * (degrees_from_upright / 180.0)) + 1.0) / 2.0
+        return (180.0 - abs(degrees_from_upright)) / 180.0
 
     def __init__(
             self,
@@ -136,7 +135,7 @@ class CartPoleState(MdpState):
         # is falling. if we look too far ahead, we'll go beyond the point where the pole is vertical and the calculation
         # will provide the wrong answer.
         self.pole_is_falling = self.zero_to_one_pole_angle > self.zero_to_one_pole_angle_from_degrees(
-            self.pole_angle_deg_from_upright - (self.pole_angular_velocity_deg_per_sec * 0.00001)
+            self.pole_angle_deg_from_upright + (self.pole_angular_velocity_deg_per_sec * 0.00001)
         )
 
         # distance from center in range [0.0, 1.0] where 0.0 is the extreme far end and 1.0 is exactly centered.
@@ -586,7 +585,7 @@ class CartPole(ContinuousMdpEnvironment):
             phase_a_pin=self.cart_rotary_encoder_phase_a_pin,
             phase_b_pin=self.cart_rotary_encoder_phase_b_pin,
             phase_changes_per_rotation=1200,
-            phase_change_mode=RotaryEncoder.PhaseChangeMode.UNIPHASE_UNIDIRECTIONAL,
+            phase_change_mode=RotaryEncoder.PhaseChangeMode.ONE_SIGNAL_ONE_EDGE,
 
             # the rotary encoder's state is updated at a rate of steps/sec. additional smoothing shouldn't be needed.
             degrees_per_second_step_size=1.0
@@ -596,24 +595,13 @@ class CartPole(ContinuousMdpEnvironment):
         self.pole_rotary_encoder = MultiprocessRotaryEncoder(
             phase_a_pin=self.pole_rotary_encoder_phase_a_pin,
             phase_b_pin=self.pole_rotary_encoder_phase_b_pin,
-            phase_change_mode=RotaryEncoder.PhaseChangeMode.UNIPHASE_UNIDIRECTIONAL,
+            phase_change_mode=RotaryEncoder.PhaseChangeMode.TWO_SIGNAL_TWO_EDGE,
             phase_changes_per_rotation=1200,
 
             # the rotary encoder's state is updated at a rate of steps/sec. additional smoothing shouldn't be needed.
             degrees_per_second_step_size=1.0
         )
         self.pole_rotary_encoder.wait_for_startup()
-
-        # self.pole_direction_rotary_encoder = MultiprocessRotaryEncoder(
-        #     phase_a_pin=self.pole_rotary_encoder_phase_a_pin,
-        #     phase_b_pin=self.pole_rotary_encoder_phase_b_pin,
-        #     phase_change_mode=RotaryEncoder.PhaseChangeMode.BIPHASE,
-        #     phase_changes_per_rotation=1200,
-        #
-        #     # the rotary encoder's state is updated at a rate of steps/sec. additional smoothing shouldn't be needed.
-        #     degrees_per_second_step_size=1.0
-        # )
-        # self.pole_direction_rotary_encoder.wait_for_startup()
 
         self.left_limit_switch = LimitSwitch(
             input_pin=self.left_limit_switch_input_pin,
@@ -673,7 +661,6 @@ class CartPole(ContinuousMdpEnvironment):
         state['motor'] = None
         state['cart_rotary_encoder'] = None
         state['pole_rotary_encoder'] = None
-        state['pole_direction_rotary_encoder'] = None
         state['left_limit_switch'] = None
         state['left_limit_pressed'] = None
         state['left_limit_released'] = None
@@ -716,26 +703,18 @@ class CartPole(ContinuousMdpEnvironment):
             phase_a_pin=self.cart_rotary_encoder_phase_a_pin,
             phase_b_pin=self.cart_rotary_encoder_phase_b_pin,
             phase_changes_per_rotation=1200,
-            phase_change_mode=RotaryEncoder.PhaseChangeMode.UNIPHASE_UNIDIRECTIONAL,
+            phase_change_mode=RotaryEncoder.PhaseChangeMode.ONE_SIGNAL_ONE_EDGE,
             degrees_per_second_step_size=1.0
         )
         self.cart_rotary_encoder.wait_for_startup()
         self.pole_rotary_encoder = MultiprocessRotaryEncoder(
             phase_a_pin=self.pole_rotary_encoder_phase_a_pin,
             phase_b_pin=self.pole_rotary_encoder_phase_b_pin,
-            phase_change_mode=RotaryEncoder.PhaseChangeMode.BIPHASE,
+            phase_change_mode=RotaryEncoder.PhaseChangeMode.TWO_SIGNAL_TWO_EDGE,
             phase_changes_per_rotation=1200,
             degrees_per_second_step_size=1.0
         )
         self.pole_rotary_encoder.wait_for_startup()
-        self.pole_direction_rotary_encoder = MultiprocessRotaryEncoder(
-            phase_a_pin=self.pole_rotary_encoder_phase_a_pin,
-            phase_b_pin=self.pole_rotary_encoder_phase_b_pin,
-            phase_change_mode=RotaryEncoder.PhaseChangeMode.BIPHASE,
-            phase_changes_per_rotation=1200,
-            degrees_per_second_step_size=1.0
-        )
-        self.pole_direction_rotary_encoder.wait_for_startup()
         self.left_limit_switch = LimitSwitch(
             input_pin=self.left_limit_switch_input_pin,
             bounce_time_ms=5
@@ -1409,7 +1388,7 @@ class CartPole(ContinuousMdpEnvironment):
                     elif speed_change > 0:
                         next_speed = self.motor_deadzone_speed_right
 
-                self.set_motor_speed(0)
+                self.set_motor_speed(next_speed)
 
             # adapt the sleep time to obtain the desired steps per second
             if self.previous_timestep_epoch is None:
@@ -1435,7 +1414,7 @@ class CartPole(ContinuousMdpEnvironment):
             # calculate reward
             reward_value = self.get_reward(self.state)
 
-            # logging.info(f'State {t}:  {self.state}')
+            logging.debug(f'State {t}:  {self.state}')
             logging.debug(f'Reward {t}:  {reward_value}')
 
             self.plot_label_data_kwargs['motor-speed'][0][t] = self.motor.get_speed()
@@ -1524,10 +1503,6 @@ class CartPole(ContinuousMdpEnvironment):
         self.cart_rotary_encoder.update_state()
         cart_state: MultiprocessRotaryEncoder.State = self.cart_rotary_encoder.state
 
-        # self.pole_direction_rotary_encoder.update_state()
-        # pole_direction_state: MultiprocessRotaryEncoder.State = self.pole_direction_rotary_encoder.state
-        # self.pole_rotary_encoder.clockwise.value = pole_direction_state.clockwise
-
         self.pole_rotary_encoder.update_state()
         pole_state: MultiprocessRotaryEncoder.State = self.pole_rotary_encoder.state
 
@@ -1539,8 +1514,6 @@ class CartPole(ContinuousMdpEnvironment):
 
         # get pole's degree from vertical at bottom
         pole_angle_deg_from_bottom = pole_state.degrees - self.pole_degrees_at_bottom
-        logging.info(f'Degrees:  {pole_state.degrees}')
-        logging.info(f'PCI:  {self.pole_rotary_encoder.phase_change_index.value}')
 
         # translate to [-180,180] degrees from bottom. if the degrees value is beyond these bounds, then subtract a
         # complete rotation in the appropriate direction in order to get the same degree orientation but within the
@@ -1552,7 +1525,7 @@ class CartPole(ContinuousMdpEnvironment):
         if pole_angle_deg_from_bottom == 0.0:
             pole_angle_deg_from_upright = 180.0  # equivalent to -180.0
         else:
-            pole_angle_deg_from_upright = np.sign(pole_angle_deg_from_bottom) * 180.0 - pole_angle_deg_from_bottom
+            pole_angle_deg_from_upright = -np.sign(pole_angle_deg_from_bottom) * 180.0 + pole_angle_deg_from_bottom
 
         # get angular velocity
         pole_angular_velocity_deg_per_sec = pole_state.degrees_per_second
@@ -1610,6 +1583,5 @@ class CartPole(ContinuousMdpEnvironment):
 
         self.cart_rotary_encoder.wait_for_termination()
         self.pole_rotary_encoder.wait_for_termination()
-        # self.pole_direction_rotary_encoder.wait_for_termination()
 
         cleanup()
