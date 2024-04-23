@@ -117,7 +117,8 @@ def main():
         pole_rotary_encoder_phase_b_pin=CkPin.GPIO27,
         left_limit_switch_input_pin=CkPin.GPIO20,
         right_limit_switch_input_pin=CkPin.GPIO16,
-        timesteps_per_second=10.0
+        timesteps_per_second=10.0,
+        calibration_path=None
     )
 
     agent = TestAgent()
