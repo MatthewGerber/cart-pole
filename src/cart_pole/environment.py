@@ -1443,7 +1443,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         if self.episode_phase == CartPole.EpisodePhase.BALANCE:
             if state.terminal:
-                reward = -5.0
+                reward = -10.0
             else:
                 reward = pole_angle_cart_distance_reward
                 self.time_step_axv_lines[state.step] = ('blue', 'balance')
