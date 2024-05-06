@@ -14,7 +14,7 @@
     <option name="ADD_SOURCE_ROOTS" value="true" />
     <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
     <option name="SCRIPT_NAME" value="$PROJECT_DIR$/submodules/rlai/src/rlai/runners/trainer.py" />
-    <option name="PARAMETERS" value="--resume --random-seed 12345 --train-function rlai.policy_gradient.monte_carlo.reinforce.improve --checkpoint-path ~/Desktop/cartpole_checkpoints/checkpoint-45.pickle --save-agent-path ~/Desktop/cart_pole_agent.pickle --log DEBUG" />
+    <option name="PARAMETERS" value="--resume --random-seed 12345 --train-function rlai.policy_gradient.monte_carlo.reinforce.improve --checkpoint-path ~/Desktop/cartpole_checkpoints/checkpoint-60.pickle --save-agent-path ~/Desktop/cart_pole_agent.pickle --log DEBUG" />
     <option name="SHOW_COMMAND_LINE" value="false" />
     <option name="EMULATE_TERMINAL" value="false" />
     <option name="MODULE_MODE" value="false" />
