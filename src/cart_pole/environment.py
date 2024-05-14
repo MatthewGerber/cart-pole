@@ -16,7 +16,7 @@ from raspberry_py.gpio import CkPin, get_ck_pin, setup, cleanup
 from raspberry_py.gpio.controls import LimitSwitch
 from raspberry_py.gpio.integrated_circuits import PulseWaveModulatorPCA9685PW
 from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectPCA9685PW
-from raspberry_py.gpio.sensors import MultiprocessRotaryEncoder, RotaryEncoder
+from raspberry_py.gpio.sensors import MultiprocessRotaryEncoder, RotaryEncoder, DualMultiprocessRotaryEncoder
 from rlai.core import MdpState, Action, Agent, Reward, Environment, MdpAgent, ContinuousMultiDimensionalAction
 from rlai.core.environments.mdp import ContinuousMdpEnvironment
 from rlai.utils import parse_arguments, IncrementalSampleAverager
@@ -347,17 +347,7 @@ class CartPole(ContinuousMdpEnvironment):
         )
 
         parser.add_argument(
-            '--cart-rotary-encoder-phase-b-pin',
-            type=get_ck_pin,
-            help=(
-                'GPIO pin connected to the phase-b input of the cart\'s rotary encoder. This can be an enumerated '
-                'type and name from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
-                'raspberry_py.gpio.CkPin class (e.g., CkPin.GPIO5).'
-            )
-        )
-
-        parser.add_argument(
-            '--pole-rotary-encoder-phase-a-pin',
+            '--pole-rotary-encoder-speed-phase-a-pin',
             type=get_ck_pin,
             help=(
                 'GPIO pin connected to the phase-a input of the pole\'s rotary encoder. This can be an enumerated '
@@ -367,7 +357,17 @@ class CartPole(ContinuousMdpEnvironment):
         )
 
         parser.add_argument(
-            '--pole-rotary-encoder-phase-b-pin',
+            '--pole-rotary-encoder-direction-phase-a-pin',
+            type=get_ck_pin,
+            help=(
+                'GPIO pin connected to the phase-a input of the pole\'s rotary encoder. This can be an enumerated '
+                'type and name from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
+                'raspberry_py.gpio.CkPin class (e.g., CkPin.GPIO5).'
+            )
+        )
+
+        parser.add_argument(
+            '--pole-rotary-encoder-direction-phase-b-pin',
             type=get_ck_pin,
             help=(
                 'GPIO pin connected to the phase-b input of the pole\'s rotary encoder. This can be an enumerated '
@@ -478,9 +478,9 @@ class CartPole(ContinuousMdpEnvironment):
             motor_pwm_direction_pin: CkPin,
             motor_negative_speed_is_right: bool,
             cart_rotary_encoder_phase_a_pin: CkPin,
-            cart_rotary_encoder_phase_b_pin: CkPin,
-            pole_rotary_encoder_phase_a_pin: CkPin,
-            pole_rotary_encoder_phase_b_pin: CkPin,
+            pole_rotary_encoder_speed_phase_a_pin: CkPin,
+            pole_rotary_encoder_direction_phase_a_pin: CkPin,
+            pole_rotary_encoder_direction_phase_b_pin: CkPin,
             left_limit_switch_input_pin: CkPin,
             right_limit_switch_input_pin: CkPin,
             timesteps_per_second: float,
@@ -499,9 +499,9 @@ class CartPole(ContinuousMdpEnvironment):
         :param motor_pwm_direction_pin: Motor's PWM direction pin.
         :param motor_negative_speed_is_right: Whether negative motor speeds move the cart to the right.
         :param cart_rotary_encoder_phase_a_pin: Cart rotary encoder phase-a pin.
-        :param cart_rotary_encoder_phase_b_pin: Cart rotary encoder phase-b pin.
-        :param pole_rotary_encoder_phase_a_pin: Pole rotary encoder phase-a pin.
-        :param pole_rotary_encoder_phase_b_pin: Pole rotary encoder phase-b pin.
+        :param pole_rotary_encoder_speed_phase_a_pin: Pole rotary encoder phase-a pin.
+        :param pole_rotary_encoder_direction_phase_a_pin: Pole rotary encoder phase-a pin.
+        :param pole_rotary_encoder_direction_phase_b_pin: Pole rotary encoder phase-b pin.
         :param left_limit_switch_input_pin: Left limit pin.
         :param right_limit_switch_input_pin: Right limit pin.
         :param timesteps_per_second: Number of environment advancement steps to execute per second.
@@ -523,9 +523,9 @@ class CartPole(ContinuousMdpEnvironment):
         self.motor_pwm_direction_pin = motor_pwm_direction_pin
         self.motor_negative_speed_is_right = motor_negative_speed_is_right
         self.cart_rotary_encoder_phase_a_pin = cart_rotary_encoder_phase_a_pin
-        self.cart_rotary_encoder_phase_b_pin = cart_rotary_encoder_phase_b_pin
-        self.pole_rotary_encoder_phase_a_pin = pole_rotary_encoder_phase_a_pin
-        self.pole_rotary_encoder_phase_b_pin = pole_rotary_encoder_phase_b_pin
+        self.pole_rotary_encoder_speed_phase_a_pin = pole_rotary_encoder_speed_phase_a_pin
+        self.pole_rotary_encoder_direction_phase_a_pin = pole_rotary_encoder_direction_phase_a_pin
+        self.pole_rotary_encoder_direction_phase_b_pin = pole_rotary_encoder_direction_phase_b_pin
         self.left_limit_switch_input_pin = left_limit_switch_input_pin
         self.right_limit_switch_input_pin = right_limit_switch_input_pin
         self.timesteps_per_second = timesteps_per_second
@@ -583,7 +583,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         self.cart_rotary_encoder = CartRotaryEncoder(
             phase_a_pin=self.cart_rotary_encoder_phase_a_pin,
-            phase_b_pin=self.cart_rotary_encoder_phase_b_pin,
+            phase_b_pin=None,
             phase_changes_per_rotation=1200,
             phase_change_mode=RotaryEncoder.PhaseChangeMode.ONE_SIGNAL_ONE_EDGE,
 
@@ -592,10 +592,10 @@ class CartPole(ContinuousMdpEnvironment):
         )
         self.cart_rotary_encoder.wait_for_startup()
 
-        self.pole_rotary_encoder = MultiprocessRotaryEncoder(
-            phase_a_pin=self.pole_rotary_encoder_phase_a_pin,
-            phase_b_pin=self.pole_rotary_encoder_phase_b_pin,
-            phase_change_mode=RotaryEncoder.PhaseChangeMode.TWO_SIGNAL_TWO_EDGE,
+        self.pole_rotary_encoder = DualMultiprocessRotaryEncoder(
+            speed_phase_a_pin=self.pole_rotary_encoder_speed_phase_a_pin,
+            direction_phase_a_pin=self.pole_rotary_encoder_direction_phase_a_pin,
+            direction_phase_b_pin=self.pole_rotary_encoder_direction_phase_b_pin,
             phase_changes_per_rotation=1200,
 
             # the rotary encoder's state is updated at a rate of steps/sec. additional smoothing shouldn't be needed.
@@ -701,16 +701,16 @@ class CartPole(ContinuousMdpEnvironment):
         )
         self.cart_rotary_encoder = CartRotaryEncoder(
             phase_a_pin=self.cart_rotary_encoder_phase_a_pin,
-            phase_b_pin=self.cart_rotary_encoder_phase_b_pin,
+            phase_b_pin=None,
             phase_changes_per_rotation=1200,
             phase_change_mode=RotaryEncoder.PhaseChangeMode.ONE_SIGNAL_ONE_EDGE,
             degrees_per_second_step_size=1.0
         )
         self.cart_rotary_encoder.wait_for_startup()
-        self.pole_rotary_encoder = MultiprocessRotaryEncoder(
-            phase_a_pin=self.pole_rotary_encoder_phase_a_pin,
-            phase_b_pin=self.pole_rotary_encoder_phase_b_pin,
-            phase_change_mode=RotaryEncoder.PhaseChangeMode.TWO_SIGNAL_TWO_EDGE,
+        self.pole_rotary_encoder = DualMultiprocessRotaryEncoder(
+            speed_phase_a_pin=self.pole_rotary_encoder_speed_phase_a_pin,
+            direction_phase_a_pin=self.pole_rotary_encoder_direction_phase_a_pin,
+            direction_phase_b_pin=self.pole_rotary_encoder_direction_phase_b_pin,
             phase_changes_per_rotation=1200,
             degrees_per_second_step_size=1.0
         )
@@ -888,8 +888,8 @@ class CartPole(ContinuousMdpEnvironment):
         # center cart and capture initial conditions of the rotary encoders at center for subsequent restoration
         self.center_cart(True, False)
         self.cart_phase_change_index_at_center = self.cart_rotary_encoder.phase_change_index.value
-        self.pole_phase_change_index_at_bottom = self.pole_rotary_encoder.phase_change_index.value
-        self.pole_degrees_at_bottom = self.pole_rotary_encoder.get_degrees()
+        self.pole_phase_change_index_at_bottom = self.pole_rotary_encoder.speed_encoder.phase_change_index.value
+        self.pole_degrees_at_bottom = self.pole_rotary_encoder.speed_encoder.get_degrees()
 
         calibration = {
             'motor_deadzone_speed_left': self.motor_deadzone_speed_left,
@@ -1130,12 +1130,14 @@ class CartPole(ContinuousMdpEnvironment):
         logging.info('Cart centered.\n')
 
         logging.info('Waiting for stationary pole.')
-        self.pole_rotary_encoder.wait_for_stationarity()
-        logging.info(f'Pole is stationary at degrees:  {self.pole_rotary_encoder.get_net_total_degrees():.1f}\n')
+        self.pole_rotary_encoder.speed_encoder.wait_for_stationarity()
+        logging.info(
+            f'Pole is stationary at degrees:  {self.pole_rotary_encoder.speed_encoder.get_net_total_degrees():.1f}\n'
+        )
 
         if restore_center_state:
             self.cart_rotary_encoder.phase_change_index.value = self.cart_phase_change_index_at_center
-            self.pole_rotary_encoder.phase_change_index.value = self.pole_phase_change_index_at_bottom
+            self.pole_rotary_encoder.speed_encoder.phase_change_index.value = self.pole_phase_change_index_at_bottom
 
     def center_cart_at_speed(
             self,
@@ -1292,7 +1294,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         # need to wait for stationary pole, in case the apparatus is too close to a wall and will hit it while moving
         # to the limit with the pole swinging.
-        self.pole_rotary_encoder.wait_for_stationarity()
+        self.pole_rotary_encoder.speed_encoder.wait_for_stationarity()
 
         # calibrate if needed, which leaves the cart centered in its initial conditions with the state captured.
         if self.calibrate_on_next_reset:
