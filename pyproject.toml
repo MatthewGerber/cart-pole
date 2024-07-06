@@ -1,31 +1,27 @@
 [build-system]
-requires = ['setuptools']
-build-backend = 'setuptools.build_meta'
+requires = ['poetry-core']
+build-backend = 'poetry.core.masonry.api'
 
-[tool.setuptools]
-package-dir = {'' = 'src'}
-
-[project]
+[tool.poetry]
 name = 'cart-pole'
-version = '0.1.0.dev0'
+version = '0.1.0a0'
 description = 'Cart-pole controller learned with reinforcement learning; running on the Raspberry Pi'
-authors = [
-    {name = 'Matthew Gerber', email = 'gerber.matthew@gmail.com'}
-]
 readme = 'README.md'
-requires-python = '>=3.10'
-dependencies = [
-    'matplotlib~=3.8',
-    'pandas~=2.1'
+authors = [
+    'Matthew Gerber <gerber.matthew@gmail.com>'
 ]
-
-[project.optional-dependencies]
-dev = [
-    'bump2version~=1.0',
-    'mypy~=1.8',
-    'flake8~=7.0.0'
+packages = [
+    { include = 'cart_pol', from = 'src'}
 ]
+repository = 'https://github.com/MatthewGerber/cart-pole'
 
-[project.urls]
-Repository = 'https://github.com/MatthewGerber/cart-pole'
-Homepage = 'https://matthewgerber.github.io/cart-pole'
+[tool.poetry.dependencies]
+python = '>=3.10'
+matplotlib = '~=3.8'
+pandas = '~=2.1'
+raspberry-py = { path = 'submodules/raspberry-py', develop = true }
+rlai = { path = 'submodules/rlai', develop = true}
+
+[tool.poetry.group.dev.dependencies]
+mypy = '~=1.10'
+flake8 = '~=7.0'
