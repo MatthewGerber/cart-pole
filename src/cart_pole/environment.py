@@ -15,6 +15,7 @@ from smbus2 import SMBus
 from raspberry_py.gpio import CkPin, get_ck_pin, setup, cleanup
 from raspberry_py.gpio.controls import LimitSwitch
 from raspberry_py.gpio.integrated_circuits import PulseWaveModulatorPCA9685PW
+from raspberry_py.gpio.lights import LED
 from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectPCA9685PW
 from raspberry_py.gpio.sensors import MultiprocessRotaryEncoder, RotaryEncoder, DualMultiprocessRotaryEncoder
 from rlai.core import MdpState, Action, Agent, Reward, Environment, MdpAgent, ContinuousMultiDimensionalAction
@@ -412,6 +413,45 @@ class CartPole(ContinuousMdpEnvironment):
             )
         )
 
+        parser.add_argument(
+            '--balance-phase-led-pin',
+            type=get_ck_pin,
+            default=None,
+            help=(
+                'GPIO pin connected to an LED to illuminate when the episode transitions to the balance phase. This '
+                'can be an enumerated type and name from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or '
+                'the raspberry_py.gpio.CkPin class (e.g., CkPin.GPIO5).'
+            )
+        )
+
+        parser.add_argument(
+            '--falling-led-pin',
+            type=get_ck_pin,
+            default=None,
+            help=(
+                'GPIO pin connected to an LED to illuminate when the pole is falling. This can be an enumerated type '
+                'and name from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
+                'raspberry_py.gpio.CkPin class (e.g., CkPin.GPIO5).'
+            )
+        )
+
+        parser.add_argument(
+            '--termination-led-pin',
+            type=get_ck_pin,
+            default=None,
+            help=(
+                'GPIO pin connected to an LED to illuminate when the episode terminates. This can be an enumerated '
+                'type and name from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
+                'raspberry_py.gpio.CkPin class (e.g., CkPin.GPIO5).'
+            )
+        )
+
+        parser.add_argument(
+            '--balance-gamma',
+            type=float,
+            help='Gamma (discount) to use during the balancing phase of the episode.'
+        )
+
         return parser
 
     @classmethod
@@ -484,7 +524,11 @@ class CartPole(ContinuousMdpEnvironment):
             left_limit_switch_input_pin: CkPin,
             right_limit_switch_input_pin: CkPin,
             timesteps_per_second: float,
-            calibration_path: Optional[str]
+            calibration_path: Optional[str],
+            balance_phase_led_pin: Optional[CkPin],
+            falling_led_pin: Optional[CkPin],
+            termination_led_pin: Optional[CkPin],
+            balance_gamma: float
     ):
         """
         Initialize the cart-pole environment.
@@ -506,6 +550,12 @@ class CartPole(ContinuousMdpEnvironment):
         :param right_limit_switch_input_pin: Right limit pin.
         :param timesteps_per_second: Number of environment advancement steps to execute per second.
         :param calibration_path: Path to calibration pickle to read/write.
+        :param balance_phase_led_pin: Pin connected to an LED to illuminate when the episode transitions to the balance
+        phase.
+        :param falling_led_pin: Pin connected to an LED to illuminate when the pole is falling, or pass None to ignore.
+        :param termination_led_pin: Pin connected to an LED to illuminate when the episode terminates, or pass None to
+        ignore.
+        :param balance_gamma: Gamma (discount) to use during the balancing phase of the episode.
         """
 
         super().__init__(
@@ -530,6 +580,10 @@ class CartPole(ContinuousMdpEnvironment):
         self.right_limit_switch_input_pin = right_limit_switch_input_pin
         self.timesteps_per_second = timesteps_per_second
         self.calibration_path = os.path.expanduser(calibration_path)
+        self.balance_phase_led_pin = balance_phase_led_pin
+        self.falling_led_pin = falling_led_pin
+        self.termination_led_pin = termination_led_pin
+        self.balance_gamma = balance_gamma
 
         # TODO:  Add weight to pole to slow down?
 
@@ -543,7 +597,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.timestep_sleep_seconds = 1.0 / self.timesteps_per_second
         self.min_seconds_for_full_motor_speed_range = 0.05
         self.original_agent_gamma: Optional[float] = None
-        self.truncation_gamma = 0.75
+        self.truncation_gamma = 0.25
         self.max_pole_angular_speed_deg_per_second = 720.0
         self.num_incremental_rewards = 250
         self.incremental_rewards_pole_positions = []
@@ -644,6 +698,21 @@ class CartPole(ContinuousMdpEnvironment):
             self.pole_phase_change_index_at_bottom: Optional[int] = None
             self.pole_degrees_at_bottom: Optional[float] = None
             self.calibrate_on_next_reset = True
+
+        if self.balance_phase_led_pin is None:
+            self.balance_phase_led = None
+        else:
+            self.balance_phase_led = LED(self.balance_phase_led_pin)
+
+        if self.falling_led_pin is None:
+            self.falling_led = None
+        else:
+            self.falling_led = LED(self.falling_led_pin)
+
+        if self.termination_led_pin is None:
+            self.termination_led = None
+        else:
+            self.termination_led = LED(self.termination_led_pin)
 
     def __getstate__(
             self
@@ -1061,7 +1130,8 @@ class CartPole(ContinuousMdpEnvironment):
                 self.stop_cart()
 
                 # hitting a limit switch in the middle of an episode means that we've lost calibration. the soft limits
-                # should have prevented this, but this failed. end the episode and calibrate upon the next episod reset.
+                # should have prevented this, but this failed. end the episode and calibrate upon the next episode
+                # reset.
                 self.state: MdpState
                 if self.state is not None and not self.state.terminal:
                     self.state = self.get_state(terminal=True)
@@ -1312,6 +1382,16 @@ class CartPole(ContinuousMdpEnvironment):
         self.previous_timestep_epoch = None
         self.current_timesteps_per_second.reset()
 
+        # reset leds
+        if self.balance_phase_led is not None:
+            self.balance_phase_led.turn_off()
+
+        if self.falling_led is not None:
+            self.falling_led.turn_off()
+
+        if self.termination_led is not None:
+            self.termination_led.turn_off()
+
         logging.info(f'State after reset:  {self.state}')
 
         return self.state
@@ -1353,6 +1433,8 @@ class CartPole(ContinuousMdpEnvironment):
             # update the current state if we haven't yet terminated
             if not prev_state_terminal:
                 self.state = self.get_state(t)
+                if self.falling_led is not None and self.state.pole_is_falling:
+                    self.falling_led.turn_on()
 
             new_termination = not prev_state_terminal and self.state.terminal
             new_truncation = not prev_state_truncated and self.state.truncated
@@ -1360,6 +1442,8 @@ class CartPole(ContinuousMdpEnvironment):
             # stop the cart if we just terminated
             if new_termination:
                 self.stop_cart()
+                if self.termination_led is not None:
+                    self.termination_led.turn_on()
 
             # post-truncation convergence to zero takes too long with gammas close to 1.0 and a slow physical system.
             # decrease gamma to obtain faster convergence to zero.
@@ -1540,7 +1624,12 @@ class CartPole(ContinuousMdpEnvironment):
             abs(pole_angle_deg_from_upright) <= self.balance_phase_start_degrees
         ):
             self.episode_phase = CartPole.EpisodePhase.BALANCE
-            self.agent.gamma *= 0.5
+            self.agent.gamma = self.balance_gamma
+
+            if self.balance_phase_led is not None:
+                self.balance_phase_led.turn_on()
+
+            logging.info(f'Switched to balance phase with gamma={self.agent.gamma}.')
 
         # check termination
         if terminal is None:
