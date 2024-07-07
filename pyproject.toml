@@ -11,7 +11,7 @@ authors = [
     'Matthew Gerber <gerber.matthew@gmail.com>'
 ]
 packages = [
-    { include = 'cart_pol', from = 'src'}
+    { include = 'cart_pole', from = 'src'}
 ]
 repository = 'https://github.com/MatthewGerber/cart-pole'
 
