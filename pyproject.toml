@@ -16,7 +16,7 @@ packages = [
 repository = 'https://github.com/MatthewGerber/cart-pole'
 
 [tool.poetry.dependencies]
-python = '>=3.10'
+python = '>=3.10,<3.13'
 matplotlib = '~=3.8'
 pandas = '~=2.1'
 raspberry-py = { path = 'submodules/raspberry-py', develop = true }
