@@ -112,13 +112,17 @@ def main():
         motor_pwm_direction_pin=CkPin.GPIO21,
         motor_negative_speed_is_right=True,
         cart_rotary_encoder_phase_a_pin=CkPin.GPIO22,
-        cart_rotary_encoder_phase_b_pin=CkPin.GPIO26,
-        pole_rotary_encoder_phase_a_pin=CkPin.GPIO17,
-        pole_rotary_encoder_phase_b_pin=CkPin.GPIO27,
+        pole_rotary_encoder_speed_phase_a_pin=CkPin.GPIO5,
+        pole_rotary_encoder_direction_phase_a_pin=CkPin.GPIO17,
+        pole_rotary_encoder_direction_phase_b_pin=CkPin.GPIO27,
         left_limit_switch_input_pin=CkPin.GPIO20,
         right_limit_switch_input_pin=CkPin.GPIO16,
         timesteps_per_second=10.0,
-        calibration_path=None
+        calibration_path=None,
+        balance_phase_led_pin=CkPin.GPIO26,
+        falling_led_pin=CkPin.GPIO19,
+        termination_led_pin=CkPin.GPIO13,
+        balance_gamma=0.5
     )
 
     agent = TestAgent()
