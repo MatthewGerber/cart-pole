@@ -1433,8 +1433,11 @@ class CartPole(ContinuousMdpEnvironment):
             # update the current state if we haven't yet terminated
             if not prev_state_terminal:
                 self.state = self.get_state(t)
-                if self.falling_led is not None and self.state.pole_is_falling:
-                    self.falling_led.turn_on()
+                if self.falling_led is not None:
+                    if self.state.pole_is_falling:
+                        self.falling_led.turn_on()
+                    else:
+                        self.falling_led.turn_off()
 
             new_termination = not prev_state_terminal and self.state.terminal
             new_truncation = not prev_state_truncated and self.state.truncated
