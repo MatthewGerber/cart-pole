@@ -1457,11 +1457,13 @@ class CartPole(ContinuousMdpEnvironment):
             new_termination = not prev_state_terminal and self.state.terminal
             new_truncation = not prev_state_truncated and self.state.truncated
 
-            # stop the cart if we just terminated
             if new_termination:
-                self.stop_cart()
+
                 if self.termination_led is not None:
                     self.termination_led.turn_on()
+
+                # stop the cart if we just terminated
+                self.stop_cart()
 
             # post-truncation convergence to zero takes too long with gammas close to 1.0 and a slow physical system.
             # decrease gamma to obtain faster convergence to zero.
