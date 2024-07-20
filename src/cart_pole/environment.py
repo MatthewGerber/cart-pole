@@ -1547,7 +1547,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         if self.episode_phase == CartPole.EpisodePhase.BALANCE:
             if state.terminal:
-                reward = -10.0
+                reward = -1.0
             elif state.pole_is_falling:
                 reward = 0.0
             else:
