@@ -810,6 +810,21 @@ class CartPole(ContinuousMdpEnvironment):
 
         self.calibrate_on_next_reset = not self.load_calibration()
 
+        if self.balance_phase_led_pin is None:
+            self.balance_phase_led = None
+        else:
+            self.balance_phase_led = LED(self.balance_phase_led_pin)
+
+        if self.falling_led_pin is None:
+            self.falling_led = None
+        else:
+            self.falling_led = LED(self.falling_led_pin)
+
+        if self.termination_led_pin is None:
+            self.termination_led = None
+        else:
+            self.termination_led = LED(self.termination_led_pin)
+
     def load_calibration(
             self
     ) -> bool:
