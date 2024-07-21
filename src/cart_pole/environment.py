@@ -1355,6 +1355,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         super().reset_for_new_run(self.agent)
         self.agent = agent
+
         self.plot_label_data_kwargs['motor-speed'] = (
             dict(),
             {
@@ -1364,6 +1365,11 @@ class CartPole(ContinuousMdpEnvironment):
 
         if self.original_agent_gamma is None:
             self.original_agent_gamma = self.agent.gamma
+
+        # reset original agent gamma value. we manipulate gamma during episode phases and for post-truncation
+        # convergence.
+        self.agent.gamma = self.original_agent_gamma
+        logging.info(f'Restored agent.gamma to {self.agent.gamma}.')
 
         self.episode_phase = CartPole.EpisodePhase.SWING_UP
 
@@ -1397,15 +1403,14 @@ class CartPole(ContinuousMdpEnvironment):
         self.previous_timestep_epoch = None
         self.current_timesteps_per_second.reset()
 
-        # reset leds
-        if self.balance_phase_led is not None:
-            self.balance_phase_led.turn_off()
-
-        if self.falling_led is not None:
-            self.falling_led.turn_off()
-
-        if self.termination_led is not None:
-            self.termination_led.turn_off()
+        # reset leds to off
+        for led in [
+            self.balance_phase_led,
+            self.falling_led,
+            self.termination_led
+        ]:
+            if led is not None:
+                led.turn_off()
 
         logging.info(f'State after reset:  {self.state}')
 
@@ -1670,11 +1675,6 @@ class CartPole(ContinuousMdpEnvironment):
                         f'Pole has fallen while balancing. Angle {pole_angle_deg_from_upright:.2f} exceeds maximum '
                         f'allowable of {self.balance_phase_end_degrees:.2f}. Terminating.'
                     )
-
-        # reset original agent gamma value (see advance for post-truncation convergence issue)
-        if terminal:
-            self.agent.gamma = self.original_agent_gamma
-            logging.info(f'Restored agent.gamma to {self.agent.gamma}.')
 
         return CartPoleState(
             environment=self,
