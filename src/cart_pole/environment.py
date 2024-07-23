@@ -1640,9 +1640,6 @@ class CartPole(ContinuousMdpEnvironment):
         else:
             pole_angle_deg_from_upright = -np.sign(pole_angle_deg_from_bottom) * 180.0 + pole_angle_deg_from_bottom
 
-        # get angular velocity
-        pole_angular_velocity_deg_per_sec = pole_state.degrees_per_second
-
         # transition to the balancing phase
         if (
             self.episode_phase == CartPole.EpisodePhase.SWING_UP and
@@ -1679,9 +1676,9 @@ class CartPole(ContinuousMdpEnvironment):
         return CartPoleState(
             environment=self,
             cart_mm_from_center=cart_mm_from_center,
-            cart_velocity_mm_per_sec=(cart_state.degrees_per_second * self.cart_mm_per_degree),
+            cart_velocity_mm_per_sec=cart_state.degrees_per_second * self.cart_mm_per_degree,
             pole_angle_deg_from_upright=pole_angle_deg_from_upright,
-            pole_angular_velocity_deg_per_sec=pole_angular_velocity_deg_per_sec,
+            pole_angular_velocity_deg_per_sec=pole_state.degrees_per_second,
             step=t,
             agent=self.agent,
             terminal=terminal,
