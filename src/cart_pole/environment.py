@@ -635,6 +635,9 @@ class CartPole(ContinuousMdpEnvironment):
             )
         ]
 
+        # we use the motor output speed (+/-) as our direction signal, so we can use a single-signal encoder for the
+        # cart. a dual-multiprocess encoder would be better, but the pi only has four cores. use one here, two for the
+        # pole below, and the fourth for the main thread of the program.
         self.cart_rotary_encoder = CartRotaryEncoder(
             phase_a_pin=self.cart_rotary_encoder_phase_a_pin,
             phase_b_pin=None,
