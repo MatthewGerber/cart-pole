@@ -145,6 +145,7 @@ class CartPoleBaselineFeatureExtractor(StateFeatureExtractor):
                     cart_velocity_mm_per_sec=state.cart_velocity_mm_per_second,
                     pole_angle_deg_from_upright=state.pole_angle_deg_from_upright + pole_distance_deg,
                     pole_angular_velocity_deg_per_sec=state.pole_angular_velocity_deg_per_sec,
+                    pole_angular_acceleration_deg_per_sec_squared=state.pole_angular_acceleration_deg_per_sec_squared,
                     step=state.step + step,
                     agent=self.environment.agent,
                     terminal=terminal,
@@ -287,7 +288,11 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
             ),
             state.cart_velocity_mm_per_second / self.environment.max_cart_speed_mm_per_second,
             2.0 * state.zero_to_one_pole_angle - 1.0,
-            state.pole_angular_velocity_deg_per_sec / self.environment.max_pole_angular_speed_deg_per_second
+            state.pole_angular_velocity_deg_per_sec / self.environment.max_pole_angular_speed_deg_per_second,
+            (
+                state.pole_angular_acceleration_deg_per_sec_squared /
+                self.environment.max_pole_angular_acceleration_deg_per_second_squared
+            )
         ])
 
         # scaling the features to be in [-1.0, 1.0] according to their theoretical bounds doesn't mean that the

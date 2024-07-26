@@ -91,6 +91,7 @@ class CartPoleState(MdpState):
             cart_velocity_mm_per_sec: float,
             pole_angle_deg_from_upright: float,
             pole_angular_velocity_deg_per_sec: float,
+            pole_angular_acceleration_deg_per_sec_squared: float,
             step: int,
             agent: MdpAgent,
             terminal: bool,
@@ -105,6 +106,7 @@ class CartPoleState(MdpState):
         :param pole_angle_deg_from_upright: Pole angle as degrees left of (negative), right of (positive), or at (zero)
         upright.
         :param pole_angular_velocity_deg_per_sec: Pole angular velocity (deg/sec).
+        :param pole_angular_acceleration_deg_per_sec_squared: Pole angular acceleration (deg/sec^2).
         :param step: Time step.
         :param agent: Agent.
         :param terminal: Whether the state is terminal, meaning the episode has terminated naturally due to the
@@ -119,13 +121,15 @@ class CartPoleState(MdpState):
         self.cart_velocity_mm_per_second = cart_velocity_mm_per_sec
         self.pole_angle_deg_from_upright = pole_angle_deg_from_upright
         self.pole_angular_velocity_deg_per_sec = pole_angular_velocity_deg_per_sec
+        self.pole_angular_acceleration_deg_per_sec_squared = pole_angular_acceleration_deg_per_sec_squared
         self.step = step
 
         self.observation = np.array([
             self.cart_mm_from_center,
             self.cart_velocity_mm_per_second,
             self.pole_angle_deg_from_upright,
-            self.pole_angular_velocity_deg_per_sec
+            self.pole_angular_velocity_deg_per_sec,
+            self.pole_angular_acceleration_deg_per_sec_squared
         ])
 
         self.zero_to_one_pole_angle = CartPoleState.zero_to_one_pole_angle_from_degrees(
@@ -585,8 +589,6 @@ class CartPole(ContinuousMdpEnvironment):
         self.termination_led_pin = termination_led_pin
         self.balance_gamma = balance_gamma
 
-        # TODO:  Add weight to pole to slow down?
-
         # non-calibrated attributes
         self.midline_mm = self.limit_to_limit_mm / 2.0
         self.soft_limit_mm_from_midline = self.midline_mm - self.soft_limit_standoff_mm - self.cart_width_mm / 2.0
@@ -599,6 +601,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.original_agent_gamma: Optional[float] = None
         self.truncation_gamma = 0.25
         self.max_pole_angular_speed_deg_per_second = 720.0
+        self.max_pole_angular_acceleration_deg_per_second_squared = 90.0
         self.num_incremental_rewards = 250
         self.incremental_rewards_pole_positions = []
         self.episode_phase = CartPole.EpisodePhase.SWING_UP
@@ -643,9 +646,7 @@ class CartPole(ContinuousMdpEnvironment):
             phase_b_pin=None,
             phase_changes_per_rotation=1200,
             phase_change_mode=RotaryEncoder.PhaseChangeMode.ONE_SIGNAL_ONE_EDGE,
-
-            # the rotary encoder's state is updated at a rate of steps/sec. additional smoothing shouldn't be needed.
-            degrees_per_second_step_size=1.0
+            degrees_per_second_step_size=0.9
         )
         self.cart_rotary_encoder.wait_for_startup()
 
@@ -654,9 +655,7 @@ class CartPole(ContinuousMdpEnvironment):
             direction_phase_a_pin=self.pole_rotary_encoder_direction_phase_a_pin,
             direction_phase_b_pin=self.pole_rotary_encoder_direction_phase_b_pin,
             phase_changes_per_rotation=1200,
-
-            # the rotary encoder's state is updated at a rate of steps/sec. additional smoothing shouldn't be needed.
-            degrees_per_second_step_size=1.0
+            degrees_per_second_step_size=0.9
         )
         self.pole_rotary_encoder.wait_for_startup()
 
@@ -1362,7 +1361,28 @@ class CartPole(ContinuousMdpEnvironment):
         self.plot_label_data_kwargs['motor-speed'] = (
             dict(),
             {
-                'color': 'orange'
+                'linewidth': 0.5
+            }
+        )
+
+        self.plot_label_data_kwargs['angle'] = (
+            dict(),
+            {
+                'linewidth': 0.5
+            }
+        )
+
+        self.plot_label_data_kwargs['angular-velocity'] = (
+            dict(),
+            {
+                'linewidth': 0.5
+            }
+        )
+
+        self.plot_label_data_kwargs['angular-acceleration'] = (
+            dict(),
+            {
+                'linewidth': 0.5
             }
         )
 
@@ -1532,6 +1552,11 @@ class CartPole(ContinuousMdpEnvironment):
             logging.debug(f'Reward {t}:  {reward_value}')
 
             self.plot_label_data_kwargs['motor-speed'][0][t] = self.motor.get_speed()
+            self.plot_label_data_kwargs['angle'][0][t] = self.state.pole_angle_deg_from_upright
+            self.plot_label_data_kwargs['angular-velocity'][0][t] = self.state.pole_angular_velocity_deg_per_sec
+            self.plot_label_data_kwargs['angular-acceleration'][0][t] = (
+                self.state.pole_angular_acceleration_deg_per_sec_squared
+            )
 
             return self.state, Reward(None, reward_value)
 
@@ -1682,6 +1707,7 @@ class CartPole(ContinuousMdpEnvironment):
             cart_velocity_mm_per_sec=cart_state.degrees_per_second * self.cart_mm_per_degree,
             pole_angle_deg_from_upright=pole_angle_deg_from_upright,
             pole_angular_velocity_deg_per_sec=pole_state.degrees_per_second,
+            pole_angular_acceleration_deg_per_sec_squared=pole_state.degrees_acceleration_per_second,
             step=t,
             agent=self.agent,
             terminal=terminal,
