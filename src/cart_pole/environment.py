@@ -1234,7 +1234,7 @@ class CartPole(ContinuousMdpEnvironment):
         """
         Center the cart.
 
-        :param fast: Center cart quickly (True) but with lower accuracy or slowly (False) and with higher accurancy.
+        :param fast: Center cart quickly (True) but with lower accuracy or slowly (False) and with higher accuracy.
         :param original_position: Original cart position.
         :return: Final position.
         """
