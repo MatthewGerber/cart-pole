@@ -1420,8 +1420,6 @@ class CartPole(ContinuousMdpEnvironment):
         else:
             self.center_cart(True, True)
 
-        # issue a double-call to get state so that velocity is ensured to be 0.0
-        self.get_state()
         self.state = self.get_state(terminal=False)
         self.previous_timestep_epoch = None
         self.current_timesteps_per_second.reset()
