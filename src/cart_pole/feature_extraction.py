@@ -12,7 +12,7 @@ from rlai.models.feature_extraction import FeatureExtractor, StationaryFeatureSc
 from rlai.state_value.function_approximation.models.feature_extraction import (
     StateFeatureExtractor,
     OneHotStateIndicatorFeatureInteracter,
-    StateDimensionLambda
+    StateDimensionLambda, StateDimensionSegment
 )
 from rlai.utils import parse_arguments
 
@@ -287,10 +287,7 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
                 (abs(state.cart_mm_from_center) / self.environment.soft_limit_mm_from_midline)
             ),
             state.cart_velocity_mm_per_second / self.environment.max_cart_speed_mm_per_second,
-
-            # TODO:  This probably isn't right, as it does not differentiate position.
-            2.0 * state.zero_to_one_pole_angle - 1.0,
-
+            state.zero_to_one_pole_angle * np.sign(state.pole_angle_deg_from_upright),
             state.pole_angular_velocity_deg_per_sec / self.environment.max_pole_angular_speed_deg_per_second,
             (
                 state.pole_angular_acceleration_deg_per_sec_squared /
@@ -331,12 +328,20 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         :return: Interacter.
         """
 
-        # use a separate policy per phase
         return OneHotStateIndicatorFeatureInteracter([
+
+            # segment policy per episode phase
             StateDimensionLambda(
                 CartPoleState.Dimension.PoleAngle.value,  # this can be anything. it's ignored in the lambda.
                 lambda _: self.environment.episode_phase.value,
                 [episode_phase.value for episode_phase in CartPole.EpisodePhase]
+            ),
+
+            # segment policy per pole on either side of vertical
+            StateDimensionSegment(
+                CartPoleState.Dimension.PoleAngle.value,
+                None,
+                0.0
             )
         ])
 
