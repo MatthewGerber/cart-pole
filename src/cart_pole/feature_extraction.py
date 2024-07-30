@@ -287,7 +287,10 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
                 (abs(state.cart_mm_from_center) / self.environment.soft_limit_mm_from_midline)
             ),
             state.cart_velocity_mm_per_second / self.environment.max_cart_speed_mm_per_second,
+
+            # TODO:  This probably isn't right, as it does not differentiate position.
             2.0 * state.zero_to_one_pole_angle - 1.0,
+
             state.pole_angular_velocity_deg_per_sec / self.environment.max_pole_angular_speed_deg_per_second,
             (
                 state.pole_angular_acceleration_deg_per_sec_squared /
@@ -302,7 +305,7 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         # standardize the scaled feature vector so that a single step size will be feasible.
         scaled_feature_vector = self.scaler.scale_features(np.array([ranged_feature_vector]), refit_scaler)[0]
 
-        # prepend constant intercept and add multiplicative terms
+        # prepend constant intercept and add multiplicative interaction terms
         state_feature_vector = np.append(
             [1.0],
             [
@@ -331,7 +334,7 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         # use a separate policy per phase
         return OneHotStateIndicatorFeatureInteracter([
             StateDimensionLambda(
-                CartPoleState.Dimension.PoleAngle.value,
+                CartPoleState.Dimension.PoleAngle.value,  # this can be anything. it's ignored in the lambda.
                 lambda _: self.environment.episode_phase.value,
                 [episode_phase.value for episode_phase in CartPole.EpisodePhase]
             )

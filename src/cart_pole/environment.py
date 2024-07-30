@@ -69,6 +69,7 @@ class CartPoleState(MdpState):
         CartVelocity = 1
         PoleAngle = 2
         PoleVelocity = 3
+        PoleAcceleration = 4
 
     @staticmethod
     def zero_to_one_pole_angle_from_degrees(
