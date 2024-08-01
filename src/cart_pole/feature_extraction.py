@@ -5,14 +5,15 @@ from argparse import ArgumentParser
 from typing import List, Tuple, Dict, Optional
 
 import numpy as np
-from cart_pole.environment import CartPoleState, CartPole
 
+from cart_pole.environment import CartPoleState, CartPole
 from rlai.core import MdpState
 from rlai.models.feature_extraction import FeatureExtractor, StationaryFeatureScaler
 from rlai.state_value.function_approximation.models.feature_extraction import (
     StateFeatureExtractor,
     OneHotStateIndicatorFeatureInteracter,
-    StateDimensionLambda, StateDimensionSegment
+    StateDimensionLambda,
+    StateDimensionSegment
 )
 from rlai.utils import parse_arguments
 
@@ -282,13 +283,24 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         # the minimum and maximum values of some state dimensions (e.g., pole angular velocity) are unlimited in theory
         # and uncalibrated in practice.
         ranged_feature_vector = np.array([
+
+            # cart position:  0.0 in middle, -1.0 at left soft limit, and +1.0 at right soft limit.
             (
                 np.sign(state.cart_mm_from_center) *
                 (abs(state.cart_mm_from_center) / self.environment.soft_limit_mm_from_midline)
             ),
+
+            # cart velocity:  fraction of maximum speed (calibrated)
             state.cart_velocity_mm_per_second / self.environment.max_cart_speed_mm_per_second,
+
+            # pole angle:  0.0 at bottom, decreasing to -1.0 as pole rises clockwise, and increasing to +1.0 as the
+            # pole rises counterclockwise. see the state segmentation for how we partition the policy on this feature.
             state.zero_to_one_pole_angle * np.sign(state.pole_angle_deg_from_upright),
+
+            # pole velocity:  fraction of maximum angular velocity (uncalibrated)
             state.pole_angular_velocity_deg_per_sec / self.environment.max_pole_angular_speed_deg_per_second,
+
+            # pole acceleration:  fraction of maximum angular acceleration (uncalibrated)
             (
                 state.pole_angular_acceleration_deg_per_sec_squared /
                 self.environment.max_pole_angular_acceleration_deg_per_second_squared
@@ -296,10 +308,11 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         ])
 
         # scaling the features to be in [-1.0, 1.0] according to their theoretical bounds doesn't mean that the
-        # resulting actual values will be on comparable scales when running. for example, the observed cart and pole
+        # distribution of observed values will be similar when running. for example, the observed cart and pole
         # velocities might be quite small relative to their ranges and the observed values of cart and pole positions.
-        # these differences in observed scale across features result in the usual issues pertaining to step sizes.
-        # standardize the scaled feature vector so that a single step size will be feasible.
+        # these differences in observed distribution across features result in the usual issues pertaining to step
+        # sizes in the policy updates. standardize the scaled feature vector so that a single step size will be
+        # feasible.
         scaled_feature_vector = self.scaler.scale_features(np.array([ranged_feature_vector]), refit_scaler)[0]
 
         # prepend constant intercept and add multiplicative interaction terms
@@ -332,12 +345,16 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
 
             # segment policy per episode phase
             StateDimensionLambda(
-                CartPoleState.Dimension.PoleAngle.value,  # this can be anything. it's ignored in the lambda.
+                None,
                 lambda _: self.environment.episode_phase.value,
                 [episode_phase.value for episode_phase in CartPole.EpisodePhase]
             ),
 
-            # segment policy per pole on either side of vertical
+            # segment policy per pole on either side of vertical. we haven't yet found a feature that quantifies the
+            # correct policy response for pole angle. the feature would need to have similar values near either side
+            # of vertical downward and similar values near either side of vertical upward, with opposing values
+            # depending on whether the pole is on the left half or right half. this segmentation approach splits the
+            # policy on left/right half, such that the pole angle feature can reflect the appropriate policy response.
             StateDimensionSegment(
                 CartPoleState.Dimension.PoleAngle.value,
                 None,
