@@ -603,11 +603,9 @@ class CartPole(ContinuousMdpEnvironment):
         self.truncation_gamma = 0.25
         self.max_pole_angular_speed_deg_per_second = 720.0
         self.max_pole_angular_acceleration_deg_per_second_squared = 2000.0
-        self.num_incremental_rewards = 250
-        self.incremental_rewards_pole_positions = []
         self.episode_phase = CartPole.EpisodePhase.SWING_UP
-        self.balance_phase_start_degrees = 25.0
-        self.balance_phase_end_degrees = 25.0
+        self.pole_angle_reward_threshold = 0.0
+        self.max_pole_angle_reward_threshold = 20.0
 
         self.pca9685pw = PulseWaveModulatorPCA9685PW(
             bus=SMBus('/dev/i2c-1'),
@@ -1398,14 +1396,6 @@ class CartPole(ContinuousMdpEnvironment):
 
         self.episode_phase = CartPole.EpisodePhase.SWING_UP
 
-        # reset incremental rewards
-        self.incremental_rewards_pole_positions = np.linspace(
-            start=0.0,
-            stop=1.0,
-            num=self.num_incremental_rewards,
-            endpoint=True
-        ).tolist()
-
         self.motor.start()
 
         # need to wait for stationary pole, in case the apparatus is too close to a wall and will hit it while moving
@@ -1571,43 +1561,37 @@ class CartPole(ContinuousMdpEnvironment):
         :return: Reward.
         """
 
-        reward = 0.0
+        # always punish on termination
+        if state.terminal:
+            reward = -1.0
 
-        # impose 0.0 reward when cart has less than 1/4 of the left/right track left. this ensures that the negative
-        # reward at soft-limit termination punishes the policy with a negative target.
-        pole_angle_cart_distance_reward = (
-            state.zero_to_one_pole_angle *
-            max(0.0, state.zero_to_one_distance_from_center - 0.25)
-        )
+        elif self.episode_phase == CartPole.EpisodePhase.BALANCE:
 
-        if self.episode_phase == CartPole.EpisodePhase.BALANCE:
-            if state.terminal:
-                reward = -1.0
-            elif state.pole_is_falling:
+            # no reward for a falling pole when balancing
+            if state.pole_is_falling:
                 reward = 0.0
+
+            # if pole is rising, then reward depends on angle from upright and cart position from center
             else:
-                reward = pole_angle_cart_distance_reward
-                self.time_step_axv_lines[state.step] = ('blue', 'balance')
+                reward = (
+
+                    # reward is maximum at upright
+                    state.zero_to_one_pole_angle *
+
+                    # impose 0.0 reward when cart has less than 1/4 of the left/right track left. this ensures that the
+                    # negative reward at soft-limit termination punishes the policy with a negative target.
+                    max(0.0, state.zero_to_one_distance_from_center - 0.25)
+                )
+
+            # indicate balance phase
+            self.time_step_axv_lines[state.step] = ('blue', 'balance')
+
+        # always punish during the swing-up phase. we want to get to balancing as soon as possible.
         elif self.episode_phase == CartPole.EpisodePhase.SWING_UP:
-            if state.terminal:
-                reward = -1.0
-            else:
-                if len(self.incremental_rewards_pole_positions) == 0:
-                    idx_of_reward_position_beyond_current = 0
-                else:
-                    idx_of_reward_position_beyond_current = next(
-                        (
-                            idx
-                            for idx, position in enumerate(self.incremental_rewards_pole_positions)
-                            if position > state.zero_to_one_pole_angle
-                        ),
-                        len(self.incremental_rewards_pole_positions)
-                    )
-                if idx_of_reward_position_beyond_current > 0:
-                    reward = pole_angle_cart_distance_reward
-                    self.incremental_rewards_pole_positions = (
-                        self.incremental_rewards_pole_positions[idx_of_reward_position_beyond_current:]
-                    )
+            reward = -(
+                (1.0 - state.zero_to_one_pole_angle) *
+                (1.0 - state.zero_to_one_distance_from_center)
+            )
         else:
             raise ValueError(f'Unknown episode phase:  {self.episode_phase}')
 
@@ -1673,13 +1657,19 @@ class CartPole(ContinuousMdpEnvironment):
         # transition to the balancing phase
         if (
             self.episode_phase == CartPole.EpisodePhase.SWING_UP and
-            abs(pole_angle_deg_from_upright) <= self.balance_phase_start_degrees
+            abs(pole_angle_deg_from_upright) <= self.pole_angle_reward_threshold
         ):
             self.episode_phase = CartPole.EpisodePhase.BALANCE
             self.agent.gamma = self.balance_gamma
 
             if self.balance_phase_led is not None:
                 self.balance_phase_led.turn_on()
+
+            # advance the balance threshold up to the maximum
+            self.pole_angle_reward_threshold = max(
+                self.max_pole_angle_reward_threshold,
+                self.pole_angle_reward_threshold + 1.0
+            )
 
             logging.info(f'Switched to balance phase with gamma={self.agent.gamma}.')
 
@@ -1696,12 +1686,16 @@ class CartPole(ContinuousMdpEnvironment):
 
             # also terminate for falling too far in the balance phase
             if not terminal and self.episode_phase == CartPole.EpisodePhase.BALANCE:
-                terminal = abs(pole_angle_deg_from_upright) > self.balance_phase_end_degrees
+                terminal = abs(pole_angle_deg_from_upright) > self.pole_angle_reward_threshold
                 if terminal:
                     logging.info(
                         f'Pole has fallen while balancing. Angle {pole_angle_deg_from_upright:.2f} exceeds maximum '
-                        f'allowable of {self.balance_phase_end_degrees:.2f}. Terminating.'
+                        f'allowable of {self.pole_angle_reward_threshold:.2f}. Terminating.'
                     )
+
+        logging.info(
+            f'Pole angle reward threshold:  {self.pole_angle_reward_threshold}'
+        )
 
         return CartPoleState(
             environment=self,

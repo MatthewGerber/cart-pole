@@ -12,7 +12,6 @@ from rlai.models.feature_extraction import FeatureExtractor, StationaryFeatureSc
 from rlai.state_value.function_approximation.models.feature_extraction import (
     StateFeatureExtractor,
     OneHotStateIndicatorFeatureInteracter,
-    StateDimensionLambda,
     StateDimensionSegment
 )
 from rlai.utils import parse_arguments
@@ -332,9 +331,8 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
 
         return state_indicator_feature_vector
 
-    def get_interacter(
-            self
-    ) -> OneHotStateIndicatorFeatureInteracter:
+    @staticmethod
+    def get_interacter() -> OneHotStateIndicatorFeatureInteracter:
         """
         Get interacter.
 
@@ -342,13 +340,6 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         """
 
         return OneHotStateIndicatorFeatureInteracter([
-
-            # segment policy per episode phase
-            StateDimensionLambda(
-                None,
-                lambda _: self.environment.episode_phase.value,
-                [episode_phase.value for episode_phase in CartPole.EpisodePhase]
-            ),
 
             # segment policy per pole on either side of vertical. we haven't yet found a feature that quantifies the
             # correct policy response for pole angle. the feature would need to have similar values near either side
