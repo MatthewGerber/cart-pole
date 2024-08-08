@@ -604,8 +604,9 @@ class CartPole(ContinuousMdpEnvironment):
         self.max_pole_angular_speed_deg_per_second = 720.0
         self.max_pole_angular_acceleration_deg_per_second_squared = 2000.0
         self.episode_phase = CartPole.EpisodePhase.SWING_UP
-        self.pole_angle_reward_threshold = 0.0
+        self.pole_angle_reward_threshold = 175.0
         self.max_pole_angle_reward_threshold = 20.0
+        self.pole_angle_at_reward_threshold = None
 
         self.pca9685pw = PulseWaveModulatorPCA9685PW(
             bus=SMBus('/dev/i2c-1'),
@@ -1282,7 +1283,7 @@ class CartPole(ContinuousMdpEnvironment):
         Stop the cart and do not return until it is stationary.
         """
 
-        logging.info('Stopping cart...')
+        logging.info('Stopping cart.')
         self.set_motor_speed(0)
         self.cart_rotary_encoder.wait_for_stationarity()
         logging.info('Cart stopped.')
@@ -1395,6 +1396,7 @@ class CartPole(ContinuousMdpEnvironment):
         logging.info(f'Restored agent.gamma to {self.agent.gamma}.')
 
         self.episode_phase = CartPole.EpisodePhase.SWING_UP
+        self.pole_angle_at_reward_threshold = None
 
         self.motor.start()
 
@@ -1659,19 +1661,20 @@ class CartPole(ContinuousMdpEnvironment):
             self.episode_phase == CartPole.EpisodePhase.SWING_UP and
             abs(pole_angle_deg_from_upright) <= self.pole_angle_reward_threshold
         ):
+            self.pole_angle_at_reward_threshold = pole_angle_deg_from_upright
             self.episode_phase = CartPole.EpisodePhase.BALANCE
             self.agent.gamma = self.balance_gamma
-
             if self.balance_phase_led is not None:
                 self.balance_phase_led.turn_on()
+
+            logging.info(f'Switched to balance phase with gamma={self.agent.gamma}.')
 
             # advance the balance threshold up to the maximum
             self.pole_angle_reward_threshold = max(
                 self.max_pole_angle_reward_threshold,
-                self.pole_angle_reward_threshold + 1.0
+                self.pole_angle_reward_threshold - 1.0
             )
-
-            logging.info(f'Switched to balance phase with gamma={self.agent.gamma}.')
+            logging.info(f'Advanced pole angle reward threshold to {self.pole_angle_reward_threshold} degrees.')
 
         # check termination
         if terminal is None:
@@ -1692,10 +1695,6 @@ class CartPole(ContinuousMdpEnvironment):
                         f'Pole has fallen while balancing. Angle {pole_angle_deg_from_upright:.2f} exceeds maximum '
                         f'allowable of {self.pole_angle_reward_threshold:.2f}. Terminating.'
                     )
-
-        logging.info(
-            f'Pole angle reward threshold:  {self.pole_angle_reward_threshold}'
-        )
 
         return CartPoleState(
             environment=self,
