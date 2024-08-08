@@ -1563,39 +1563,16 @@ class CartPole(ContinuousMdpEnvironment):
         :return: Reward.
         """
 
-        # always punish on termination
         if state.terminal:
             reward = -1.0
-
-        elif self.episode_phase == CartPole.EpisodePhase.BALANCE:
-
-            # no reward for a falling pole when balancing
-            if state.pole_is_falling:
-                reward = 0.0
-
-            # if pole is rising, then reward depends on angle from upright and cart position from center
-            else:
-                reward = (
-
-                    # reward is maximum at upright
-                    state.zero_to_one_pole_angle *
-
-                    # impose 0.0 reward when cart has less than 1/4 of the left/right track left. this ensures that the
-                    # negative reward at soft-limit termination punishes the policy with a negative target.
-                    max(0.0, state.zero_to_one_distance_from_center - 0.25)
-                )
-
-            # indicate balance phase
-            self.time_step_axv_lines[state.step] = ('blue', 'balance')
-
-        # always punish during the swing-up phase. we want to get to balancing as soon as possible.
-        elif self.episode_phase == CartPole.EpisodePhase.SWING_UP:
-            reward = -(
-                (1.0 - state.zero_to_one_pole_angle) *
-                (1.0 - state.zero_to_one_distance_from_center)
-            )
         else:
-            raise ValueError(f'Unknown episode phase:  {self.episode_phase}')
+            reward = (
+                state.zero_to_one_pole_angle *
+                state.zero_to_one_distance_from_center
+            )
+
+        if self.episode_phase == CartPole.EpisodePhase.BALANCE:
+            self.time_step_axv_lines[state.step] = ('blue', 'balance')
 
         return reward
 
