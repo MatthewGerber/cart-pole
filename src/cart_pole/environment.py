@@ -1359,6 +1359,15 @@ class CartPole(ContinuousMdpEnvironment):
         super().reset_for_new_run(self.agent)
         self.agent = agent
 
+        # reset leds to off
+        for led in [
+            self.balance_phase_led,
+            self.falling_led,
+            self.termination_led
+        ]:
+            if led is not None:
+                led.turn_off()
+
         self.plot_label_data_kwargs['motor-speed'] = (
             dict(),
             {
@@ -1417,15 +1426,6 @@ class CartPole(ContinuousMdpEnvironment):
         self.state = self.get_state(t=None, terminal=False, update_velocity_and_acceleration=False)
         self.previous_timestep_epoch = None
         self.current_timesteps_per_second.reset()
-
-        # reset leds to off
-        for led in [
-            self.balance_phase_led,
-            self.falling_led,
-            self.termination_led
-        ]:
-            if led is not None:
-                led.turn_off()
 
         logging.info(f'State after reset:  {self.state}')
 
