@@ -1570,7 +1570,7 @@ class CartPole(ContinuousMdpEnvironment):
                 state.zero_to_one_pole_angle *
                 state.zero_to_one_distance_from_center
             ) / (
-                abs(state.pole_angular_velocity_deg_per_sec / self.max_pole_angular_speed_deg_per_second)
+                1.0 + abs(state.pole_angular_velocity_deg_per_sec) / self.max_pole_angular_speed_deg_per_second
             )
 
         if self.episode_phase == CartPole.EpisodePhase.BALANCE:
