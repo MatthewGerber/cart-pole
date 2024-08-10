@@ -624,16 +624,18 @@ class CartPole(ContinuousMdpEnvironment):
             speed=0
         )
 
-        self.max_motor_speed_change_per_step = (
-            (self.motor.max_speed - self.motor.min_speed) /
-            (self.timesteps_per_second * self.min_seconds_for_full_motor_speed_range)
+        # configure the continuous action with a single dimension ranging the maximum motor speed change
+        min_timesteps_for_full_motor_speed_range = max(
+            1.0,
+            self.timesteps_per_second * self.min_seconds_for_full_motor_speed_range
         )
-
+        motor_speed_range = float(self.motor.max_speed - self.motor.min_speed)
+        max_motor_speed_change_per_step = motor_speed_range / min_timesteps_for_full_motor_speed_range
         self.actions = [
             ContinuousMultiDimensionalAction(
                 value=None,
-                min_values=np.array([-self.max_motor_speed_change_per_step]),
-                max_values=np.array([self.max_motor_speed_change_per_step]),
+                min_values=np.array([-max_motor_speed_change_per_step]),
+                max_values=np.array([max_motor_speed_change_per_step]),
                 name='motor-speed-change'
             )
         ]
