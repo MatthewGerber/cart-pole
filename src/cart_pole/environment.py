@@ -600,7 +600,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.timestep_sleep_seconds = 1.0 / self.timesteps_per_second
         self.min_seconds_for_full_motor_speed_range = 0.05
         self.original_agent_gamma: Optional[float] = None
-        self.truncation_gamma = 0.25
+        self.truncation_gamma = None  # unused. unclear if this is effective.
         self.max_pole_angular_speed_deg_per_second = 720.0
         self.max_pole_angular_acceleration_deg_per_second_squared = 2000.0
         self.episode_phase = CartPole.EpisodePhase.SWING_UP
@@ -1489,10 +1489,10 @@ class CartPole(ContinuousMdpEnvironment):
 
             # post-truncation convergence to zero takes too long with gammas close to 1.0 and a slow physical system.
             # decrease gamma to obtain faster convergence to zero.
-            if new_truncation:
+            if new_truncation and self.truncation_gamma is not None:
                 self.agent.gamma = self.truncation_gamma
                 logging.info(
-                    f'Episode was truncated. Decreased agent.gamma to {self.agent.gamma} to obtain faster convergence '
+                    f'Episode was truncated. Set agent.gamma to {self.agent.gamma} to obtain faster convergence '
                     'to zero.'
                 )
 
@@ -1657,10 +1657,12 @@ class CartPole(ContinuousMdpEnvironment):
             )
             logging.info(f'Advanced pole angle reward threshold to {self.pole_angle_reward_threshold} degrees.')
 
-        # check termination
+        # check termination and truncation. only do this if termination isn't being forced.
+        truncated = False
         if terminal is None:
 
-            # always terminate for violation of soft limit
+            # always terminate for violation of soft limit, since continuing might cause the cart to physically impact
+            # the limit switch at a high speed.
             terminal = self.cart_violates_soft_limit(cart_mm_from_center)
             if terminal:
                 logging.info(
@@ -1668,13 +1670,21 @@ class CartPole(ContinuousMdpEnvironment):
                     f'({self.soft_limit_mm_from_midline} mm). Terminating.'
                 )
 
-            # also terminate for falling too far in the balance phase
-            if not terminal and self.episode_phase == CartPole.EpisodePhase.BALANCE:
-                terminal = abs(pole_angle_deg_from_upright) > self.pole_angle_reward_threshold
-                if terminal:
+            # assess truncation if we haven't terminated.
+            if not terminal:
+                if (
+                    self.episode_phase == CartPole.EpisodePhase.BALANCE and
+                    abs(pole_angle_deg_from_upright) > self.pole_angle_reward_threshold
+                ):
+                    truncated = True
                     logging.info(
                         f'Pole has fallen while balancing. Angle {pole_angle_deg_from_upright:.2f} exceeds maximum '
-                        f'allowable of {self.pole_angle_reward_threshold:.2f}. Terminating.'
+                        f'allowable of {self.pole_angle_reward_threshold:.2f}. Truncating.'
+                    )
+                elif t is not None and self.T is not None and t >= self.T:
+                    truncated = True
+                    logging.info(
+                        f'Time step {t} is at or beyond permissible duration {self.T}. Truncating.'
                     )
 
         return CartPoleState(
@@ -1687,7 +1697,7 @@ class CartPole(ContinuousMdpEnvironment):
             step=t,
             agent=self.agent,
             terminal=terminal,
-            truncated=t is not None and self.T is not None and t >= self.T
+            truncated=truncated
         )
 
     def close(
