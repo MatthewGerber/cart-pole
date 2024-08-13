@@ -13,5 +13,8 @@ poetry env use 3.11
 poetry install
 ```
 
-# To Do
+# To Do/Try
+* Decrease pole mass.
+* Progress threshold farther.
+* Smoother velocity and acceleration estimates.
 * Check state-action tuple equality in reinforce first-visit check.
