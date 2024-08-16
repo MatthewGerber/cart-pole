@@ -259,7 +259,10 @@ class CartPole(ContinuousMdpEnvironment):
         # Begins when swing-up ends. This phase then ends if and when the pole falls too far from vertical.
         BALANCE = auto()
 
-        # Truncation when balance is lost.
+        # Begins when the pole loses balance. This starts a timer until truncation.
+        LOST_BALANCE = auto()
+
+        # Begins when the lost-balance timer elapses.
         TRUNCATED = auto()
 
     class CartPosition(Enum):
@@ -610,6 +613,8 @@ class CartPole(ContinuousMdpEnvironment):
         self.pole_angle_reward_threshold = 175.0
         self.achieved_balance = False
         self.min_pole_angle_reward_threshold = 20.0
+        self.lost_balance_timestamp = None
+        self.lost_balance_timer_seconds = 5.0
 
         self.pca9685pw = PulseWaveModulatorPCA9685PW(
             bus=SMBus('/dev/i2c-1'),
@@ -1419,6 +1424,7 @@ class CartPole(ContinuousMdpEnvironment):
             logging.info(f'Reduced pole angle reward threshold to {self.pole_angle_reward_threshold} degrees.')
 
         self.episode_phase = CartPole.EpisodePhase.SWING_UP
+        self.lost_balance_timestamp = None
 
         self.motor.start()
 
@@ -1583,7 +1589,7 @@ class CartPole(ContinuousMdpEnvironment):
                 state.zero_to_one_pole_angle *
                 state.zero_to_one_distance_from_center
             ) / (
-                1.0 + abs(state.pole_angular_velocity_deg_per_sec) / self.max_pole_angular_speed_deg_per_second
+                1.0 + (5.0 * abs(state.pole_angular_velocity_deg_per_sec) / self.max_pole_angular_speed_deg_per_second)
             )
 
         return reward
@@ -1661,21 +1667,37 @@ class CartPole(ContinuousMdpEnvironment):
             logging.info(f'Switched to balance phase with gamma={self.agent.gamma}.')
 
             self.achieved_balance = True
-
             self.time_step_axv_lines[t] = {
                 'color': 'blue',
                 'label': 'balance'
             }
 
-        # transition from balancing to truncated due to loss of balance
+        # transition from balancing to lost balance and start timer. this gives the agent time to learn about actions
+        # taken after balance is lost, for example feedback loops that result in accelerating angular velocities.
         elif (
             self.episode_phase == CartPole.EpisodePhase.BALANCE and
             abs(pole_angle_deg_from_upright) > self.pole_angle_reward_threshold
         ):
-            new_truncation = True
+            self.episode_phase = CartPole.EpisodePhase.LOST_BALANCE
+            self.lost_balance_timestamp = time.time()
+            self.time_step_axv_lines[t] = {
+                'color': 'purple',
+                'label': 'lost balance'
+            }
             logging.info(
                 f'Pole has fallen while balancing. Angle {pole_angle_deg_from_upright:.2f} exceeds maximum '
-                f'allowable of {self.pole_angle_reward_threshold:.2f}. Truncating.'
+                f'allowable of {self.pole_angle_reward_threshold:.2f}. Starting lost-balance timer of '
+                f'{self.lost_balance_timer_seconds} seconds.'
+            )
+
+        # wait for timer to elapse and transition to truncated
+        elif (
+            self.episode_phase == CartPole.EpisodePhase.LOST_BALANCE and
+            (time.time() - self.lost_balance_timestamp) >= self.lost_balance_timer_seconds
+        ):
+            new_truncation = True
+            logging.info(
+                f'Lost balance timer has elapsed. Truncating.'
             )
 
         # transition to truncated due to time limit regardless of the current phase
