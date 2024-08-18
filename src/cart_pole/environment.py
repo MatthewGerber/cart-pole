@@ -614,7 +614,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.achieved_balance = False
         self.min_pole_angle_reward_threshold = 20.0
         self.lost_balance_timestamp = None
-        self.lost_balance_timer_seconds = 5.0
+        self.lost_balance_timer_seconds = 10.0
 
         self.pca9685pw = PulseWaveModulatorPCA9685PW(
             bus=SMBus('/dev/i2c-1'),
