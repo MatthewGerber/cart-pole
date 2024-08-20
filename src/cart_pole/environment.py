@@ -133,8 +133,24 @@ class CartPoleState(MdpState):
             self.pole_angular_acceleration_deg_per_sec_squared
         ])
 
+        # pole angle in [0.0, 1.0] where 0.0 is straight down, and 1.0 is straight up.
         self.zero_to_one_pole_angle = CartPoleState.zero_to_one_pole_angle_from_degrees(
             self.pole_angle_deg_from_upright
+        )
+
+        # pole angular speed in [0.0, 1.0] where 0.0 is full speed, and 1.0 is stationary.
+        self.zero_to_one_pole_angular_speed = 1.0 - min(
+            1.0,
+            abs(self.pole_angular_velocity_deg_per_sec) / environment.max_pole_angular_speed_deg_per_second
+        )
+
+        # pole angular acceleration in [0.0, 1.0] where 0.0 is full acceleration, and 1.0 is no acceleration.
+        self.zero_to_one_pole_angular_acceleration = 1.0 - min(
+            1.0,
+            (
+                abs(self.pole_angular_acceleration_deg_per_sec_squared) /
+                environment.max_pole_angular_acceleration_deg_per_second_squared
+            )
         )
 
         # evaluate the pole angle a small fraction of a second (0.00001) from the current time to determine whether it
@@ -144,10 +160,16 @@ class CartPoleState(MdpState):
             self.pole_angle_deg_from_upright + (self.pole_angular_velocity_deg_per_sec * 0.00001)
         )
 
-        # distance from center in range [0.0, 1.0] where 0.0 is the extreme far end and 1.0 is exactly centered.
-        self.zero_to_one_distance_from_center = 1.0 - min(
+        # cart distance from center in [0.0, 1.0] where 0.0 is either side's soft limit, and 1.0 is centered.
+        self.zero_to_one_cart_distance_from_center = 1.0 - min(
             1.0,
             abs(self.cart_mm_from_center) / environment.soft_limit_mm_from_midline
+        )
+
+        # cart speed in [0.0, 1.0] where 0.0 is full speed, and 1.0 is stationary.
+        self.zero_to_one_cart_speed = 1.0 - min(
+            1.0,
+            abs(self.cart_velocity_mm_per_second) / environment.max_cart_speed_mm_per_second
         )
 
         super().__init__(
@@ -167,7 +189,7 @@ class CartPoleState(MdpState):
         """
 
         return (
-            f'cart pos={self.cart_mm_from_center:.1f} mm; 0-1 pos={self.zero_to_one_distance_from_center:.2f}; '
+            f'cart pos={self.cart_mm_from_center:.1f} mm; 0-1 pos={self.zero_to_one_cart_distance_from_center:.2f}; '
             f'vel={self.cart_velocity_mm_per_second:.1f} mm/s; ' 
             f'pole pos={self.pole_angle_deg_from_upright:.1f} deg; 0-1 pos={self.zero_to_one_pole_angle:.2f}; '
             f'falling={self.pole_is_falling} @ {self.pole_angular_velocity_deg_per_sec:.1f} deg/s'
@@ -517,6 +539,29 @@ class CartPole(ContinuousMdpEnvironment):
 
         return position
 
+    @staticmethod
+    def get_reward(
+            state: CartPoleState
+    ) -> float:
+        """
+        Get reward for a state.
+
+        :param state: State.
+        :return: Reward.
+        """
+
+        if state.terminal:
+            reward = -1.0
+        else:
+            reward = (
+                state.zero_to_one_cart_distance_from_center *
+                state.zero_to_one_cart_speed *
+                state.zero_to_one_pole_angle *
+                state.zero_to_one_pole_angular_speed
+            )
+
+        return reward
+
     def __init__(
             self,
             name: str,
@@ -607,14 +652,14 @@ class CartPole(ContinuousMdpEnvironment):
         self.min_seconds_for_full_motor_speed_range = 0.05
         self.original_agent_gamma: Optional[float] = None
         self.truncation_gamma = None  # unused. unclear if this is effective.
-        self.max_pole_angular_speed_deg_per_second = 720.0
-        self.max_pole_angular_acceleration_deg_per_second_squared = 2000.0
+        self.max_pole_angular_speed_deg_per_second = 1080.0
+        self.max_pole_angular_acceleration_deg_per_second_squared = 8000.0
         self.episode_phase = CartPole.EpisodePhase.SWING_UP
         self.pole_angle_reward_threshold = 175.0
         self.achieved_balance = False
-        self.min_pole_angle_reward_threshold = 20.0
+        self.min_pole_angle_reward_threshold = 15.0
         self.lost_balance_timestamp = None
-        self.lost_balance_timer_seconds = 10.0
+        self.lost_balance_timer_seconds = 15.0
 
         self.pca9685pw = PulseWaveModulatorPCA9685PW(
             bus=SMBus('/dev/i2c-1'),
@@ -1570,29 +1615,6 @@ class CartPole(ContinuousMdpEnvironment):
             )
 
             return self.state, Reward(None, reward_value)
-
-    def get_reward(
-            self,
-            state: CartPoleState
-    ) -> float:
-        """
-        Get reward for a state.
-
-        :param state: State.
-        :return: Reward.
-        """
-
-        if state.terminal:
-            reward = -1.0
-        else:
-            reward = (
-                state.zero_to_one_pole_angle *
-                state.zero_to_one_distance_from_center
-            ) / (
-                1.0 + (5.0 * abs(state.pole_angular_velocity_deg_per_sec) / self.max_pole_angular_speed_deg_per_second)
-            )
-
-        return reward
 
     def exiting_episode_without_termination(
             self

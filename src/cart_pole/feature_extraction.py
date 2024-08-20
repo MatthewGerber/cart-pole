@@ -280,31 +280,22 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
 
         # range all features to be in a nominal range of approximately [-1.0, 1.0]. this is only approximate because
         # the minimum and maximum values of some state dimensions (e.g., pole angular velocity) are unlimited in theory
-        # and uncalibrated in practice.
-        ranged_feature_vector = np.array([
-
-            # cart position:  0.0 in middle, -1.0 at left soft limit, and +1.0 at right soft limit.
-            (
-                np.sign(state.cart_mm_from_center) *
-                (abs(state.cart_mm_from_center) / self.environment.soft_limit_mm_from_midline)
-            ),
-
-            # cart velocity:  fraction of maximum speed (calibrated)
-            state.cart_velocity_mm_per_second / self.environment.max_cart_speed_mm_per_second,
-
-            # pole angle:  0.0 at bottom, decreasing to -1.0 as pole rises clockwise, and increasing to +1.0 as the
-            # pole rises counterclockwise. see the state segmentation for how we partition the policy on this feature.
-            state.zero_to_one_pole_angle * np.sign(state.pole_angle_deg_from_upright),
-
-            # pole velocity:  fraction of maximum angular velocity (uncalibrated)
-            state.pole_angular_velocity_deg_per_sec / self.environment.max_pole_angular_speed_deg_per_second,
-
-            # pole acceleration:  fraction of maximum angular acceleration (uncalibrated)
-            (
-                state.pole_angular_acceleration_deg_per_sec_squared /
-                self.environment.max_pole_angular_acceleration_deg_per_second_squared
-            )
+        # and uncalibrated in practice -- we provide rough estimates manually.
+        signs = np.array([
+            np.sign(state.cart_mm_from_center),
+            np.sign(state.cart_velocity_mm_per_second),
+            np.sign(state.pole_angle_deg_from_upright),
+            np.sign(state.pole_angular_velocity_deg_per_sec),
+            np.sign(state.pole_angular_acceleration_deg_per_sec_squared)
         ])
+        zero_to_one_values = np.array([
+            state.zero_to_one_cart_distance_from_center,
+            state.zero_to_one_cart_speed,
+            state.zero_to_one_pole_angle,
+            state.zero_to_one_pole_angular_speed,
+            state.zero_to_one_pole_angular_acceleration
+        ])
+        ranged_feature_vector = signs * (1.0 - zero_to_one_values)  # invert back to 1.0 being most physically extreme
 
         # scaling the features to be in [-1.0, 1.0] according to their theoretical bounds doesn't mean that the
         # distribution of observed values will be similar when running. for example, the observed cart and pole
