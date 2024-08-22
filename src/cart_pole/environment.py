@@ -649,7 +649,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.previous_timestep_epoch: Optional[float] = None
         self.current_timesteps_per_second = IncrementalSampleAverager(initial_value=0.0, alpha=0.25)
         self.timestep_sleep_seconds = 1.0 / self.timesteps_per_second
-        self.min_seconds_for_full_motor_speed_range = 0.05
+        self.min_seconds_for_full_motor_speed_range = 0.25
         self.original_agent_gamma: Optional[float] = None
         self.truncation_gamma = None  # unused. unclear if this is effective.
         self.max_pole_angular_speed_deg_per_second = 1080.0
@@ -1551,7 +1551,7 @@ class CartPole(ContinuousMdpEnvironment):
 
             # post-truncation convergence to zero takes too long with gammas close to 1.0 and a slow physical system.
             # decrease gamma to obtain faster convergence to zero.
-            if new_truncation and self.truncation_gamma is not None:
+            if new_truncation and self.truncation_gamma is not None and self.truncation_gamma != self.agent.gamma:
                 self.agent.gamma = self.truncation_gamma
                 logging.info(
                     f'Episode was truncated. Set agent.gamma to {self.agent.gamma} to obtain faster convergence '
@@ -1562,16 +1562,31 @@ class CartPole(ContinuousMdpEnvironment):
             # since we're waiting for the learning procedure to exit the episode.
             if not self.state.terminal:
 
-                # extract the speed change from the action
+                # extract the desired speed change from the action
                 assert isinstance(a, ContinuousMultiDimensionalAction)
                 assert a.value.shape == (1,)
-                speed_change = round(float(a.value[0]))
+                desired_speed_change = round(float(a.value[0]))
 
-                # calculate next speed
-                next_speed = self.motor.get_speed() + speed_change
+                # constrain the speed change to the range of the motor
+                current_speed = self.motor.get_speed()
+                desired_speed = current_speed + desired_speed_change
+                constrained_speed = self.motor.constrain_speed(desired_speed)
+                if constrained_speed == desired_speed:
+                    speed_change = desired_speed_change
+                    next_speed = desired_speed
+                else:
+                    speed_change = constrained_speed - current_speed
+                    next_speed = constrained_speed
+
+                    # if we constrained the speed, then reflect this in the agent's action so that the learning
+                    # procedure correctly interprets the environment's feedback. this is like a feedback signal from the
+                    # environment that the desired action was not possible.
+                    a.value = np.array([speed_change])
 
                 # if the next speed falls into the motor's deadzone, bump it to the minimum speed based on the direction
-                # of speed change.
+                # of speed change. this ensures linearity between the agent's action and the cart's response. we
+                # shouldn't reflect this modification in the agent's action value. from the agent's perspective, all
+                # actions (speed changes) are relative to the current speed, and the deadzone does not exist.
                 if self.motor_deadzone_speed_left < next_speed < self.motor_deadzone_speed_right:
                     if speed_change < 0:
                         next_speed = self.motor_deadzone_speed_left
