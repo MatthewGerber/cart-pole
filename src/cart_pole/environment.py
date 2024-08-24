@@ -554,8 +554,6 @@ class CartPole(ContinuousMdpEnvironment):
             reward = -1.0
         else:
             reward = (
-                state.zero_to_one_cart_distance_from_center *
-                state.zero_to_one_cart_speed *
                 state.zero_to_one_pole_angle *
                 state.zero_to_one_pole_angular_speed
             )
@@ -649,7 +647,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.previous_timestep_epoch: Optional[float] = None
         self.current_timesteps_per_second = IncrementalSampleAverager(initial_value=0.0, alpha=0.25)
         self.timestep_sleep_seconds = 1.0 / self.timesteps_per_second
-        self.min_seconds_for_full_motor_speed_range = 0.25
+        self.min_seconds_for_full_motor_speed_range = 0.20
         self.original_agent_gamma: Optional[float] = None
         self.truncation_gamma = None  # unused. unclear if this is effective.
         self.max_pole_angular_speed_deg_per_second = 1080.0
