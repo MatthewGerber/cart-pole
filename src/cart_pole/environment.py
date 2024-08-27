@@ -1389,28 +1389,28 @@ class CartPole(ContinuousMdpEnvironment):
             if led is not None:
                 led.turn_off()
 
-        self.plot_label_data_kwargs['motor-speed'] = (
+        self.plot_label_data_kwargs['Motor Speed'] = (
             dict(),
             {
                 'linewidth': 0.5
             }
         )
 
-        self.plot_label_data_kwargs['angle'] = (
+        self.plot_label_data_kwargs['Pole Angle * 10'] = (
             dict(),
             {
                 'linewidth': 0.5
             }
         )
 
-        self.plot_label_data_kwargs['angular-velocity'] = (
+        self.plot_label_data_kwargs['Pole Angular Vel.'] = (
             dict(),
             {
                 'linewidth': 0.5
             }
         )
 
-        self.plot_label_data_kwargs['angular-acceleration'] = (
+        self.plot_label_data_kwargs['Pole Angular Acc.'] = (
             dict(),
             {
                 'linewidth': 0.5
