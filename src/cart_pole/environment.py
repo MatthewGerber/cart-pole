@@ -637,22 +637,6 @@ class CartPole(ContinuousMdpEnvironment):
         self.cart_rotary_encoder_degrees_per_second_step = 0.95
         self.pole_rotary_encoder_degrees_per_second_step_size = 0.95
 
-        # configure the continuous action with a single dimension ranging the maximum motor speed change
-        min_timesteps_for_full_motor_speed_range = max(
-            1.0,
-            self.timesteps_per_second * self.min_seconds_for_full_motor_speed_range
-        )
-        motor_speed_range = float(self.motor.max_speed - self.motor.min_speed)
-        max_motor_speed_change_per_step = motor_speed_range / min_timesteps_for_full_motor_speed_range
-        self.actions = [
-            ContinuousMultiDimensionalAction(
-                value=None,
-                min_values=np.array([-max_motor_speed_change_per_step]),
-                max_values=np.array([max_motor_speed_change_per_step]),
-                name='motor-speed-change'
-            )
-        ]
-
         (
             self.state_lock,
             self.pca9685pw,
@@ -670,6 +654,22 @@ class CartPole(ContinuousMdpEnvironment):
             self.termination_led,
             self.calibrate_on_next_reset
         ) = self.get_unpicklable_components()
+
+        # configure the continuous action with a single dimension ranging the maximum motor speed change
+        min_timesteps_for_full_motor_speed_range = max(
+            1.0,
+            self.timesteps_per_second * self.min_seconds_for_full_motor_speed_range
+        )
+        motor_speed_range = float(self.motor.max_speed - self.motor.min_speed)
+        max_motor_speed_change_per_step = motor_speed_range / min_timesteps_for_full_motor_speed_range
+        self.actions = [
+            ContinuousMultiDimensionalAction(
+                value=None,
+                min_values=np.array([-max_motor_speed_change_per_step]),
+                max_values=np.array([max_motor_speed_change_per_step]),
+                name='motor-speed-change'
+            )
+        ]
 
         if self.calibrate_on_next_reset:
             self.motor_deadzone_speed_left: Optional[int] = None
