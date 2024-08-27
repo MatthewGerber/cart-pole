@@ -539,27 +539,6 @@ class CartPole(ContinuousMdpEnvironment):
 
         return position
 
-    @staticmethod
-    def get_reward(
-            state: CartPoleState
-    ) -> float:
-        """
-        Get reward for a state.
-
-        :param state: State.
-        :return: Reward.
-        """
-
-        if state.terminal:
-            reward = -1.0
-        else:
-            reward = (
-                state.zero_to_one_pole_angle *
-                state.zero_to_one_pole_angular_speed
-            )
-
-        return reward
-
     def __init__(
             self,
             name: str,
@@ -618,8 +597,6 @@ class CartPole(ContinuousMdpEnvironment):
             T=T
         )
 
-        setup()
-
         self.limit_to_limit_mm = limit_to_limit_mm
         self.soft_limit_standoff_mm = soft_limit_standoff_mm
         self.cart_width_mm = cart_width_mm
@@ -643,7 +620,6 @@ class CartPole(ContinuousMdpEnvironment):
         self.midline_mm = self.limit_to_limit_mm / 2.0
         self.soft_limit_mm_from_midline = self.midline_mm - self.soft_limit_standoff_mm - self.cart_width_mm / 2.0
         self.agent: Optional[MdpAgent] = None
-        self.state_lock = RLock()
         self.previous_timestep_epoch: Optional[float] = None
         self.current_timesteps_per_second = IncrementalSampleAverager(initial_value=0.0, alpha=0.25)
         self.timestep_sleep_seconds = 1.0 / self.timesteps_per_second
@@ -658,22 +634,8 @@ class CartPole(ContinuousMdpEnvironment):
         self.min_pole_angle_reward_threshold = 15.0
         self.lost_balance_timestamp = None
         self.lost_balance_timer_seconds = 15.0
-
-        self.pca9685pw = PulseWaveModulatorPCA9685PW(
-            bus=SMBus('/dev/i2c-1'),
-            address=PulseWaveModulatorPCA9685PW.PCA9685PW_ADDRESS,
-            frequency_hz=500
-        )
-
-        self.motor = DcMotor(
-            driver=DcMotorDriverIndirectPCA9685PW(
-                pca9685pw=self.pca9685pw,
-                pwm_channel=self.motor_pwm_channel,
-                direction_pin=self.motor_pwm_direction_pin,
-                reverse=self.motor_negative_speed_is_right
-            ),
-            speed=0
-        )
+        self.cart_rotary_encoder_degrees_per_second_step = 0.95
+        self.pole_rotary_encoder_degrees_per_second_step_size = 0.95
 
         # configure the continuous action with a single dimension ranging the maximum motor speed change
         min_timesteps_for_full_motor_speed_range = max(
@@ -691,54 +653,25 @@ class CartPole(ContinuousMdpEnvironment):
             )
         ]
 
-        # we use the motor output speed (+/-) as our direction signal, so we can use a single-signal encoder for the
-        # cart. a dual-multiprocess encoder would be better, but the pi only has four cores. use one here, two for the
-        # pole below, and the fourth for the main thread of the program.
-        self.cart_rotary_encoder = CartRotaryEncoder(
-            phase_a_pin=self.cart_rotary_encoder_phase_a_pin,
-            phase_b_pin=None,
-            phase_changes_per_rotation=1200,
-            phase_change_mode=RotaryEncoder.PhaseChangeMode.ONE_SIGNAL_ONE_EDGE,
-            degrees_per_second_step_size=0.9
-        )
-        self.cart_rotary_encoder.wait_for_startup()
+        (
+            self.state_lock,
+            self.pca9685pw,
+            self.motor,
+            self.cart_rotary_encoder,
+            self.pole_rotary_encoder,
+            self.left_limit_switch,
+            self.left_limit_pressed,
+            self.left_limit_released,
+            self.right_limit_switch,
+            self.right_limit_pressed,
+            self.right_limit_released,
+            self.balance_phase_led,
+            self.falling_led,
+            self.termination_led,
+            self.calibrate_on_next_reset
+        ) = self.get_unpicklable_components()
 
-        self.pole_rotary_encoder = DualMultiprocessRotaryEncoder(
-            speed_phase_a_pin=self.pole_rotary_encoder_speed_phase_a_pin,
-            direction_phase_a_pin=self.pole_rotary_encoder_direction_phase_a_pin,
-            direction_phase_b_pin=self.pole_rotary_encoder_direction_phase_b_pin,
-            phase_changes_per_rotation=1200,
-            degrees_per_second_step_size=0.9
-        )
-        self.pole_rotary_encoder.wait_for_startup()
-
-        self.left_limit_switch = LimitSwitch(
-            input_pin=self.left_limit_switch_input_pin,
-            bounce_time_ms=5
-        )
-        self.left_limit_pressed = Event()
-        self.left_limit_released = Event()
-        if self.left_limit_switch.is_pressed():
-            self.left_limit_pressed.set()
-        else:
-            self.left_limit_released.set()
-        self.left_limit_switch.event(lambda s: self.left_limit_event(s.pressed))
-
-        self.right_limit_switch = LimitSwitch(
-            input_pin=self.right_limit_switch_input_pin,
-            bounce_time_ms=5
-        )
-        self.right_limit_pressed = Event()
-        self.right_limit_released = Event()
-        if self.right_limit_switch.is_pressed():
-            self.right_limit_pressed.set()
-        else:
-            self.right_limit_released.set()
-        self.right_limit_switch.event(lambda s: self.right_limit_event(s.pressed))
-
-        if self.load_calibration():
-            self.calibrate_on_next_reset = False
-        else:
+        if self.calibrate_on_next_reset:
             self.motor_deadzone_speed_left: Optional[int] = None
             self.motor_deadzone_speed_right: Optional[int] = None
             self.left_limit_degrees: Optional[float] = None
@@ -754,26 +687,11 @@ class CartPole(ContinuousMdpEnvironment):
             self.pole_degrees_at_bottom: Optional[float] = None
             self.calibrate_on_next_reset = True
 
-        if self.balance_phase_led_pin is None:
-            self.balance_phase_led = None
-        else:
-            self.balance_phase_led = LED(self.balance_phase_led_pin)
-
-        if self.falling_led_pin is None:
-            self.falling_led = None
-        else:
-            self.falling_led = LED(self.falling_led_pin)
-
-        if self.termination_led_pin is None:
-            self.termination_led = None
-        else:
-            self.termination_led = LED(self.termination_led_pin)
-
     def __getstate__(
             self
     ) -> Dict:
         """
-        Get state to picle.
+        Get state to pickle.
 
         :return: State.
         """
@@ -791,6 +709,9 @@ class CartPole(ContinuousMdpEnvironment):
         state['right_limit_switch'] = None
         state['right_limit_pressed'] = None
         state['right_limit_released'] = None
+        state['balance_phase_led'] = None
+        state['falling_led'] = None
+        state['termination_led'] = None
 
         return state
 
@@ -806,79 +727,126 @@ class CartPole(ContinuousMdpEnvironment):
 
         self.__dict__ = state
 
+        (
+            self.state_lock,
+            self.pca9685pw,
+            self.motor,
+            self.cart_rotary_encoder,
+            self.pole_rotary_encoder,
+            self.left_limit_switch,
+            self.left_limit_pressed,
+            self.left_limit_released,
+            self.right_limit_switch,
+            self.right_limit_pressed,
+            self.right_limit_released,
+            self.balance_phase_led,
+            self.falling_led,
+            self.termination_led,
+            self.calibrate_on_next_reset
+        ) = self.get_unpicklable_components()
+
+    def get_unpicklable_components(
+            self
+    ) -> Tuple[
+        RLock,
+        PulseWaveModulatorPCA9685PW,
+        DcMotor,
+        CartRotaryEncoder,
+        DualMultiprocessRotaryEncoder,
+        LimitSwitch,
+        Event,
+        Event,
+        LimitSwitch,
+        Event,
+        Event,
+        Optional[LED],
+        Optional[LED],
+        Optional[LED],
+        bool
+    ]:
+        """
+        Get unpicklable components.
+        :return: Tuple of components.
+        """
+
         setup()
 
-        self.state_lock = RLock()
-        self.pca9685pw = PulseWaveModulatorPCA9685PW(
+        pca9685pw = PulseWaveModulatorPCA9685PW(
             bus=SMBus('/dev/i2c-1'),
             address=PulseWaveModulatorPCA9685PW.PCA9685PW_ADDRESS,
             frequency_hz=500
         )
-        self.motor = DcMotor(
-            driver=DcMotorDriverIndirectPCA9685PW(
-                pca9685pw=self.pca9685pw,
-                pwm_channel=self.motor_pwm_channel,
-                direction_pin=self.motor_pwm_direction_pin,
-                reverse=self.motor_negative_speed_is_right
-            ),
-            speed=0
-        )
-        self.cart_rotary_encoder = CartRotaryEncoder(
+
+        # we use the motor output speed (+/-) as our direction signal, so we can use a single-signal encoder for the
+        # cart. a dual-multiprocess encoder would be better, but the pi only has four cores. use one here, two for the
+        # pole below, and the fourth for the main thread of the program.
+        cart_rotary_encoder = CartRotaryEncoder(
             phase_a_pin=self.cart_rotary_encoder_phase_a_pin,
             phase_b_pin=None,
             phase_changes_per_rotation=1200,
             phase_change_mode=RotaryEncoder.PhaseChangeMode.ONE_SIGNAL_ONE_EDGE,
-            degrees_per_second_step_size=1.0
+            degrees_per_second_step_size=self.cart_rotary_encoder_degrees_per_second_step
         )
-        self.cart_rotary_encoder.wait_for_startup()
-        self.pole_rotary_encoder = DualMultiprocessRotaryEncoder(
+        cart_rotary_encoder.wait_for_startup()
+
+        pole_rotary_encoder = DualMultiprocessRotaryEncoder(
             speed_phase_a_pin=self.pole_rotary_encoder_speed_phase_a_pin,
             direction_phase_a_pin=self.pole_rotary_encoder_direction_phase_a_pin,
             direction_phase_b_pin=self.pole_rotary_encoder_direction_phase_b_pin,
             phase_changes_per_rotation=1200,
-            degrees_per_second_step_size=1.0
+            degrees_per_second_step_size=self.pole_rotary_encoder_degrees_per_second_step_size
         )
-        self.pole_rotary_encoder.wait_for_startup()
-        self.left_limit_switch = LimitSwitch(
+        pole_rotary_encoder.wait_for_startup()
+
+        left_limit_switch = LimitSwitch(
             input_pin=self.left_limit_switch_input_pin,
             bounce_time_ms=5
         )
-        self.left_limit_pressed = Event()
-        self.left_limit_released = Event()
-        if self.left_limit_switch.is_pressed():
-            self.left_limit_pressed.set()
+        left_limit_pressed = Event()
+        left_limit_released = Event()
+        if left_limit_switch.is_pressed():
+            left_limit_pressed.set()
         else:
-            self.left_limit_released.set()
-        self.left_limit_switch.event(lambda s: self.left_limit_event(s.pressed))
+            left_limit_released.set()
+        left_limit_switch.event(lambda s: self.left_limit_event(s.pressed))
 
-        self.right_limit_switch = LimitSwitch(
+        right_limit_switch = LimitSwitch(
             input_pin=self.right_limit_switch_input_pin,
             bounce_time_ms=5
         )
-        self.right_limit_pressed = Event()
-        self.right_limit_released = Event()
-        if self.right_limit_switch.is_pressed():
-            self.right_limit_pressed.set()
+        right_limit_pressed = Event()
+        right_limit_released = Event()
+        if right_limit_switch.is_pressed():
+            right_limit_pressed.set()
         else:
-            self.right_limit_released.set()
-        self.right_limit_switch.event(lambda s: self.right_limit_event(s.pressed))
+            right_limit_released.set()
+        right_limit_switch.event(lambda s: self.right_limit_event(s.pressed))
 
-        self.calibrate_on_next_reset = not self.load_calibration()
-
-        if self.balance_phase_led_pin is None:
-            self.balance_phase_led = None
-        else:
-            self.balance_phase_led = LED(self.balance_phase_led_pin)
-
-        if self.falling_led_pin is None:
-            self.falling_led = None
-        else:
-            self.falling_led = LED(self.falling_led_pin)
-
-        if self.termination_led_pin is None:
-            self.termination_led = None
-        else:
-            self.termination_led = LED(self.termination_led_pin)
+        return (
+            RLock(),
+            pca9685pw,
+            DcMotor(
+                driver=DcMotorDriverIndirectPCA9685PW(
+                    pca9685pw=pca9685pw,
+                    pwm_channel=self.motor_pwm_channel,
+                    direction_pin=self.motor_pwm_direction_pin,
+                    reverse=self.motor_negative_speed_is_right
+                ),
+                speed=0
+            ),
+            cart_rotary_encoder,
+            pole_rotary_encoder,
+            left_limit_switch,
+            left_limit_pressed,
+            left_limit_released,
+            right_limit_switch,
+            right_limit_pressed,
+            right_limit_released,
+            None if self.balance_phase_led_pin is None else LED(self.balance_phase_led_pin),
+            None if self.falling_led_pin is None else LED(self.falling_led_pin),
+            None if self.termination_led_pin is None else LED(self.termination_led_pin),
+            not self.load_calibration()
+        )
 
     def load_calibration(
             self
@@ -1524,11 +1492,10 @@ class CartPole(ContinuousMdpEnvironment):
 
         with self.state_lock:
 
-            prev_state_terminal = self.state.terminal
-            prev_state_truncated = self.state.truncated
+            previous_state = self.state
 
             # update the current state if we haven't yet terminated
-            if not prev_state_terminal:
+            if not previous_state.terminal:
                 self.state = self.get_state(t=t, terminal=None, update_velocity_and_acceleration=True)
                 if self.falling_led is not None:
                     if self.state.pole_is_falling:
@@ -1536,8 +1503,8 @@ class CartPole(ContinuousMdpEnvironment):
                     else:
                         self.falling_led.turn_off()
 
-            new_termination = not prev_state_terminal and self.state.terminal
-            new_truncation = not prev_state_truncated and self.state.truncated
+            new_termination = not previous_state.terminal and self.state.terminal
+            new_truncation = not previous_state.truncated and self.state.truncated
 
             if new_termination:
 
@@ -1615,19 +1582,58 @@ class CartPole(ContinuousMdpEnvironment):
             time.sleep(self.timestep_sleep_seconds)
 
             # calculate reward
-            reward_value = self.get_reward(self.state)
+            reward_value = self.get_reward(t, previous_state, self.state)
 
             logging.debug(f'State {t}:  {self.state}')
             logging.debug(f'Reward {t}:  {reward_value}')
 
-            self.plot_label_data_kwargs['motor-speed'][0][t] = self.motor.get_speed()
-            self.plot_label_data_kwargs['angle'][0][t] = self.state.zero_to_one_pole_angle * 1000.0
-            self.plot_label_data_kwargs['angular-velocity'][0][t] = self.state.pole_angular_velocity_deg_per_sec
-            self.plot_label_data_kwargs['angular-acceleration'][0][t] = (
+            self.plot_label_data_kwargs['Motor Speed'][0][t] = self.motor.get_speed()
+            self.plot_label_data_kwargs['Pole Angle * 10'][0][t] = self.state.pole_angle_deg_from_upright * 10.0
+            self.plot_label_data_kwargs['Pole Angular Vel.'][0][t] = self.state.pole_angular_velocity_deg_per_sec
+            self.plot_label_data_kwargs['Pole Angular Acc.'][0][t] = (
                 self.state.pole_angular_acceleration_deg_per_sec_squared
             )
 
             return self.state, Reward(None, reward_value)
+
+    def get_reward(
+            self,
+            t: int,
+            previous_state: CartPoleState,
+            state: CartPoleState
+    ) -> float:
+        """
+        Get reward for a state.
+
+        :param t: Time step.
+        :param previous_state: Previous state.
+        :param state: State.
+        :return: Reward.
+        """
+
+        if state.terminal:
+            reward = -1.0
+        else:
+            reward = (
+                state.zero_to_one_pole_angle *
+                state.zero_to_one_pole_angular_speed
+            )
+
+            # add a reward spike for catching the pole when falling. a catch is where the pole transitions from falling
+            # to not falling while above horizontal.
+            if (
+                previous_state.pole_is_falling and
+                not state.pole_is_falling and
+                abs(state.pole_angle_deg_from_upright) < 90.0
+            ):
+                reward += 1.0
+
+                self.time_step_axv_lines[t] = {
+                    'color': 'cyan',
+                    'label': 'Caught Pole'
+                }
+
+        return reward
 
     def exiting_episode_without_termination(
             self
@@ -1704,7 +1710,7 @@ class CartPole(ContinuousMdpEnvironment):
             self.achieved_balance = True
             self.time_step_axv_lines[t] = {
                 'color': 'blue',
-                'label': 'balance'
+                'label': 'Balanced'
             }
 
         # transition from balancing to lost balance and start timer. this gives the agent time to learn about actions
@@ -1717,7 +1723,7 @@ class CartPole(ContinuousMdpEnvironment):
             self.lost_balance_timestamp = time.time()
             self.time_step_axv_lines[t] = {
                 'color': 'purple',
-                'label': 'lost balance'
+                'label': 'Lost Balance'
             }
             logging.info(
                 f'Pole has fallen while balancing. Angle {pole_angle_deg_from_upright:.2f} exceeds maximum '
@@ -1751,7 +1757,7 @@ class CartPole(ContinuousMdpEnvironment):
             self.episode_phase = CartPole.EpisodePhase.TRUNCATED
             self.time_step_axv_lines[t] = {
                 'color': 'yellow',
-                'label': 'truncate'
+                'label': 'Truncated'
             }
 
         # terminate at violation of soft limit, since continuing might cause the cart to physically impact the
