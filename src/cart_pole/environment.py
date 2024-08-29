@@ -634,8 +634,10 @@ class CartPole(ContinuousMdpEnvironment):
         self.min_pole_angle_reward_threshold = 15.0
         self.lost_balance_timestamp = None
         self.lost_balance_timer_seconds = 15.0
-        self.cart_rotary_encoder_degrees_per_second_step = 0.95
-        self.pole_rotary_encoder_degrees_per_second_step_size = 0.95
+        self.cart_rotary_encoder_angular_velocity_step_size = 0.9
+        self.cart_rotary_encoder_angular_acceleration_step_size = 0.8
+        self.pole_rotary_encoder_angular_velocity_step_size = 0.9
+        self.pole_rotary_encoder_angular_acceleration_step_size = 0.8
 
         (
             self.state_lock,
@@ -653,7 +655,7 @@ class CartPole(ContinuousMdpEnvironment):
             self.falling_led,
             self.termination_led,
             self.calibrate_on_next_reset
-        ) = self.get_unpicklable_components()
+        ) = self.get_components()
 
         # configure the continuous action with a single dimension ranging the maximum motor speed change
         min_timesteps_for_full_motor_speed_range = max(
@@ -743,9 +745,9 @@ class CartPole(ContinuousMdpEnvironment):
             self.falling_led,
             self.termination_led,
             self.calibrate_on_next_reset
-        ) = self.get_unpicklable_components()
+        ) = self.get_components()
 
-    def get_unpicklable_components(
+    def get_components(
             self
     ) -> Tuple[
         RLock,
@@ -765,7 +767,8 @@ class CartPole(ContinuousMdpEnvironment):
         bool
     ]:
         """
-        Get unpicklable components.
+        Get components.
+
         :return: Tuple of components.
         """
 
@@ -785,7 +788,8 @@ class CartPole(ContinuousMdpEnvironment):
             phase_b_pin=None,
             phase_changes_per_rotation=1200,
             phase_change_mode=RotaryEncoder.PhaseChangeMode.ONE_SIGNAL_ONE_EDGE,
-            degrees_per_second_step_size=self.cart_rotary_encoder_degrees_per_second_step
+            angular_velocity_step_size=self.cart_rotary_encoder_angular_velocity_step_size,
+            angular_acceleration_step_size=self.cart_rotary_encoder_angular_acceleration_step_size
         )
         cart_rotary_encoder.wait_for_startup()
 
@@ -794,7 +798,8 @@ class CartPole(ContinuousMdpEnvironment):
             direction_phase_a_pin=self.pole_rotary_encoder_direction_phase_a_pin,
             direction_phase_b_pin=self.pole_rotary_encoder_direction_phase_b_pin,
             phase_changes_per_rotation=1200,
-            degrees_per_second_step_size=self.pole_rotary_encoder_degrees_per_second_step_size
+            angular_velocity_step_size=self.pole_rotary_encoder_angular_velocity_step_size,
+            angular_acceleration_step_size=self.pole_rotary_encoder_angular_acceleration_step_size
         )
         pole_rotary_encoder.wait_for_startup()
 
@@ -993,7 +998,7 @@ class CartPole(ContinuousMdpEnvironment):
             check_delay_seconds=0.1
         )
         cart_state: MultiprocessRotaryEncoder.State = self.cart_rotary_encoder.state
-        self.max_cart_speed_mm_per_second = abs(cart_state.degrees_per_second * self.cart_mm_per_degree)
+        self.max_cart_speed_mm_per_second = abs(cart_state.angular_velocity * self.cart_mm_per_degree)
         self.stop_cart()
 
         # center cart and capture initial conditions of the rotary encoders at center for subsequent restoration
@@ -1057,7 +1062,7 @@ class CartPole(ContinuousMdpEnvironment):
         while moving_ticks_remaining > 0:
             time.sleep(0.5)
             assert not limit_switch.is_pressed()
-            if abs(self.cart_rotary_encoder.get_degrees_per_second(True)) < 50.0:
+            if abs(self.cart_rotary_encoder.get_angular_velocity(True)) < 50.0:
                 moving_ticks_remaining = moving_ticks_required
                 speed += increment
                 self.set_motor_speed(speed)
@@ -1773,10 +1778,10 @@ class CartPole(ContinuousMdpEnvironment):
         return CartPoleState(
             environment=self,
             cart_mm_from_center=cart_mm_from_center,
-            cart_velocity_mm_per_sec=cart_state.degrees_per_second * self.cart_mm_per_degree,
+            cart_velocity_mm_per_sec=cart_state.angular_velocity * self.cart_mm_per_degree,
             pole_angle_deg_from_upright=pole_angle_deg_from_upright,
-            pole_angular_velocity_deg_per_sec=pole_state.degrees_per_second,
-            pole_angular_acceleration_deg_per_sec_squared=pole_state.degrees_acceleration_per_second,
+            pole_angular_velocity_deg_per_sec=pole_state.angular_velocity,
+            pole_angular_acceleration_deg_per_sec_squared=pole_state.angular_acceleration,
             step=t,
             agent=self.agent,
             terminal=terminal,
