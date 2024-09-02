@@ -635,9 +635,9 @@ class CartPole(ContinuousMdpEnvironment):
         self.lost_balance_timestamp = None
         self.lost_balance_timer_seconds = 15.0
         self.cart_rotary_encoder_angular_velocity_step_size = 0.9
-        self.cart_rotary_encoder_angular_acceleration_step_size = 0.8
+        self.cart_rotary_encoder_angular_acceleration_step_size = 0.25
         self.pole_rotary_encoder_angular_velocity_step_size = 0.9
-        self.pole_rotary_encoder_angular_acceleration_step_size = 0.8
+        self.pole_rotary_encoder_angular_acceleration_step_size = 0.25
 
         (
             self.state_lock,
@@ -1619,6 +1619,7 @@ class CartPole(ContinuousMdpEnvironment):
         if state.terminal:
             reward = -1.0
         else:
+
             reward = (
                 state.zero_to_one_pole_angle *
                 state.zero_to_one_pole_angular_speed
@@ -1632,10 +1633,21 @@ class CartPole(ContinuousMdpEnvironment):
                 abs(state.pole_angle_deg_from_upright) < 90.0
             ):
                 reward += 1.0
-
                 self.time_step_axv_lines[t] = {
                     'color': 'cyan',
                     'label': 'Caught Pole'
+                }
+
+            # add a reward spike for stationary pole near perfect upright
+            if (
+                abs(state.pole_angle_deg_from_upright) < 5.0 and
+                abs(state.pole_angular_velocity_deg_per_sec) < 5.0 and
+                abs(state.pole_angular_acceleration_deg_per_sec_squared) < 5.0
+            ):
+                reward += 1.0
+                self.time_step_axv_lines[t] = {
+                    'color': 'purple',
+                    'label': 'Perfect Pole'
                 }
 
         return reward
