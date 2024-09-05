@@ -1637,6 +1637,7 @@ class CartPole(ContinuousMdpEnvironment):
                     'color': 'cyan',
                     'label': 'Caught Pole'
                 }
+                logging.info('Caught pole.')
 
             # add a reward spike for stationary pole near perfect upright
             if (
@@ -1649,6 +1650,7 @@ class CartPole(ContinuousMdpEnvironment):
                     'color': 'purple',
                     'label': 'Perfect Pole'
                 }
+                logging.info('Perfect balance.')
 
         return reward
 
