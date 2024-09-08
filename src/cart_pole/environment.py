@@ -1642,8 +1642,7 @@ class CartPole(ContinuousMdpEnvironment):
             # add a reward spike for stationary pole near perfect upright
             if (
                 abs(state.pole_angle_deg_from_upright) < 5.0 and
-                abs(state.pole_angular_velocity_deg_per_sec) < 5.0 and
-                abs(state.pole_angular_acceleration_deg_per_sec_squared) < 5.0
+                abs(state.pole_angular_velocity_deg_per_sec) < 5.0
             ):
                 reward += 1.0
                 self.time_step_axv_lines[t] = {

@@ -9,7 +9,8 @@ from rlai.models.feature_extraction import FeatureExtractor, StationaryFeatureSc
 from rlai.state_value.function_approximation.models.feature_extraction import (
     StateFeatureExtractor,
     OneHotStateIndicatorFeatureInteracter,
-    StateDimensionSegment
+    StateDimensionSegment,
+    StateDimensionLambda
 )
 from rlai.utils import parse_arguments
 
@@ -142,8 +143,9 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
 
         return state_indicator_feature_vector
 
-    @staticmethod
-    def get_interacter() -> OneHotStateIndicatorFeatureInteracter:
+    def get_interacter(
+            self
+    ) -> OneHotStateIndicatorFeatureInteracter:
         """
         Get interacter.
 
@@ -161,6 +163,16 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
                 CartPoleState.Dimension.PoleAngle.value,
                 None,
                 0.0
+            ),
+
+            # segment policy for when the pole is nearly balanced. it is difficult for the swing-up policy to
+            # appropriately handle the pole when it is nearly balanced.
+            StateDimensionLambda(
+                CartPoleState.Dimension.PoleAngle.value,
+                lambda pole_angle_deg_from_upright: (
+                    abs(pole_angle_deg_from_upright) <= self.environment.min_pole_angle_reward_threshold
+                ),
+                [False, True]
             )
         ])
 
