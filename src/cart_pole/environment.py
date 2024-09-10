@@ -11,7 +11,7 @@ from typing import List, Tuple, Any, Optional, Dict
 import numpy as np
 from numpy.random import RandomState
 from smbus2 import SMBus
-
+import RPi.GPIO as gpio
 from raspberry_py.gpio import CkPin, get_ck_pin, setup, cleanup
 from raspberry_py.gpio.controls import LimitSwitch
 from raspberry_py.gpio.integrated_circuits import PulseWaveModulatorPCA9685PW
@@ -561,7 +561,8 @@ class CartPole(ContinuousMdpEnvironment):
             balance_phase_led_pin: Optional[CkPin],
             falling_led_pin: Optional[CkPin],
             termination_led_pin: Optional[CkPin],
-            balance_gamma: float
+            balance_gamma: float,
+            failsafe_pwm_off_pin: CkPin
     ):
         """
         Initialize the cart-pole environment.
@@ -589,6 +590,7 @@ class CartPole(ContinuousMdpEnvironment):
         :param termination_led_pin: Pin connected to an LED to illuminate when the episode terminates, or pass None to
         ignore.
         :param balance_gamma: Gamma (discount) to use during the balancing phase of the episode.
+        :param failsafe_pwm_off_pin: Failsafe PWM off pin.
         """
 
         super().__init__(
@@ -615,6 +617,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.falling_led_pin = falling_led_pin
         self.termination_led_pin = termination_led_pin
         self.balance_gamma = balance_gamma
+        self.failsafe_pwm_off_pin = failsafe_pwm_off_pin
 
         # non-calibrated attributes
         self.midline_mm = self.limit_to_limit_mm / 2.0
@@ -1238,7 +1241,7 @@ class CartPole(ContinuousMdpEnvironment):
         # center once quickly, which will overshoot, and then slowly to get more accurate.
         original_position = self.center_cart_at_speed(True, original_position)
         self.center_cart_at_speed(False, original_position)
-        logging.info('Cart centered.\n')
+        logging.info('Cart centered.')
 
         logging.info('Waiting for stationary pole.')
         self.pole_rotary_encoder.speed_encoder.wait_for_stationarity()
@@ -1310,8 +1313,21 @@ class CartPole(ContinuousMdpEnvironment):
         """
 
         logging.info('Stopping cart.')
-        self.set_motor_speed(0)
-        self.cart_rotary_encoder.wait_for_stationarity()
+
+        # we've observed cases in which setting the motor speed fails, or it does not fail but the subsequent wait
+        # fails due to interprocess communication failure. in either case, the present process faults without stopping
+        # the cart, and the cart physically slams into the rail's end and the motor continues driving it. this is a
+        # critical failure. set the failsafe pwm off signal to switch the motor controller off, and then reraise the
+        # error.
+        # noinspection PyBroadException
+        try:
+            self.set_motor_speed(0)
+            self.cart_rotary_encoder.wait_for_stationarity()
+        except Exception as e:
+            logging.critical(f'Failed to stop cart. Setting failsafe PWM off. Exception {e}')
+            gpio.output(self.failsafe_pwm_off_pin, gpio.HIGH)
+            raise e
+
         logging.info('Cart stopped.')
 
     def set_motor_speed(
@@ -1353,13 +1369,16 @@ class CartPole(ContinuousMdpEnvironment):
                 # we occasionally get i/o errors from the underlying interface to the pwm. this probably has something
                 # to do with attempting to write new values at a high rate like we're doing here. catch any such error
                 # and try again.
-                while True:
+                attempt = 1
+                while attempt <= 5:
                     try:
                         self.motor.set_speed(intermediate_speed)
                         break
                     except OSError as e:
                         logging.error(f'Error while setting speed:  {e}')
                         time.sleep(0.1)
+                else:
+                    raise ValueError(f'Failed to set motor speed after {attempt} attempts.')
 
                 if per_speed_sleep_seconds is not None:
                     time.sleep(per_speed_sleep_seconds)
@@ -1808,7 +1827,16 @@ class CartPole(ContinuousMdpEnvironment):
         Close the environment, releasing resources.
         """
 
-        self.cart_rotary_encoder.wait_for_termination()
-        self.pole_rotary_encoder.wait_for_termination()
+        # noinspection PyBroadException
+        try:
+            self.cart_rotary_encoder.wait_for_termination()
+        except Exception:
+            pass
+
+        # noinspection PyBroadException
+        try:
+            self.pole_rotary_encoder.wait_for_termination()
+        except Exception:
+            pass
 
         cleanup()
