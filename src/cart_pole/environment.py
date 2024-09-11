@@ -842,6 +842,7 @@ class CartPole(ContinuousMdpEnvironment):
         right_limit_switch.event(lambda s: self.right_limit_event(s.pressed))
 
         gpio.setup(self.failsafe_pwm_off_pin, gpio.OUT)
+        gpio.output(self.failsafe_pwm_off_pin, gpio.LOW)
 
         return (
             RLock(),
