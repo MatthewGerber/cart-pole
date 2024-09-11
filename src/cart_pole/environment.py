@@ -8,10 +8,11 @@ from enum import Enum, auto
 from threading import Event, RLock
 from typing import List, Tuple, Any, Optional, Dict
 
+import RPi.GPIO as gpio
 import numpy as np
 from numpy.random import RandomState
 from smbus2 import SMBus
-import RPi.GPIO as gpio
+
 from raspberry_py.gpio import CkPin, get_ck_pin, setup, cleanup
 from raspberry_py.gpio.controls import LimitSwitch
 from raspberry_py.gpio.integrated_circuits import PulseWaveModulatorPCA9685PW
@@ -485,6 +486,16 @@ class CartPole(ContinuousMdpEnvironment):
             help='Gamma (discount) to use during the balancing phase of the episode.'
         )
 
+        parser.add_argument(
+            '--failsafe-pwm-off-pin',
+            type=get_ck_pin,
+            help=(
+                'GPIO pin connected to the failsafe transistor that turns the motor PWM off. This can be an enumerated '
+                'type and name from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
+                'raspberry_py.gpio.CkPin class (e.g., CkPin.GPIO5).'
+            )
+        )
+
         return parser
 
     @classmethod
@@ -829,6 +840,8 @@ class CartPole(ContinuousMdpEnvironment):
         else:
             right_limit_released.set()
         right_limit_switch.event(lambda s: self.right_limit_event(s.pressed))
+
+        gpio.setup(self.failsafe_pwm_off_pin, gpio.OUT)
 
         return (
             RLock(),
@@ -1317,16 +1330,21 @@ class CartPole(ContinuousMdpEnvironment):
         # we've observed cases in which setting the motor speed fails, or it does not fail but the subsequent wait
         # fails due to interprocess communication failure. in either case, the present process faults without stopping
         # the cart, and the cart physically slams into the rail's end and the motor continues driving it. this is a
-        # critical failure. set the failsafe pwm off signal to switch the motor controller off, and then reraise the
-        # error.
+        # critical failure. set the failsafe pwm off signal to ensure the motor controller is off.
+        gpio.output(self.failsafe_pwm_off_pin, gpio.HIGH)
+        logging.info('Motor PWM disabled.')
+
         # noinspection PyBroadException
         try:
             self.set_motor_speed(0)
             self.cart_rotary_encoder.wait_for_stationarity()
         except Exception as e:
             logging.critical(f'Failed to stop cart. Setting failsafe PWM off. Exception {e}')
-            gpio.output(self.failsafe_pwm_off_pin, gpio.HIGH)
             raise e
+
+        # enable the failsafe pwm now that we've set the motor speed to zero
+        gpio.output(self.failsafe_pwm_off_pin, gpio.LOW)
+        logging.info('Motor PWM enabled.')
 
         logging.info('Cart stopped.')
 
@@ -1369,14 +1387,18 @@ class CartPole(ContinuousMdpEnvironment):
                 # we occasionally get i/o errors from the underlying interface to the pwm. this probably has something
                 # to do with attempting to write new values at a high rate like we're doing here. catch any such error
                 # and try again.
-                attempt = 1
-                while attempt <= 5:
+                attempt = 0
+                while attempt < 5:
+
                     try:
                         self.motor.set_speed(intermediate_speed)
                         break
                     except OSError as e:
                         logging.error(f'Error while setting speed:  {e}')
                         time.sleep(0.1)
+
+                    attempt += 1
+
                 else:
                     raise ValueError(f'Failed to set motor speed after {attempt} attempts.')
 
