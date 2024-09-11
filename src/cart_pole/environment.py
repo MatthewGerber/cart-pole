@@ -842,7 +842,7 @@ class CartPole(ContinuousMdpEnvironment):
         right_limit_switch.event(lambda s: self.right_limit_event(s.pressed))
 
         gpio.setup(self.failsafe_pwm_off_pin, gpio.OUT)
-        gpio.output(self.failsafe_pwm_off_pin, gpio.LOW)
+        self.enable_motor_pwm()
 
         return (
             RLock(),
@@ -1331,23 +1331,47 @@ class CartPole(ContinuousMdpEnvironment):
         # we've observed cases in which setting the motor speed fails, or it does not fail but the subsequent wait
         # fails due to interprocess communication failure. in either case, the present process faults without stopping
         # the cart, and the cart physically slams into the rail's end and the motor continues driving it. this is a
-        # critical failure. set the failsafe pwm off signal to ensure the motor controller is off.
-        gpio.output(self.failsafe_pwm_off_pin, gpio.HIGH)
-        logging.info('Motor PWM disabled.')
+        # critical failure. disable the motor pwm to ensure the motor controller is off.
+        self.disable_motor_pwm()
 
         # noinspection PyBroadException
         try:
             self.set_motor_speed(0)
             self.cart_rotary_encoder.wait_for_stationarity()
         except Exception as e:
-            logging.critical(f'Failed to stop cart. Setting failsafe PWM off. Exception {e}')
+
+            logging.critical(f'Failed to stop cart. Leaving the motor PWM disabled. Exception {e}')
+
+            # reraise the error. this will leave the pwm disabled forever, which is precisely what we want since we've
+            # experienced a critical failure.
             raise e
 
-        # enable the failsafe pwm now that we've set the motor speed to zero
+        else:
+
+            logging.info('Cart stopped.')
+
+            # enable the failsafe pwm now that we've set the motor speed to zero and the cart has stopped
+            self.enable_motor_pwm()
+
+    def disable_motor_pwm(
+            self
+    ):
+        """
+        Disable the motor PWM.
+        """
+
+        gpio.output(self.failsafe_pwm_off_pin, gpio.HIGH)
+        logging.info('Motor PWM disabled.')
+
+    def enable_motor_pwm(
+            self
+    ):
+        """
+        Enable the motor PWM.
+        """
+
         gpio.output(self.failsafe_pwm_off_pin, gpio.LOW)
         logging.info('Motor PWM enabled.')
-
-        logging.info('Cart stopped.')
 
     def set_motor_speed(
             self,
