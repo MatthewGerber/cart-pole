@@ -1217,10 +1217,10 @@ class CartPole(ContinuousMdpEnvironment):
 
         :param restore_limit_state: Whether to restore the limit state before centering the cart. Doing this ensures
         that the centering calculation will be accurate and that any out-of-calibration issues will be mitigated. This
-        is somewhat expensive, since it involves physically moving the cart to a limit switch.
+        is somewhat expensive, since it involves physically moving the cart to a nearby limit switch before moving the
+        cart to the center.
         :param restore_center_state: Whether to restore the center state after centering. This ensures that the initial
-        movements away from the center will be equivalent to previous such movements.
-        at that position.
+        movements away from the center will be equivalent to previous such movements at that position.
         """
 
         assert self.left_limit_degrees is not None, 'Must calibrate before centering.'
@@ -1243,6 +1243,9 @@ class CartPole(ContinuousMdpEnvironment):
         # was when we calibrated. this corrects any loss of calibration that occurred while moving the cart. do this in
         # whatever order is the most efficient given the cart's current position.
         if restore_limit_state:
+
+            logging.info('Restoring limit state.')
+
             if original_position == CartPole.CartPosition.LEFT_OF_CENTER:
                 self.move_cart_to_left_limit()
                 self.cart_rotary_encoder.phase_change_index.value = self.cart_phase_change_index_at_left_limit
@@ -1259,16 +1262,17 @@ class CartPole(ContinuousMdpEnvironment):
 
         logging.info('Waiting for stationary pole.')
         self.pole_rotary_encoder.speed_encoder.wait_for_stationarity()
-        logging.info(
-            f'Pole is stationary at degrees:  '
-            f'{self.pole_rotary_encoder.speed_encoder.get_net_total_degrees(False):.1f}\n'
-        )
 
         if restore_center_state:
             self.cart_rotary_encoder.phase_change_index.value = self.cart_phase_change_index_at_center
             self.cart_rotary_encoder.update_state(False)
             self.pole_rotary_encoder.speed_encoder.phase_change_index.value = self.pole_phase_change_index_at_bottom
             self.pole_rotary_encoder.speed_encoder.update_state(False)
+
+        logging.info(
+            f'Pole is stationary at degrees:  '
+            f'{self.pole_rotary_encoder.speed_encoder.get_net_total_degrees(False):.1f}\n'
+        )
 
     def center_cart_at_speed(
             self,
@@ -1510,19 +1514,16 @@ class CartPole(ContinuousMdpEnvironment):
 
         self.motor.start()
 
-        # need to wait for stationary pole, in case the apparatus is too close to a wall and will hit it while moving
-        # to the limit with the pole swinging.
-        self.pole_rotary_encoder.speed_encoder.wait_for_stationarity()
-
         # calibrate if needed, which leaves the cart centered in its initial conditions with the state captured.
         if self.calibrate_on_next_reset:
             self.calibrate()
             self.calibrate_on_next_reset = False
 
         # otherwise, center the cart with the current calibration and reset the rotary encoders to their calibration-
-        # initial conditions. restore the limit state to ensure correct centering.
+        # initial conditions at center. don't bother to restore the limit state, as this significantly slows down the
+        # centering. just defer any errors until we hit a hard side limit, at which time we'll recalibrate.
         else:
-            self.center_cart(True, True)
+            self.center_cart(False, True)
 
         self.state = self.get_state(t=None, terminal=False, update_velocity_and_acceleration=False)
         self.previous_timestep_epoch = None
