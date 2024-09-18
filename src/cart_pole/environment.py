@@ -18,7 +18,12 @@ from raspberry_py.gpio.controls import LimitSwitch
 from raspberry_py.gpio.integrated_circuits import PulseWaveModulatorPCA9685PW
 from raspberry_py.gpio.lights import LED
 from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectPCA9685PW
-from raspberry_py.gpio.sensors import MultiprocessRotaryEncoder, RotaryEncoder, DualMultiprocessRotaryEncoder
+from raspberry_py.gpio.sensors import (
+    MultiprocessRotaryEncoder,
+    RotaryEncoder,
+    DualMultiprocessRotaryEncoder,
+    UltrasonicRangeFinder
+)
 from rlai.core import MdpState, Action, Agent, Reward, Environment, MdpAgent, ContinuousMultiDimensionalAction
 from rlai.core.environments.mdp import ContinuousMdpEnvironment
 from rlai.utils import parse_arguments, IncrementalSampleAverager
@@ -496,6 +501,26 @@ class CartPole(ContinuousMdpEnvironment):
             )
         )
 
+        parser.add_argument(
+            '--center-urf-trigger-pin',
+            type=get_ck_pin,
+            help=(
+                'GPIO pin connected to the trigger pin of the centering ultrasonic range finder. This can be an '
+                'enumerated type and name from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
+                'raspberry_py.gpio.CkPin class (e.g., CkPin.GPIO5).'
+            )
+        )
+
+        parser.add_argument(
+            '--center-urf-echo-pin',
+            type=get_ck_pin,
+            help=(
+                'GPIO pin connected to the echo pin of the centering ultrasonic range finder. This can be an '
+                'enumerated type and name from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
+                'raspberry_py.gpio.CkPin class (e.g., CkPin.GPIO5).'
+            )
+        )
+
         return parser
 
     @classmethod
@@ -573,7 +598,9 @@ class CartPole(ContinuousMdpEnvironment):
             falling_led_pin: Optional[CkPin],
             termination_led_pin: Optional[CkPin],
             balance_gamma: float,
-            failsafe_pwm_off_pin: CkPin
+            failsafe_pwm_off_pin: CkPin,
+            center_urf_trigger_pin: CkPin,
+            center_urf_echo_pin: CkPin
     ):
         """
         Initialize the cart-pole environment.
@@ -602,6 +629,8 @@ class CartPole(ContinuousMdpEnvironment):
         ignore.
         :param balance_gamma: Gamma (discount) to use during the balancing phase of the episode.
         :param failsafe_pwm_off_pin: Failsafe PWM off pin.
+        :param center_urf_trigger_pin: Trigger pin of the ultrasonic range finder at the center position.
+        :param center_urf_echo_pin: Echo pin of the ultrasonic range finder at the center position.
         """
 
         super().__init__(
@@ -629,6 +658,8 @@ class CartPole(ContinuousMdpEnvironment):
         self.termination_led_pin = termination_led_pin
         self.balance_gamma = balance_gamma
         self.failsafe_pwm_off_pin = failsafe_pwm_off_pin
+        self.center_urf_trigger_pin = center_urf_trigger_pin
+        self.center_urf_echo_pin = center_urf_echo_pin
 
         # non-calibrated attributes
         self.midline_mm = self.limit_to_limit_mm / 2.0
@@ -668,7 +699,8 @@ class CartPole(ContinuousMdpEnvironment):
             self.balance_phase_led,
             self.falling_led,
             self.termination_led,
-            self.calibrate_on_next_reset
+            self.calibrate_on_next_reset,
+            self.center_urf
         ) = self.get_components()
 
         # configure the continuous action with a single dimension ranging the maximum motor speed change
@@ -728,6 +760,7 @@ class CartPole(ContinuousMdpEnvironment):
         state['balance_phase_led'] = None
         state['falling_led'] = None
         state['termination_led'] = None
+        state['center_urf'] = None
 
         return state
 
@@ -758,7 +791,8 @@ class CartPole(ContinuousMdpEnvironment):
             self.balance_phase_led,
             self.falling_led,
             self.termination_led,
-            self.calibrate_on_next_reset
+            self.calibrate_on_next_reset,
+            self.center_urf
         ) = self.get_components()
 
     def get_components(
@@ -778,7 +812,8 @@ class CartPole(ContinuousMdpEnvironment):
         Optional[LED],
         Optional[LED],
         Optional[LED],
-        bool
+        bool,
+        UltrasonicRangeFinder
     ]:
         """
         Get components.
@@ -867,7 +902,12 @@ class CartPole(ContinuousMdpEnvironment):
             None if self.balance_phase_led_pin is None else LED(self.balance_phase_led_pin),
             None if self.falling_led_pin is None else LED(self.falling_led_pin),
             None if self.termination_led_pin is None else LED(self.termination_led_pin),
-            not self.load_calibration()
+            not self.load_calibration(),
+            UltrasonicRangeFinder(
+                trigger_pin=self.center_urf_trigger_pin,
+                echo_pin=self.center_urf_echo_pin,
+                measurements_per_second=4
+            )
         )
 
     def load_calibration(
@@ -1018,9 +1058,10 @@ class CartPole(ContinuousMdpEnvironment):
         self.max_cart_speed_mm_per_second = abs(cart_state.angular_velocity * self.cart_mm_per_degree)
         self.stop_cart()
 
-        # center cart and capture initial conditions of the rotary encoders at center for subsequent restoration
-        self.center_cart(True, False)
-        self.cart_phase_change_index_at_center = self.cart_rotary_encoder.phase_change_index.value
+        # set central phase change indices
+        self.cart_phase_change_index_at_center = int(
+            self.midline_degrees * self.cart_rotary_encoder.phase_changes_per_degree
+        )
         self.pole_phase_change_index_at_bottom = self.pole_rotary_encoder.speed_encoder.phase_change_index.value
         self.pole_degrees_at_bottom = self.pole_rotary_encoder.speed_encoder.get_degrees(False)
 
@@ -1255,10 +1296,12 @@ class CartPole(ContinuousMdpEnvironment):
 
             self.cart_rotary_encoder.update_state(False)
 
-        # center once quickly, which will overshoot, and then slowly to get more accurate.
-        original_position = self.center_cart_at_speed(True, original_position)
-        self.center_cart_at_speed(False, original_position)
-        logging.info('Cart centered.')
+        while original_position != CartPole.CartPosition.CENTERED:
+            original_position = self.center_cart_at_speed(True, original_position)
+            if original_position != CartPole.CartPosition.CENTERED:
+                logging.info('Failed to center cart. Trying again.')
+        else:
+            logging.info('Cart centered.')
 
         logging.info('Waiting for stationary pole.')
         self.pole_rotary_encoder.speed_encoder.wait_for_stationarity()
@@ -1305,21 +1348,34 @@ class CartPole(ContinuousMdpEnvironment):
         # move toward the center, wait for the center to be reached, and stop the cart.
         logging.info(f'Centering cart at speed:  {centering_speed}')
         self.set_motor_speed(centering_speed)
-        self.cart_rotary_encoder.wait_for_cart_to_cross_center(
-            original_position=original_position,
-            left_limit_degrees=self.left_limit_degrees,
-            cart_mm_per_degree=self.cart_mm_per_degree,
-            midline_mm=self.midline_mm,
-            check_delay_seconds=0.05
-        )
+        while (
+            (
+                (distance := self.center_urf.measure_distance_once()) is None or
+                distance > 5.0
+            ) and
+            not self.left_limit_pressed.is_set() and
+            not self.right_limit_pressed.is_set()
+        ):
+            if distance is not None:
+                logging.info(f'Centering URF distance:  {distance:.1f} cm')
+
+            time.sleep(0.2)
+
         self.stop_cart()
 
-        centered_position = CartPole.get_cart_position(
-            cart_net_total_degrees=self.cart_rotary_encoder.get_net_total_degrees(False),
-            left_limit_degrees=self.left_limit_degrees,
-            cart_mm_per_degree=self.cart_mm_per_degree,
-            midline_mm=self.midline_mm
-        )
+        if distance is None:
+            logging.info('No centering URF distance. Must have hit limit switch.')
+        else:
+            logging.info(f'Centered at URF distance:  {distance:.1f} cm')
+
+        if self.left_limit_pressed.is_set():
+            self.move_cart_to_left_limit()
+            centered_position = CartPole.CartPosition.LEFT_OF_CENTER
+        elif self.right_limit_pressed.is_set():
+            self.move_cart_to_right_limit()
+            centered_position = CartPole.CartPosition.RIGHT_OF_CENTER
+        else:
+            centered_position = CartPole.CartPosition.CENTERED
 
         return centered_position
 
@@ -1514,16 +1570,15 @@ class CartPole(ContinuousMdpEnvironment):
 
         self.motor.start()
 
-        # calibrate if needed, which leaves the cart centered in its initial conditions with the state captured.
+        # calibrate if needed
         if self.calibrate_on_next_reset:
             self.calibrate()
             self.calibrate_on_next_reset = False
 
-        # otherwise, center the cart with the current calibration and reset the rotary encoders to their calibration-
-        # initial conditions at center. don't bother to restore the limit state, as this significantly slows down the
-        # centering. just defer any errors until we hit a hard side limit, at which time we'll recalibrate.
-        else:
-            self.center_cart(False, True)
+        # center the cart with the current calibration and reset the rotary encoders to their calibration-initial
+        # conditions at center. don't bother to restore the limit state, as this significantly slows down the centering.
+        # just defer any errors until we hit a hard side limit, at which time we'll recalibrate.
+        self.center_cart(False, True)
 
         self.state = self.get_state(t=None, terminal=False, update_velocity_and_acceleration=False)
         self.previous_timestep_epoch = None
