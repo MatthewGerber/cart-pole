@@ -63,6 +63,53 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
 
         return fex, unparsed_args
 
+    def __init__(
+            self,
+            environment: CartPole
+    ):
+        """
+        Initialize the feature extractor.
+
+        :param environment: Environment.
+        """
+
+        super().__init__()
+
+        self.environment = environment
+
+        self.scaler = StationaryFeatureScaler()
+        self.state_category_interacter = self.get_interacter()
+        self.interaction_term_indices: Optional[List[Tuple]] = None
+
+    def __getstate__(
+            self
+    ) -> Dict:
+        """
+        Get state for pickling.
+
+        :return: State.
+        """
+
+        state = dict(self.__dict__)
+
+        state['state_category_interacter'] = None
+
+        return state
+
+    def __setstate__(
+            self,
+            state: Dict
+    ):
+        """
+        Set state from pickle.
+
+        :param state: State.
+        """
+
+        self.__dict__ = state
+
+        state['state_category_interacter'] = self.get_interacter()
+
     def extracts_intercept(
             self
     ) -> bool:
@@ -175,50 +222,3 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
                 [False, True]
             )
         ])
-
-    def __init__(
-            self,
-            environment: CartPole
-    ):
-        """
-        Initialize the feature extractor.
-
-        :param environment: Environment.
-        """
-
-        super().__init__()
-
-        self.environment = environment
-
-        self.scaler = StationaryFeatureScaler()
-        self.state_category_interacter = self.get_interacter()
-        self.interaction_term_indices: Optional[List[Tuple]] = None
-
-    def __getstate__(
-            self
-    ) -> Dict:
-        """
-        Get state for pickling.
-
-        :return: State.
-        """
-
-        state = dict(self.__dict__)
-
-        state['state_category_interacter'] = None
-
-        return state
-
-    def __setstate__(
-            self,
-            state: Dict
-    ):
-        """
-        Set state from pickle.
-
-        :param state: State.
-        """
-
-        self.__dict__ = state
-
-        state['state_category_interacter'] = self.get_interacter()

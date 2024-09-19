@@ -99,7 +99,7 @@ class CartPoleState(MdpState):
             pole_angle_deg_from_upright: float,
             pole_angular_velocity_deg_per_sec: float,
             pole_angular_acceleration_deg_per_sec_squared: float,
-            step: int,
+            step: Optional[int],
             agent: MdpAgent,
             terminal: bool,
             truncated: bool
@@ -670,14 +670,14 @@ class CartPole(ContinuousMdpEnvironment):
         self.timestep_sleep_seconds = 1.0 / self.timesteps_per_second
         self.min_seconds_for_full_motor_speed_range = 0.20
         self.original_agent_gamma: Optional[float] = None
-        self.truncation_gamma = None  # unused. unclear if this is effective.
+        self.truncation_gamma: Optional[float] = None  # unused. unclear if this is effective.
         self.max_pole_angular_speed_deg_per_second = 1080.0
         self.max_pole_angular_acceleration_deg_per_second_squared = 8000.0
         self.episode_phase = CartPole.EpisodePhase.SWING_UP
         self.pole_angle_reward_threshold = 175.0
         self.achieved_balance = False
         self.min_pole_angle_reward_threshold = 15.0
-        self.lost_balance_timestamp = None
+        self.lost_balance_timestamp: Optional[float] = None
         self.lost_balance_timer_seconds = 15.0
         self.cart_rotary_encoder_angular_velocity_step_size = 0.9
         self.cart_rotary_encoder_angular_acceleration_step_size = 0.25
@@ -1805,6 +1805,8 @@ class CartPole(ContinuousMdpEnvironment):
         :return: State.
         """
 
+        assert self.agent is not None
+
         self.cart_rotary_encoder.update_state(update_velocity_and_acceleration)
         cart_state: MultiprocessRotaryEncoder.State = self.cart_rotary_encoder.state
 
@@ -1874,7 +1876,7 @@ class CartPole(ContinuousMdpEnvironment):
         # wait for timer to elapse and transition to truncated
         elif (
             self.episode_phase == CartPole.EpisodePhase.LOST_BALANCE and
-            (time.time() - self.lost_balance_timestamp) >= self.lost_balance_timer_seconds
+            (time.time() - self.lost_balance_timestamp) >= self.lost_balance_timer_seconds  # type: ignore[operator]
         ):
             new_truncation = True
             logging.info(
