@@ -502,7 +502,7 @@ class CartPole(ContinuousMdpEnvironment):
         )
 
         parser.add_argument(
-            '--center-urf-trigger-pin',
+            '--centering-range-finder-trigger-pin',
             type=get_ck_pin,
             help=(
                 'GPIO pin connected to the trigger pin of the centering ultrasonic range finder. This can be an '
@@ -512,7 +512,7 @@ class CartPole(ContinuousMdpEnvironment):
         )
 
         parser.add_argument(
-            '--center-urf-echo-pin',
+            '--centering-range-finder-echo-pin',
             type=get_ck_pin,
             help=(
                 'GPIO pin connected to the echo pin of the centering ultrasonic range finder. This can be an '
@@ -596,11 +596,12 @@ class CartPole(ContinuousMdpEnvironment):
             calibration_path: Optional[str],
             balance_phase_led_pin: Optional[CkPin],
             falling_led_pin: Optional[CkPin],
+            cart_moving_right_led_pin: Optional[CkPin],
             termination_led_pin: Optional[CkPin],
             balance_gamma: float,
             failsafe_pwm_off_pin: CkPin,
-            center_urf_trigger_pin: CkPin,
-            center_urf_echo_pin: CkPin
+            centering_range_finder_trigger_pin: CkPin,
+            centering_range_finder_echo_pin: CkPin
     ):
         """
         Initialize the cart-pole environment.
@@ -625,12 +626,14 @@ class CartPole(ContinuousMdpEnvironment):
         :param balance_phase_led_pin: Pin connected to an LED to illuminate when the episode transitions to the balance
         phase.
         :param falling_led_pin: Pin connected to an LED to illuminate when the pole is falling, or pass None to ignore.
+        :param cart_moving_right_led_pin: Pin connected to an LED to illuminate when the cart is moving right, or pass None 
+        to ignore.
         :param termination_led_pin: Pin connected to an LED to illuminate when the episode terminates, or pass None to
         ignore.
         :param balance_gamma: Gamma (discount) to use during the balancing phase of the episode.
         :param failsafe_pwm_off_pin: Failsafe PWM off pin.
-        :param center_urf_trigger_pin: Trigger pin of the ultrasonic range finder at the center position.
-        :param center_urf_echo_pin: Echo pin of the ultrasonic range finder at the center position.
+        :param centering_range_finder_trigger_pin: Trigger pin of the ultrasonic range finder at the center position.
+        :param centering_range_finder_echo_pin: Echo pin of the ultrasonic range finder at the center position.
         """
 
         super().__init__(
@@ -655,11 +658,12 @@ class CartPole(ContinuousMdpEnvironment):
         self.calibration_path = os.path.expanduser(calibration_path)
         self.balance_phase_led_pin = balance_phase_led_pin
         self.falling_led_pin = falling_led_pin
+        self.cart_moving_right_led_pin = cart_moving_right_led_pin
         self.termination_led_pin = termination_led_pin
         self.balance_gamma = balance_gamma
         self.failsafe_pwm_off_pin = failsafe_pwm_off_pin
-        self.center_urf_trigger_pin = center_urf_trigger_pin
-        self.center_urf_echo_pin = center_urf_echo_pin
+        self.centering_range_finder_trigger_pin = centering_range_finder_trigger_pin
+        self.centering_range_finder_echo_pin = centering_range_finder_echo_pin
 
         # non-calibrated attributes
         self.midline_mm = self.limit_to_limit_mm / 2.0
@@ -698,9 +702,10 @@ class CartPole(ContinuousMdpEnvironment):
             self.right_limit_released,
             self.balance_phase_led,
             self.falling_led,
+            self.cart_moving_right_led,
             self.termination_led,
             self.calibrate_on_next_reset,
-            self.center_urf
+            self.centering_range_finder
         ) = self.get_components()
 
         # configure the continuous action with a single dimension ranging the maximum motor speed change
@@ -760,7 +765,7 @@ class CartPole(ContinuousMdpEnvironment):
         state['balance_phase_led'] = None
         state['falling_led'] = None
         state['termination_led'] = None
-        state['center_urf'] = None
+        state['centering_range_finder'] = None
 
         return state
 
@@ -790,9 +795,10 @@ class CartPole(ContinuousMdpEnvironment):
             self.right_limit_released,
             self.balance_phase_led,
             self.falling_led,
+            self.cart_moving_right_led,
             self.termination_led,
             self.calibrate_on_next_reset,
-            self.center_urf
+            self.centering_range_finder
         ) = self.get_components()
 
     def get_components(
@@ -812,11 +818,13 @@ class CartPole(ContinuousMdpEnvironment):
         Optional[LED],
         Optional[LED],
         Optional[LED],
+        Optional[LED],
         bool,
         UltrasonicRangeFinder
     ]:
         """
-        Get components.
+        Get circuitry components and other attributes that cannot be pickled. This is primarily used to restore the 
+        environment when resuming training.
 
         :return: Tuple of components.
         """
@@ -901,11 +909,12 @@ class CartPole(ContinuousMdpEnvironment):
             right_limit_released,
             None if self.balance_phase_led_pin is None else LED(self.balance_phase_led_pin),
             None if self.falling_led_pin is None else LED(self.falling_led_pin),
+            None if self.cart_moving_right_led_pin is None else LED(self.cart_moving_right_led_pin),
             None if self.termination_led_pin is None else LED(self.termination_led_pin),
             not self.load_calibration(),
             UltrasonicRangeFinder(
-                trigger_pin=self.center_urf_trigger_pin,
-                echo_pin=self.center_urf_echo_pin,
+                trigger_pin=self.centering_range_finder_trigger_pin,
+                echo_pin=self.centering_range_finder_echo_pin,
                 measurements_per_second=4
             )
         )
@@ -1350,23 +1359,23 @@ class CartPole(ContinuousMdpEnvironment):
         self.set_motor_speed(centering_speed)
         while (
             (
-                (distance := self.center_urf.measure_distance_once()) is None or
+                (distance := self.centering_range_finder.measure_distance_once()) is None or
                 distance > 5.0
             ) and
             not self.left_limit_pressed.is_set() and
             not self.right_limit_pressed.is_set()
         ):
             if distance is not None:
-                logging.info(f'Centering URF distance:  {distance:.1f} cm')
+                logging.info(f'Centering distance:  {distance:.1f} cm')
 
             time.sleep(0.2)
 
         self.stop_cart()
 
         if distance is None:
-            logging.info('No centering URF distance. Must have hit limit switch.')
+            logging.info('No centering distance. Must have hit a limit switch.')
         else:
-            logging.info(f'Centered at URF distance:  {distance:.1f} cm')
+            logging.info(f'Centered with distance:  {distance:.1f} cm')
 
         if self.left_limit_pressed.is_set():
             self.move_cart_to_left_limit()
@@ -1623,12 +1632,20 @@ class CartPole(ContinuousMdpEnvironment):
 
             # update the current state if we haven't yet terminated
             if not previous_state.terminal:
+
                 self.state = self.get_state(t=t, terminal=None, update_velocity_and_acceleration=True)
+
                 if self.falling_led is not None:
                     if self.state.pole_is_falling:
                         self.falling_led.turn_on()
                     else:
                         self.falling_led.turn_off()
+
+                if self.cart_moving_right_led is not None:
+                    if self.state.cart_velocity_mm_per_second > 0.0:
+                        self.cart_moving_right_led.turn_on()
+                    else:
+                        self.cart_moving_right_led.turn_off()
 
             new_termination = not previous_state.terminal and self.state.terminal
             new_truncation = not previous_state.truncated and self.state.truncated
@@ -1723,6 +1740,22 @@ class CartPole(ContinuousMdpEnvironment):
 
             return self.state, Reward(None, reward_value)
 
+    def pole_is_balancing_properly(
+            self,
+            observation: np.ndarray
+    ) -> bool:
+        """
+        Get whether pole is balancing properly.
+
+        :param observation: Observation.
+        :return: True or False.
+        """
+
+        return (
+            abs(float(observation[CartPoleState.Dimension.PoleAngle])) < self.min_pole_angle_reward_threshold and
+            abs(float(observation[CartPoleState.Dimension.PoleVelocity])) < self.min_pole_angle_reward_threshold
+        )
+
     def get_reward(
             self,
             t: int,
@@ -1761,17 +1794,14 @@ class CartPole(ContinuousMdpEnvironment):
                 }
                 logging.info('Caught pole.')
 
-            # add a reward spike for stationary pole near perfect upright
-            if (
-                abs(state.pole_angle_deg_from_upright) < 5.0 and
-                abs(state.pole_angular_velocity_deg_per_sec) < 5.0
-            ):
+            # add a reward spike for balancing properly
+            if self.pole_is_balancing_properly(state.observation):
                 reward += 1.0
                 self.time_step_axv_lines[t] = {
                     'color': 'purple',
-                    'label': 'Perfect Pole'
+                    'label': 'Proper Balance'
                 }
-                logging.info('Perfect balance.')
+                logging.info('Proper balance.')
 
         return reward
 
@@ -1864,7 +1894,8 @@ class CartPole(ContinuousMdpEnvironment):
             self.episode_phase = CartPole.EpisodePhase.LOST_BALANCE
             self.lost_balance_timestamp = time.time()
             self.time_step_axv_lines[t] = {
-                'color': 'purple',
+                'color': 'blue',
+                'linestyle': '--',
                 'label': 'Lost Balance'
             }
             logging.info(

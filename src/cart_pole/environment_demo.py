@@ -175,11 +175,12 @@ def main():
         calibration_path=None,
         balance_phase_led_pin=CkPin.GPIO26,
         falling_led_pin=CkPin.GPIO19,
+        cart_moving_right_led_pin=CkPin.GPIO18,
         termination_led_pin=CkPin.GPIO13,
         balance_gamma=0.5,
         failsafe_pwm_off_pin=CkPin.GPIO6,
-        center_urf_trigger_pin=CkPin.GPIO23,
-        center_urf_echo_pin=CkPin.GPIO24
+        centering_range_finder_trigger_pin=CkPin.GPIO23,
+        centering_range_finder_echo_pin=CkPin.GPIO24
     )
 
     agent = TestAgent()
