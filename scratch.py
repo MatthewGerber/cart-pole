@@ -11,11 +11,11 @@ def main():
     """
 
     setup()
-    gpio.setup(CkPin.GPIO24, gpio.OUT)
+    gpio.setup(CkPin.MISO, gpio.OUT)
     while True:
-        gpio.output(CkPin.GPIO24, gpio.HIGH)
+        gpio.output(CkPin.MISO, gpio.HIGH)
         time.sleep(1.0)
-        gpio.output(CkPin.GPIO24, gpio.LOW)
+        gpio.output(CkPin.MISO, gpio.LOW)
         time.sleep(1.0)
 
 

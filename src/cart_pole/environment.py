@@ -475,6 +475,17 @@ class CartPole(ContinuousMdpEnvironment):
         )
 
         parser.add_argument(
+            '--cart-moving-right-led-pin',
+            type=get_ck_pin,
+            default=None,
+            help=(
+                'GPIO pin connected to an LED to illuminate when the cart is moving right. This can be an enumerated '
+                'type and name from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
+                'raspberry_py.gpio.CkPin class (e.g., CkPin.GPIO5).'
+            )
+        )
+
+        parser.add_argument(
             '--termination-led-pin',
             type=get_ck_pin,
             default=None,
@@ -1323,7 +1334,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         logging.info(
             f'Pole is stationary at degrees:  '
-            f'{self.pole_rotary_encoder.speed_encoder.get_net_total_degrees(False):.1f}\n'
+            f'{self.pole_rotary_encoder.speed_encoder.get_net_total_degrees(False):.1f}'
         )
 
     def center_cart_at_speed(
@@ -1366,7 +1377,7 @@ class CartPole(ContinuousMdpEnvironment):
             not self.right_limit_pressed.is_set()
         ):
             if distance is not None:
-                logging.info(f'Centering distance:  {distance:.1f} cm')
+                logging.debug(f'Centering distance:  {distance:.1f} cm')
 
             time.sleep(0.2)
 
@@ -1524,7 +1535,8 @@ class CartPole(ContinuousMdpEnvironment):
         for led in [
             self.balance_phase_led,
             self.falling_led,
-            self.termination_led
+            self.termination_led,
+            self.cart_moving_right_led
         ]:
             if led is not None:
                 led.turn_off()
@@ -1752,8 +1764,8 @@ class CartPole(ContinuousMdpEnvironment):
         """
 
         return (
-            abs(float(observation[CartPoleState.Dimension.PoleAngle])) < self.min_pole_angle_reward_threshold and
-            abs(float(observation[CartPoleState.Dimension.PoleVelocity])) < self.min_pole_angle_reward_threshold
+            abs(float(observation[CartPoleState.Dimension.PoleAngle.value])) < self.min_pole_angle_reward_threshold and
+            abs(float(observation[CartPoleState.Dimension.PoleVelocity.value])) < self.min_pole_angle_reward_threshold
         )
 
     def get_reward(
