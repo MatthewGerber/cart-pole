@@ -486,6 +486,17 @@ class CartPole(ContinuousMdpEnvironment):
         )
 
         parser.add_argument(
+            '--proper-balance-led-pin',
+            type=get_ck_pin,
+            default=None,
+            help=(
+                'GPIO pin connected to an LED to illuminate when the pole is balancing properly. This can be an '
+                'enumerated type and name from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
+                'raspberry_py.gpio.CkPin class (e.g., CkPin.GPIO5).'
+            )
+        )
+
+        parser.add_argument(
             '--termination-led-pin',
             type=get_ck_pin,
             default=None,
@@ -608,6 +619,7 @@ class CartPole(ContinuousMdpEnvironment):
             balance_phase_led_pin: Optional[CkPin],
             falling_led_pin: Optional[CkPin],
             cart_moving_right_led_pin: Optional[CkPin],
+            proper_balance_led_pin: Optional[CkPin],
             termination_led_pin: Optional[CkPin],
             balance_gamma: float,
             failsafe_pwm_off_pin: CkPin,
@@ -637,8 +649,10 @@ class CartPole(ContinuousMdpEnvironment):
         :param balance_phase_led_pin: Pin connected to an LED to illuminate when the episode transitions to the balance
         phase.
         :param falling_led_pin: Pin connected to an LED to illuminate when the pole is falling, or pass None to ignore.
-        :param cart_moving_right_led_pin: Pin connected to an LED to illuminate when the cart is moving right, or pass None 
-        to ignore.
+        :param cart_moving_right_led_pin: Pin connected to an LED to illuminate when the cart is moving right, or pass
+        None to ignore.
+        :param proper_balance_led_pin: Pin connected to an LED to illuminate when the pole is balancing properly, or
+        pass None to ignore.
         :param termination_led_pin: Pin connected to an LED to illuminate when the episode terminates, or pass None to
         ignore.
         :param balance_gamma: Gamma (discount) to use during the balancing phase of the episode.
@@ -670,6 +684,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.balance_phase_led_pin = balance_phase_led_pin
         self.falling_led_pin = falling_led_pin
         self.cart_moving_right_led_pin = cart_moving_right_led_pin
+        self.proper_balance_led_pin = proper_balance_led_pin
         self.termination_led_pin = termination_led_pin
         self.balance_gamma = balance_gamma
         self.failsafe_pwm_off_pin = failsafe_pwm_off_pin
@@ -714,6 +729,7 @@ class CartPole(ContinuousMdpEnvironment):
             self.balance_phase_led,
             self.falling_led,
             self.cart_moving_right_led,
+            self.proper_balance_led,
             self.termination_led,
             self.calibrate_on_next_reset,
             self.centering_range_finder
@@ -807,6 +823,7 @@ class CartPole(ContinuousMdpEnvironment):
             self.balance_phase_led,
             self.falling_led,
             self.cart_moving_right_led,
+            self.proper_balance_led,
             self.termination_led,
             self.calibrate_on_next_reset,
             self.centering_range_finder
@@ -826,6 +843,7 @@ class CartPole(ContinuousMdpEnvironment):
         LimitSwitch,
         Event,
         Event,
+        Optional[LED],
         Optional[LED],
         Optional[LED],
         Optional[LED],
@@ -921,6 +939,7 @@ class CartPole(ContinuousMdpEnvironment):
             None if self.balance_phase_led_pin is None else LED(self.balance_phase_led_pin),
             None if self.falling_led_pin is None else LED(self.falling_led_pin),
             None if self.cart_moving_right_led_pin is None else LED(self.cart_moving_right_led_pin),
+            None if self.proper_balance_led_pin is None else LED(self.proper_balance_led_pin),
             None if self.termination_led_pin is None else LED(self.termination_led_pin),
             not self.load_calibration(),
             UltrasonicRangeFinder(
@@ -1535,8 +1554,9 @@ class CartPole(ContinuousMdpEnvironment):
         for led in [
             self.balance_phase_led,
             self.falling_led,
-            self.termination_led,
-            self.cart_moving_right_led
+            self.cart_moving_right_led,
+            self.proper_balance_led,
+            self.termination_led
         ]:
             if led is not None:
                 led.turn_off()
@@ -1808,12 +1828,19 @@ class CartPole(ContinuousMdpEnvironment):
 
             # add a reward spike for balancing properly
             if self.pole_is_balancing_properly(state.observation):
+
                 reward += 1.0
                 self.time_step_axv_lines[t] = {
                     'color': 'purple',
                     'label': 'Proper Balance'
                 }
                 logging.info('Proper balance.')
+
+                if self.proper_balance_led is not None:
+                    self.proper_balance_led.turn_on()
+
+            elif self.proper_balance_led is not None:
+                self.proper_balance_led.turn_off()
 
         return reward
 
