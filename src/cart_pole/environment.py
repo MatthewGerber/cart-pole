@@ -791,6 +791,8 @@ class CartPole(ContinuousMdpEnvironment):
         state['right_limit_released'] = None
         state['balance_phase_led'] = None
         state['falling_led'] = None
+        state['cart_moving_right_led'] = None
+        state['proper_balance_led'] = None
         state['termination_led'] = None
         state['centering_range_finder'] = None
 
