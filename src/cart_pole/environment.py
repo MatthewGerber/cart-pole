@@ -732,7 +732,8 @@ class CartPole(ContinuousMdpEnvironment):
             self.proper_balance_led,
             self.termination_led,
             self.calibrate_on_next_reset,
-            self.centering_range_finder
+            self.centering_range_finder,
+            self.leds
         ) = self.get_components()
 
         # configure the continuous action with a single dimension ranging the maximum motor speed change
@@ -796,6 +797,8 @@ class CartPole(ContinuousMdpEnvironment):
         state['termination_led'] = None
         state['centering_range_finder'] = None
 
+        state['leds'] = None
+
         return state
 
     def __setstate__(
@@ -828,7 +831,8 @@ class CartPole(ContinuousMdpEnvironment):
             self.proper_balance_led,
             self.termination_led,
             self.calibrate_on_next_reset,
-            self.centering_range_finder
+            self.centering_range_finder,
+            self.leds
         ) = self.get_components()
 
     def get_components(
@@ -851,7 +855,8 @@ class CartPole(ContinuousMdpEnvironment):
         Optional[LED],
         Optional[LED],
         bool,
-        UltrasonicRangeFinder
+        UltrasonicRangeFinder,
+        List[Optional[LED]]
     ]:
         """
         Get circuitry components and other attributes that cannot be pickled. This is primarily used to restore the 
@@ -918,6 +923,26 @@ class CartPole(ContinuousMdpEnvironment):
         gpio.setup(self.failsafe_pwm_off_pin, gpio.OUT)
         self.enable_motor_pwm()
 
+        balance_phase_led = None if self.balance_phase_led_pin is None else LED(self.balance_phase_led_pin)
+        falling_led = None if self.falling_led_pin is None else LED(self.falling_led_pin)
+        cart_moving_right_led = None if self.cart_moving_right_led_pin is None else LED(self.cart_moving_right_led_pin)
+        proper_balance_led = None if self.proper_balance_led_pin is None else LED(self.proper_balance_led_pin)
+        termination_led = None if self.termination_led_pin is None else LED(self.termination_led_pin)
+
+        leds = [
+            balance_phase_led,
+            falling_led,
+            cart_moving_right_led,
+            proper_balance_led,
+            termination_led
+        ]
+
+        for _ in range(5):
+            for led in leds:
+                led.turn_on()
+                time.sleep(0.1)
+                led.turn_off()
+
         return (
             RLock(),
             pca9685pw,
@@ -938,17 +963,18 @@ class CartPole(ContinuousMdpEnvironment):
             right_limit_switch,
             right_limit_pressed,
             right_limit_released,
-            None if self.balance_phase_led_pin is None else LED(self.balance_phase_led_pin),
-            None if self.falling_led_pin is None else LED(self.falling_led_pin),
-            None if self.cart_moving_right_led_pin is None else LED(self.cart_moving_right_led_pin),
-            None if self.proper_balance_led_pin is None else LED(self.proper_balance_led_pin),
-            None if self.termination_led_pin is None else LED(self.termination_led_pin),
+            balance_phase_led,
+            falling_led,
+            cart_moving_right_led,
+            proper_balance_led,
+            termination_led,
             not self.load_calibration(),
             UltrasonicRangeFinder(
                 trigger_pin=self.centering_range_finder_trigger_pin,
                 echo_pin=self.centering_range_finder_echo_pin,
                 measurements_per_second=4
-            )
+            ),
+            leds
         )
 
     def load_calibration(
