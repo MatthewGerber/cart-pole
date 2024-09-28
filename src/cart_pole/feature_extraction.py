@@ -212,10 +212,10 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
                 0.0
             ),
 
-            # segment policy for when the pole is properly balanced. it is difficult for the swing-up policy to
-            # react appropriately in this position.
+            # segment policy for when the pole is balancing. it is difficult for the swing-up policy to react
+            # appropriately in this position, so we use a separate policy for this phase.
             StateLambdaIndicator(
-                lambda state_vector: self.environment.pole_is_balancing_properly(state_vector),
+                lambda _: self.environment.episode_phase == CartPole.EpisodePhase.BALANCE,
                 [False, True]
             )
         ])

@@ -704,9 +704,9 @@ class CartPole(ContinuousMdpEnvironment):
         self.max_pole_angular_speed_deg_per_second = 1080.0
         self.max_pole_angular_acceleration_deg_per_second_squared = 8000.0
         self.episode_phase = CartPole.EpisodePhase.SWING_UP
-        self.pole_angle_reward_threshold = 175.0
+        self.balance_phase_pole_angle = 175.0
         self.achieved_balance = False
-        self.min_pole_angle_reward_threshold = 15.0
+        self.min_balance_phase_pole_angle = 40.0
         self.lost_balance_timestamp: Optional[float] = None
         self.lost_balance_timer_seconds = 15.0
         self.cart_rotary_encoder_angular_velocity_step_size = 0.9
@@ -796,7 +796,6 @@ class CartPole(ContinuousMdpEnvironment):
         state['proper_balance_led'] = None
         state['termination_led'] = None
         state['centering_range_finder'] = None
-
         state['leds'] = None
 
         return state
@@ -1625,14 +1624,19 @@ class CartPole(ContinuousMdpEnvironment):
         self.agent.gamma = self.original_agent_gamma
         logging.info(f'Restored agent.gamma to {self.agent.gamma}.')
 
-        # if the previous episode achieved balance, then reduce the balance threshold down to the minimum.
+        # if the previous episode achieved the balance phase, then reduce the balance-phase angle down to the minimum.
         if self.achieved_balance:
             self.achieved_balance = False
-            self.pole_angle_reward_threshold = max(
-                self.min_pole_angle_reward_threshold,
-                self.pole_angle_reward_threshold - 1.0
-            )
-            logging.info(f'Reduced pole angle reward threshold to {self.pole_angle_reward_threshold} degrees.')
+            if self.balance_phase_pole_angle == self.min_balance_phase_pole_angle:
+                logging.info(
+                    f'Balance-phase pole angle is already the minimum of {self.balance_phase_pole_angle}. Not reducing.'
+                )
+            else:
+                self.balance_phase_pole_angle = max(
+                    self.min_balance_phase_pole_angle,
+                    self.balance_phase_pole_angle - 1.0
+                )
+                logging.info(f'Reduced balance-phase pole angle to {self.balance_phase_pole_angle} degrees.')
 
         self.episode_phase = CartPole.EpisodePhase.SWING_UP
         self.lost_balance_timestamp = None
@@ -1786,7 +1790,7 @@ class CartPole(ContinuousMdpEnvironment):
             time.sleep(self.timestep_sleep_seconds)
 
             # calculate reward
-            reward_value = self.get_reward(t, previous_state, self.state)
+            reward_value = self.get_reward(self.state)
 
             logging.debug(f'State {t}:  {self.state}')
             logging.debug(f'Reward {t}:  {reward_value}')
@@ -1800,33 +1804,13 @@ class CartPole(ContinuousMdpEnvironment):
 
             return self.state, Reward(None, reward_value)
 
-    def pole_is_balancing_properly(
-            self,
-            observation: np.ndarray
-    ) -> bool:
-        """
-        Get whether pole is balancing properly.
-
-        :param observation: Observation.
-        :return: True or False.
-        """
-
-        return (
-            abs(float(observation[CartPoleState.Dimension.PoleAngle.value])) < self.min_pole_angle_reward_threshold and
-            abs(float(observation[CartPoleState.Dimension.PoleVelocity.value])) < self.min_pole_angle_reward_threshold
-        )
-
+    @staticmethod
     def get_reward(
-            self,
-            t: int,
-            previous_state: CartPoleState,
             state: CartPoleState
     ) -> float:
         """
         Get reward for a state.
 
-        :param t: Time step.
-        :param previous_state: Previous state.
         :param state: State.
         :return: Reward.
         """
@@ -1834,41 +1818,10 @@ class CartPole(ContinuousMdpEnvironment):
         if state.terminal:
             reward = -1.0
         else:
-
             reward = (
                 state.zero_to_one_pole_angle *
                 state.zero_to_one_pole_angular_speed
             )
-
-            # add a reward spike for catching the pole when falling. a catch is where the pole transitions from falling
-            # to not falling while above horizontal.
-            if (
-                previous_state.pole_is_falling and
-                not state.pole_is_falling and
-                abs(state.pole_angle_deg_from_upright) < 90.0
-            ):
-                reward += 1.0
-                self.time_step_axv_lines[t] = {
-                    'color': 'cyan',
-                    'label': 'Caught Pole'
-                }
-                logging.info('Caught pole.')
-
-            # add a reward spike for balancing properly
-            if self.pole_is_balancing_properly(state.observation):
-
-                reward += 1.0
-                self.time_step_axv_lines[t] = {
-                    'color': 'purple',
-                    'label': 'Proper Balance'
-                }
-                logging.info('Proper balance.')
-
-                if self.proper_balance_led is not None:
-                    self.proper_balance_led.turn_on()
-
-            elif self.proper_balance_led is not None:
-                self.proper_balance_led.turn_off()
 
         return reward
 
@@ -1936,7 +1889,7 @@ class CartPole(ContinuousMdpEnvironment):
         # transition from swing-up to balancing
         if (
             self.episode_phase == CartPole.EpisodePhase.SWING_UP and
-            abs(pole_angle_deg_from_upright) <= self.pole_angle_reward_threshold
+            abs(pole_angle_deg_from_upright) <= self.balance_phase_pole_angle
         ):
             self.episode_phase = CartPole.EpisodePhase.BALANCE
 
@@ -1956,7 +1909,7 @@ class CartPole(ContinuousMdpEnvironment):
         # taken after balance is lost, for example feedback loops that result in accelerating angular velocities.
         elif (
             self.episode_phase == CartPole.EpisodePhase.BALANCE and
-            abs(pole_angle_deg_from_upright) > self.pole_angle_reward_threshold
+            abs(pole_angle_deg_from_upright) > self.balance_phase_pole_angle
         ):
             self.episode_phase = CartPole.EpisodePhase.LOST_BALANCE
             self.lost_balance_timestamp = time.time()
@@ -1967,7 +1920,7 @@ class CartPole(ContinuousMdpEnvironment):
             }
             logging.info(
                 f'Pole has fallen while balancing. Angle {pole_angle_deg_from_upright:.2f} exceeds maximum '
-                f'allowable of {self.pole_angle_reward_threshold:.2f}. Starting lost-balance timer of '
+                f'allowable of {self.balance_phase_pole_angle:.2f}. Starting lost-balance timer of '
                 f'{self.lost_balance_timer_seconds} seconds.'
             )
 
