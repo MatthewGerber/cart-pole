@@ -936,12 +936,6 @@ class CartPole(ContinuousMdpEnvironment):
             termination_led
         ]
 
-        for _ in range(5):
-            for led in leds:
-                led.turn_on()
-                time.sleep(0.1)
-                led.turn_off()
-
         return (
             RLock(),
             pca9685pw,
@@ -1561,6 +1555,23 @@ class CartPole(ContinuousMdpEnvironment):
             # latency between setting the motor pwm input and registering the effect on rotary encoder output.
             self.cart_rotary_encoder.clockwise.value = speed > 0
 
+    def flash_leds(
+            self
+    ):
+        """
+        Flash LEDs.
+        """
+
+        leds = [led for led in self.leds if led is not None]
+        for led in leds:
+            led.turn_off()
+
+        for _ in range(5):
+            for led in leds:
+                led.turn_on()
+                time.sleep(0.1)
+                led.turn_off()
+
     def reset_for_new_run(
             self,
             agent: Any
@@ -1577,16 +1588,7 @@ class CartPole(ContinuousMdpEnvironment):
         super().reset_for_new_run(self.agent)
         self.agent = agent
 
-        # reset leds to off
-        for led in [
-            self.balance_phase_led,
-            self.falling_led,
-            self.cart_moving_right_led,
-            self.proper_balance_led,
-            self.termination_led
-        ]:
-            if led is not None:
-                led.turn_off()
+        self.flash_leds()
 
         self.plot_label_data_kwargs['Motor Speed'] = (
             dict(),
