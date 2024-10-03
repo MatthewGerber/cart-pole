@@ -4,7 +4,7 @@ from typing import List, Tuple, Dict, Optional
 
 import numpy as np
 
-from cart_pole.environment import CartPoleState, CartPole
+from cart_pole.environment import CartPoleState, CartPole, EpisodePhase
 from rlai.models.feature_extraction import FeatureExtractor, StationaryFeatureScaler
 from rlai.state_value.function_approximation.models.feature_extraction import (
     StateFeatureExtractor,
@@ -215,10 +215,7 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
             # segment policy for when the pole is balancing. it is difficult for the swing-up policy to react
             # appropriately in this position, so we use a separate policy for this phase.
             StateLambdaIndicator(
-                lambda observation: (
-                    abs(observation[CartPoleState.Dimension.PoleAngle.value]) <=
-                    self.environment.balance_phase_pole_angle
-                ),
+                lambda _: self.environment.episode_phase == EpisodePhase.BALANCE,
                 [False, True]
             )
         ])

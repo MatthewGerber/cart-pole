@@ -29,6 +29,102 @@ from rlai.core.environments.mdp import ContinuousMdpEnvironment
 from rlai.utils import parse_arguments, IncrementalSampleAverager
 
 
+class CartPoleAction(ContinuousMultiDimensionalAction):
+    """
+    Cart-pole action.
+    """
+
+    def __init__(
+            self,
+            value: Optional[np.ndarray],
+            min_values: Optional[np.ndarray],
+            max_values: Optional[np.ndarray],
+            name: Optional[str] = None
+    ):
+        """
+        Initialize the action.
+
+        :param value: Value.
+        :param min_values: Minimum values.
+        :param max_values: Maximum values.
+        :param name: Name.
+        """
+
+        super().__init__(
+            value=value,
+            min_values=min_values,
+            max_values=max_values,
+            name=name
+        )
+
+    def __eq__(
+            self,
+            other
+    ) -> bool:
+        """
+        Check equality.
+
+        :param other: Other object.
+        """
+
+        if not isinstance(other, CartPoleAction):
+            raise ValueError(f'Expected a {CartPoleAction}')
+
+        return np.allclose(self.value, other.value, atol=0.0001)
+
+    def __hash__(self) -> int:
+        """
+        Get hash.
+
+        :return: Hash.
+        """
+
+        return super().__hash__()
+
+
+class EpisodePhase(Enum):
+    """
+    Episode phases.
+    """
+
+    # The initial phase, in which the cart must oscillate left and right to build angular momentum that swings the
+    # pole to the vertical position.
+    SWING_UP = auto()
+
+    # The pole is upright with respect to a progressive threshold.
+    PROGRESSIVE_UPRIGHT = auto()
+
+    # The pole is balancing properly with respect to angle and velocity.
+    BALANCE = auto()
+
+
+class CartPosition(Enum):
+    """
+    Cart position.
+    """
+
+    # Cart is left of center.
+    LEFT_OF_CENTER = auto()
+
+    # Cart is centered exactly.
+    CENTERED = auto()
+
+    # Cart is right of center.
+    RIGHT_OF_CENTER = auto()
+
+
+class CartDirection(Enum):
+    """
+    Cart direction.
+    """
+
+    # Cart is moving to the left.
+    LEFT = auto()
+
+    # Cart is moving to the right.
+    RIGHT = auto()
+
+
 class CartRotaryEncoder(MultiprocessRotaryEncoder):
     """
     Extension of the multiprocess rotary encoder that adds cart centering.
@@ -36,7 +132,7 @@ class CartRotaryEncoder(MultiprocessRotaryEncoder):
 
     def wait_for_cart_to_cross_center(
             self,
-            original_position: 'CartPole.CartPosition',
+            original_position: CartPosition,
             left_limit_degrees: float,
             cart_mm_per_degree: float,
             midline_mm: float,
@@ -217,106 +313,10 @@ class CartPoleState(MdpState):
         return np.allclose(self.observation, other.observation, atol=0.0001)
 
 
-class CartPoleAction(ContinuousMultiDimensionalAction):
-    """
-    Cart-pole action.
-    """
-
-    def __init__(
-            self,
-            value: Optional[np.ndarray],
-            min_values: Optional[np.ndarray],
-            max_values: Optional[np.ndarray],
-            name: Optional[str] = None
-    ):
-        """
-        Initialize the action.
-
-        :param value: Value.
-        :param min_values: Minimum values.
-        :param max_values: Maximum values.
-        :param name: Name.
-        """
-
-        super().__init__(
-            value=value,
-            min_values=min_values,
-            max_values=max_values,
-            name=name
-        )
-
-    def __eq__(
-            self,
-            other
-    ) -> bool:
-        """
-        Check equality.
-
-        :param other: Other object.
-        """
-
-        if not isinstance(other, CartPoleAction):
-            raise ValueError(f'Expected a {CartPoleAction}')
-
-        return np.allclose(self.value, other.value, atol=0.0001)
-
-    def __hash__(self) -> int:
-        """
-        Get hash.
-
-        :return: Hash.
-        """
-
-        return super().__hash__()
-
-
 class CartPole(ContinuousMdpEnvironment):
     """
     Cart-pole environment for the Raspberry Pi.
     """
-
-    class EpisodePhase(Enum):
-        """
-        Episode phases.
-        """
-
-        # The initial phase, in which the cart must oscillate left and right to build angular momentum that swings the
-        # pole to the vertical position. This phase ends when the pole is sufficiently upright given a threshold.
-        SWING_UP = auto()
-
-        # Begins when swing-up ends. This phase then ends if and when the pole falls too far from vertical.
-        BALANCE = auto()
-
-        # Begins when the pole loses balance. This starts a timer until truncation.
-        LOST_BALANCE = auto()
-
-        # Begins when the lost-balance timer elapses.
-        TRUNCATED = auto()
-
-    class CartPosition(Enum):
-        """
-        Cart position.
-        """
-
-        # Cart is left of center.
-        LEFT_OF_CENTER = auto()
-
-        # Cart is centered exactly.
-        CENTERED = auto()
-
-        # Cart is right of center.
-        RIGHT_OF_CENTER = auto()
-
-    class CartDirection(Enum):
-        """
-        Cart direction.
-        """
-
-        # Cart is moving to the left.
-        LEFT = auto()
-
-        # Cart is moving to the right.
-        RIGHT = auto()
 
     @classmethod
     def get_argument_parser(
@@ -453,13 +453,13 @@ class CartPole(ContinuousMdpEnvironment):
         )
 
         parser.add_argument(
-            '--balance-phase-led-pin',
+            '--progressive-upright-led-pin',
             type=get_ck_pin,
             default=None,
             help=(
-                'GPIO pin connected to an LED to illuminate when the episode transitions to the balance phase. This '
-                'can be an enumerated type and name from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or '
-                'the raspberry_py.gpio.CkPin class (e.g., CkPin.GPIO5).'
+                'GPIO pin connected to an LED to illuminate when the pole reaches the progressive upright position. '
+                'This can be an enumerated type and name from either the raspberry_py.gpio.Pin class (e.g., '
+                'Pin.GPIO_5) or the raspberry_py.gpio.CkPin class (e.g., CkPin.GPIO5).'
             )
         )
 
@@ -486,12 +486,12 @@ class CartPole(ContinuousMdpEnvironment):
         )
 
         parser.add_argument(
-            '--proper-balance-led-pin',
+            '--balance-led-pin',
             type=get_ck_pin,
             default=None,
             help=(
-                'GPIO pin connected to an LED to illuminate when the pole is balancing properly. This can be an '
-                'enumerated type and name from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
+                'GPIO pin connected to an LED to illuminate when the pole is balancing. This can be an enumerated type '
+                'and name from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
                 'raspberry_py.gpio.CkPin class (e.g., CkPin.GPIO5).'
             )
         )
@@ -575,7 +575,7 @@ class CartPole(ContinuousMdpEnvironment):
             left_limit_degrees: float,
             cart_mm_per_degree: float,
             midline_mm: float
-    ) -> 'CartPole.CartPosition':
+    ) -> CartPosition:
         """
         Check whether the cart is left of the midline.
 
@@ -589,11 +589,11 @@ class CartPole(ContinuousMdpEnvironment):
         cart_mm_from_left_limit = abs(cart_net_total_degrees - left_limit_degrees) * cart_mm_per_degree
 
         if cart_mm_from_left_limit < midline_mm:
-            position = CartPole.CartPosition.LEFT_OF_CENTER
+            position = CartPosition.LEFT_OF_CENTER
         elif np.isclose(cart_mm_from_left_limit, midline_mm):
-            position = CartPole.CartPosition.CENTERED
+            position = CartPosition.CENTERED
         else:
-            position = CartPole.CartPosition.RIGHT_OF_CENTER
+            position = CartPosition.RIGHT_OF_CENTER
 
         return position
 
@@ -616,10 +616,10 @@ class CartPole(ContinuousMdpEnvironment):
             right_limit_switch_input_pin: CkPin,
             timesteps_per_second: float,
             calibration_path: Optional[str],
-            balance_phase_led_pin: Optional[CkPin],
+            progressive_upright_led_pin: Optional[CkPin],
             falling_led_pin: Optional[CkPin],
             cart_moving_right_led_pin: Optional[CkPin],
-            proper_balance_led_pin: Optional[CkPin],
+            balance_led_pin: Optional[CkPin],
             termination_led_pin: Optional[CkPin],
             balance_gamma: float,
             failsafe_pwm_off_pin: CkPin,
@@ -646,16 +646,16 @@ class CartPole(ContinuousMdpEnvironment):
         :param right_limit_switch_input_pin: Right limit pin.
         :param timesteps_per_second: Number of environment advancement steps to execute per second.
         :param calibration_path: Path to calibration pickle to read/write.
-        :param balance_phase_led_pin: Pin connected to an LED to illuminate when the episode transitions to the balance
-        phase.
+        :param progressive_upright_led_pin: Pin connected to an LED to illuminate when the pole reaches the
+        progressive upright angle, or pass None to ignore.
         :param falling_led_pin: Pin connected to an LED to illuminate when the pole is falling, or pass None to ignore.
         :param cart_moving_right_led_pin: Pin connected to an LED to illuminate when the cart is moving right, or pass
         None to ignore.
-        :param proper_balance_led_pin: Pin connected to an LED to illuminate when the pole is balancing properly, or
-        pass None to ignore.
+        :param balance_led_pin: Pin connected to an LED to illuminate when the pole is balancing properly, or pass None
+        to ignore.
         :param termination_led_pin: Pin connected to an LED to illuminate when the episode terminates, or pass None to
         ignore.
-        :param balance_gamma: Gamma (discount) to use during the balancing phase of the episode.
+        :param balance_gamma: Gamma (discount) to use during the balancing.
         :param failsafe_pwm_off_pin: Failsafe PWM off pin.
         :param centering_range_finder_trigger_pin: Trigger pin of the ultrasonic range finder at the center position.
         :param centering_range_finder_echo_pin: Echo pin of the ultrasonic range finder at the center position.
@@ -681,10 +681,10 @@ class CartPole(ContinuousMdpEnvironment):
         self.right_limit_switch_input_pin = right_limit_switch_input_pin
         self.timesteps_per_second = timesteps_per_second
         self.calibration_path = os.path.expanduser(calibration_path)
-        self.balance_phase_led_pin = balance_phase_led_pin
+        self.progressive_upright_led_pin = progressive_upright_led_pin
         self.falling_led_pin = falling_led_pin
         self.cart_moving_right_led_pin = cart_moving_right_led_pin
-        self.proper_balance_led_pin = proper_balance_led_pin
+        self.balance_led_pin = balance_led_pin
         self.termination_led_pin = termination_led_pin
         self.balance_gamma = balance_gamma
         self.failsafe_pwm_off_pin = failsafe_pwm_off_pin
@@ -703,12 +703,13 @@ class CartPole(ContinuousMdpEnvironment):
         self.truncation_gamma: Optional[float] = None  # unused. unclear if this is effective.
         self.max_pole_angular_speed_deg_per_second = 1080.0
         self.max_pole_angular_acceleration_deg_per_second_squared = 8000.0
-        self.episode_phase = CartPole.EpisodePhase.SWING_UP
-        self.balance_phase_pole_angle = 175.0
-        self.achieved_balance = False
-        self.min_balance_phase_pole_angle = 40.0
+        self.episode_phase = EpisodePhase.SWING_UP
+        self.progressive_upright_pole_angle = 175.0
+        self.achieved_progressive_upright = False
+        self.balance_pole_angle = 35.0
+        self.balance_angular_velocity = 3.0 * self.balance_pole_angle
         self.lost_balance_timestamp: Optional[float] = None
-        self.lost_balance_timer_seconds = 15.0
+        self.lost_balance_timer_seconds = 20.0
         self.cart_rotary_encoder_angular_velocity_step_size = 0.9
         self.cart_rotary_encoder_angular_acceleration_step_size = 0.25
         self.pole_rotary_encoder_angular_velocity_step_size = 0.9
@@ -726,10 +727,10 @@ class CartPole(ContinuousMdpEnvironment):
             self.right_limit_switch,
             self.right_limit_pressed,
             self.right_limit_released,
-            self.balance_phase_led,
+            self.progressive_upright_led,
             self.falling_led,
             self.cart_moving_right_led,
-            self.proper_balance_led,
+            self.balance_led,
             self.termination_led,
             self.calibrate_on_next_reset,
             self.centering_range_finder,
@@ -790,10 +791,10 @@ class CartPole(ContinuousMdpEnvironment):
         state['right_limit_switch'] = None
         state['right_limit_pressed'] = None
         state['right_limit_released'] = None
-        state['balance_phase_led'] = None
+        state['progressive_upright_led'] = None
         state['falling_led'] = None
         state['cart_moving_right_led'] = None
-        state['proper_balance_led'] = None
+        state['balance_led'] = None
         state['termination_led'] = None
         state['centering_range_finder'] = None
         state['leds'] = None
@@ -824,10 +825,10 @@ class CartPole(ContinuousMdpEnvironment):
             self.right_limit_switch,
             self.right_limit_pressed,
             self.right_limit_released,
-            self.balance_phase_led,
+            self.progressive_upright_led,
             self.falling_led,
             self.cart_moving_right_led,
-            self.proper_balance_led,
+            self.balance_led,
             self.termination_led,
             self.calibrate_on_next_reset,
             self.centering_range_finder,
@@ -922,17 +923,20 @@ class CartPole(ContinuousMdpEnvironment):
         gpio.setup(self.failsafe_pwm_off_pin, gpio.OUT)
         self.enable_motor_pwm()
 
-        balance_phase_led = None if self.balance_phase_led_pin is None else LED(self.balance_phase_led_pin)
+        progressive_upright_led = (
+            None if self.progressive_upright_led_pin is None
+            else LED(self.progressive_upright_led_pin)
+        )
         falling_led = None if self.falling_led_pin is None else LED(self.falling_led_pin)
         cart_moving_right_led = None if self.cart_moving_right_led_pin is None else LED(self.cart_moving_right_led_pin)
-        proper_balance_led = None if self.proper_balance_led_pin is None else LED(self.proper_balance_led_pin)
+        balance_led = None if self.balance_led_pin is None else LED(self.balance_led_pin)
         termination_led = None if self.termination_led_pin is None else LED(self.termination_led_pin)
 
         leds = [
-            balance_phase_led,
+            progressive_upright_led,
             falling_led,
             cart_moving_right_led,
-            proper_balance_led,
+            balance_led,
             termination_led
         ]
 
@@ -956,10 +960,10 @@ class CartPole(ContinuousMdpEnvironment):
             right_limit_switch,
             right_limit_pressed,
             right_limit_released,
-            balance_phase_led,
+            progressive_upright_led,
             falling_led,
             cart_moving_right_led,
-            proper_balance_led,
+            balance_led,
             termination_led,
             not self.load_calibration(),
             UltrasonicRangeFinder(
@@ -1064,8 +1068,8 @@ class CartPole(ContinuousMdpEnvironment):
         # nonlinearity of motor speed and cart velocity will confuse the controller. use the same speed in each
         # direction, choosing the max if they are different.
         deadzone_speed = max(
-            abs(self.identify_motor_speed_deadzone_limit(CartPole.CartDirection.LEFT)),
-            abs(self.identify_motor_speed_deadzone_limit(CartPole.CartDirection.RIGHT))
+            abs(self.identify_motor_speed_deadzone_limit(CartDirection.LEFT)),
+            abs(self.identify_motor_speed_deadzone_limit(CartDirection.RIGHT))
         )
         self.motor_deadzone_speed_left = -deadzone_speed
         self.motor_deadzone_speed_right = deadzone_speed
@@ -1079,14 +1083,14 @@ class CartPole(ContinuousMdpEnvironment):
             self.left_limit_degrees,
             self.cart_mm_per_degree,
             self.midline_mm
-        ) == CartPole.CartPosition.LEFT_OF_CENTER:
+        ) == CartPosition.LEFT_OF_CENTER:
             self.move_cart_to_left_limit()
             self.left_limit_degrees = self.cart_rotary_encoder.get_net_total_degrees(False)
             self.cart_phase_change_index_at_left_limit = self.cart_rotary_encoder.phase_change_index.value
             self.move_cart_to_right_limit()
             self.right_limit_degrees = self.cart_rotary_encoder.get_net_total_degrees(False)
             self.cart_phase_change_index_at_right_limit = self.cart_rotary_encoder.phase_change_index.value
-            cart_position = CartPole.CartPosition.RIGHT_OF_CENTER
+            cart_position = CartPosition.RIGHT_OF_CENTER
         else:
             self.move_cart_to_right_limit()
             self.right_limit_degrees = self.cart_rotary_encoder.get_net_total_degrees(False)
@@ -1094,7 +1098,7 @@ class CartPole(ContinuousMdpEnvironment):
             self.move_cart_to_left_limit()
             self.left_limit_degrees = self.cart_rotary_encoder.get_net_total_degrees(False)
             self.cart_phase_change_index_at_left_limit = self.cart_rotary_encoder.phase_change_index.value
-            cart_position = CartPole.CartPosition.LEFT_OF_CENTER
+            cart_position = CartPosition.LEFT_OF_CENTER
 
         # calibrate mm/degree and the midline
         self.limit_to_limit_degrees = abs(self.left_limit_degrees - self.right_limit_degrees)
@@ -1104,7 +1108,7 @@ class CartPole(ContinuousMdpEnvironment):
         # identify maximum cart speed
         logging.info('Identifying maximum cart speed...')
         self.set_motor_speed(
-            speed=-100 if cart_position == CartPole.CartPosition.RIGHT_OF_CENTER else 100,
+            speed=-100 if cart_position == CartPosition.RIGHT_OF_CENTER else 100,
             acceleration_interval=timedelta(seconds=0.5)
         )
         self.cart_rotary_encoder.wait_for_cart_to_cross_center(
@@ -1153,7 +1157,7 @@ class CartPole(ContinuousMdpEnvironment):
 
     def identify_motor_speed_deadzone_limit(
             self,
-            direction: 'CartPole.CartDirection'
+            direction: CartDirection
     ) -> int:
         """
         Identify the deadzone in a direction.
@@ -1164,10 +1168,10 @@ class CartPole(ContinuousMdpEnvironment):
 
         self.stop_cart()
 
-        if direction == CartPole.CartDirection.LEFT:
+        if direction == CartDirection.LEFT:
             increment = -1
             limit_switch = self.left_limit_switch
-        elif direction == CartPole.CartDirection.RIGHT:
+        elif direction == CartDirection.RIGHT:
             increment = 1
             limit_switch = self.right_limit_switch
         else:
@@ -1334,7 +1338,7 @@ class CartPole(ContinuousMdpEnvironment):
             self.midline_mm
         )
 
-        if original_position == CartPole.CartPosition.CENTERED:
+        if original_position == CartPosition.CENTERED:
             logging.info('Cart already centered.')
             return
 
@@ -1347,7 +1351,7 @@ class CartPole(ContinuousMdpEnvironment):
 
             logging.info('Restoring limit state.')
 
-            if original_position == CartPole.CartPosition.LEFT_OF_CENTER:
+            if original_position == CartPosition.LEFT_OF_CENTER:
                 self.move_cart_to_left_limit()
                 self.cart_rotary_encoder.phase_change_index.value = self.cart_phase_change_index_at_left_limit
             else:
@@ -1356,9 +1360,9 @@ class CartPole(ContinuousMdpEnvironment):
 
             self.cart_rotary_encoder.update_state(False)
 
-        while original_position != CartPole.CartPosition.CENTERED:
+        while original_position != CartPosition.CENTERED:
             original_position = self.center_cart_at_speed(True, original_position)
-            if original_position != CartPole.CartPosition.CENTERED:
+            if original_position != CartPosition.CENTERED:
                 logging.info('Failed to center cart. Trying again.')
         else:
             logging.info('Cart centered.')
@@ -1380,8 +1384,8 @@ class CartPole(ContinuousMdpEnvironment):
     def center_cart_at_speed(
             self,
             fast: bool,
-            original_position: 'CartPole.CartPosition'
-    ) -> 'CartPole.CartPosition':
+            original_position: CartPosition
+    ) -> CartPosition:
         """
         Center the cart.
 
@@ -1393,11 +1397,11 @@ class CartPole(ContinuousMdpEnvironment):
         assert self.left_limit_degrees is not None, 'Must calibrate before centering.'
         assert self.cart_mm_per_degree is not None, 'Must calibrate before centering.'
 
-        if original_position == CartPole.CartPosition.CENTERED:
+        if original_position == CartPosition.CENTERED:
             logging.info('Cart already centered.')
             return original_position
 
-        if original_position == CartPole.CartPosition.LEFT_OF_CENTER:
+        if original_position == CartPosition.LEFT_OF_CENTER:
             centering_speed = self.motor_deadzone_speed_right
         else:
             centering_speed = self.motor_deadzone_speed_left
@@ -1430,12 +1434,12 @@ class CartPole(ContinuousMdpEnvironment):
 
         if self.left_limit_pressed.is_set():
             self.move_cart_to_left_limit()
-            centered_position = CartPole.CartPosition.LEFT_OF_CENTER
+            centered_position = CartPosition.LEFT_OF_CENTER
         elif self.right_limit_pressed.is_set():
             self.move_cart_to_right_limit()
-            centered_position = CartPole.CartPosition.RIGHT_OF_CENTER
+            centered_position = CartPosition.RIGHT_OF_CENTER
         else:
-            centered_position = CartPole.CartPosition.CENTERED
+            centered_position = CartPosition.CENTERED
 
         return centered_position
 
@@ -1555,6 +1559,18 @@ class CartPole(ContinuousMdpEnvironment):
             # latency between setting the motor pwm input and registering the effect on rotary encoder output.
             self.cart_rotary_encoder.clockwise.value = speed > 0
 
+    def turn_off_leds(
+            self
+    ):
+        """
+        Turn off the LEDs.
+        """
+
+        leds = [led for led in self.leds if led is not None]
+
+        for led in leds:
+            led.turn_off()
+
     def flash_leds(
             self
     ):
@@ -1562,9 +1578,9 @@ class CartPole(ContinuousMdpEnvironment):
         Flash LEDs.
         """
 
+        self.turn_off_leds()
+
         leds = [led for led in self.leds if led is not None]
-        for led in leds:
-            led.turn_off()
 
         for _ in range(5):
             for led in leds:
@@ -1626,21 +1642,23 @@ class CartPole(ContinuousMdpEnvironment):
         self.agent.gamma = self.original_agent_gamma
         logging.info(f'Restored agent.gamma to {self.agent.gamma}.')
 
-        # if the previous episode achieved the balance phase, then reduce the balance-phase angle down to the minimum.
-        if self.achieved_balance:
-            self.achieved_balance = False
-            if self.balance_phase_pole_angle == self.min_balance_phase_pole_angle:
+        # if the previous episode achieved progressive upright, then reduce the angle down to the balance angle.
+        if self.achieved_progressive_upright:
+            self.achieved_progressive_upright = False
+            if self.progressive_upright_pole_angle == self.balance_pole_angle:
                 logging.info(
-                    f'Balance-phase pole angle is already the minimum of {self.balance_phase_pole_angle}. Not reducing.'
+                    f'Progressive upright pole angle is already {self.progressive_upright_pole_angle}. Not reducing.'
                 )
             else:
-                self.balance_phase_pole_angle = max(
-                    self.min_balance_phase_pole_angle,
-                    self.balance_phase_pole_angle - 1.0
+                self.progressive_upright_pole_angle = max(
+                    self.balance_pole_angle,
+                    self.progressive_upright_pole_angle - 1.0
                 )
-                logging.info(f'Reduced balance-phase pole angle to {self.balance_phase_pole_angle} degrees.')
+                logging.info(
+                    f'Reduced progressive upright pole angle to {self.progressive_upright_pole_angle} degrees.'
+                )
 
-        self.episode_phase = CartPole.EpisodePhase.SWING_UP
+        self.episode_phase = EpisodePhase.SWING_UP
         self.lost_balance_timestamp = None
 
         self.motor.start()
@@ -1692,6 +1710,8 @@ class CartPole(ContinuousMdpEnvironment):
         :return: 2-tuple of the new state and a reward.
         """
 
+        self.turn_off_leds()
+
         with self.state_lock:
 
             previous_state = self.state
@@ -1701,17 +1721,11 @@ class CartPole(ContinuousMdpEnvironment):
 
                 self.state = self.get_state(t=t, terminal=None, update_velocity_and_acceleration=True)
 
-                if self.falling_led is not None:
-                    if self.state.pole_is_falling:
-                        self.falling_led.turn_on()
-                    else:
-                        self.falling_led.turn_off()
+                if self.falling_led is not None and self.state.pole_is_falling:
+                    self.falling_led.turn_on()
 
-                if self.cart_moving_right_led is not None:
-                    if self.state.cart_velocity_mm_per_second > 0.0:
-                        self.cart_moving_right_led.turn_on()
-                    else:
-                        self.cart_moving_right_led.turn_off()
+                if self.cart_moving_right_led is not None and self.state.cart_velocity_mm_per_second > 0.0:
+                    self.cart_moving_right_led.turn_on()
 
             new_termination = not previous_state.terminal and self.state.terminal
             new_truncation = not previous_state.truncated and self.state.truncated
@@ -1724,14 +1738,19 @@ class CartPole(ContinuousMdpEnvironment):
                 # stop the cart if we just terminated
                 self.stop_cart()
 
-            # post-truncation convergence to zero takes too long with gammas close to 1.0 and a slow physical system.
-            # decrease gamma to obtain faster convergence to zero.
-            if new_truncation and self.truncation_gamma is not None and self.truncation_gamma != self.agent.gamma:
-                self.agent.gamma = self.truncation_gamma
-                logging.info(
-                    f'Episode was truncated. Set agent.gamma to {self.agent.gamma} to obtain faster convergence '
-                    'to zero.'
-                )
+            if new_truncation:
+
+                logging.info('Truncated.')
+                self.time_step_axv_lines[t] = {
+                    'color': 'yellow',
+                    'label': 'Truncated'
+                }
+
+                # post-truncation convergence to zero takes too long with gammas close to 1.0 and a slow physical
+                # system. allow decreased gamma to obtain faster convergence to zero.
+                if self.truncation_gamma is not None and self.truncation_gamma != self.agent.gamma:
+                    self.agent.gamma = self.truncation_gamma
+                    logging.info(f'Set agent.gamma to {self.agent.gamma} to obtain faster convergence to zero.')
 
             # perform nominal environment advancement if we haven't terminated. we continue to do this after truncation,
             # since we're waiting for the learning procedure to exit the episode.
@@ -1886,74 +1905,83 @@ class CartPole(ContinuousMdpEnvironment):
         else:
             pole_angle_deg_from_upright = -np.sign(pole_angle_deg_from_bottom) * 180.0 + pole_angle_deg_from_bottom
 
-        new_truncation = False
+        pole_is_progressive_upright = abs(pole_angle_deg_from_upright) <= self.progressive_upright_pole_angle
+        pole_is_balancing = abs(pole_angle_deg_from_upright) <= self.balance_pole_angle
+        pole_is_balancing_slowly = abs(pole_state.angular_velocity) <= self.balance_angular_velocity
 
-        # transition from swing-up to balancing
+        # swing up
+        if self.episode_phase != EpisodePhase.SWING_UP and not pole_is_progressive_upright:
+
+            self.episode_phase = EpisodePhase.SWING_UP
+
+            # if this is the first time we went back to swing-up, then start the lost-balance timer.
+            if self.lost_balance_timestamp is None:
+                self.lost_balance_timestamp = time.time()
+                self.time_step_axv_lines[t] = {
+                    'color': 'purple',
+                    'linestyle': '--',
+                    'label': 'Lost upright'
+                }
+                logging.info(
+                    f'Pole has lost its upright position. Angle {pole_angle_deg_from_upright:.2f} exceeds the maximum '
+                    f'allowable of {self.progressive_upright_pole_angle:.1f}. Starting lost-balance timer of '
+                    f'{self.lost_balance_timer_seconds} seconds.'
+                )
+
+        # progressive upright
         if (
-            self.episode_phase == CartPole.EpisodePhase.SWING_UP and
-            abs(pole_angle_deg_from_upright) <= self.balance_phase_pole_angle
+            self.episode_phase != EpisodePhase.PROGRESSIVE_UPRIGHT and
+            (
+                (pole_is_progressive_upright and not pole_is_balancing) or
+                (pole_is_balancing and not pole_is_balancing_slowly)
+            )
         ):
-            self.episode_phase = CartPole.EpisodePhase.BALANCE
+            self.episode_phase = EpisodePhase.PROGRESSIVE_UPRIGHT
 
-            if self.balance_phase_led is not None:
-                self.balance_phase_led.turn_on()
+            if self.progressive_upright_led is not None:
+                self.progressive_upright_led.turn_on()
 
-            self.agent.gamma = self.balance_gamma
-            logging.info(f'Switched to balance phase with gamma={self.agent.gamma}.')
+            self.achieved_progressive_upright = True
+            logging.info(f'Progressive upright @ {pole_angle_deg_from_upright:.1f} degrees.')
 
-            self.achieved_balance = True
+            self.time_step_axv_lines[t] = {
+                'color': 'purple',
+                'label': 'Progressive upright'
+            }
+
+        # balancing
+        if self.episode_phase != EpisodePhase.BALANCE and pole_is_balancing and pole_is_balancing_slowly:
+
+            self.episode_phase = EpisodePhase.BALANCE
+
+            if self.balance_led is not None:
+                self.balance_led.turn_on()
+
+            logging.info(
+                f'Balancing @ {pole_angle_deg_from_upright:.1f} deg @ {pole_state.angular_velocity:.1f} deg/sec.'
+            )
+
+            if self.balance_gamma != self.agent.gamma:
+                self.agent.gamma = self.balance_gamma
+                logging.info(f'Switched to upright with gamma={self.agent.gamma}.')
+
             self.time_step_axv_lines[t] = {
                 'color': 'blue',
-                'label': 'Balanced'
+                'label': 'Balance'
             }
 
-        # transition from balancing to lost balance and start timer. this gives the agent time to learn about actions
-        # taken after balance is lost, for example feedback loops that result in accelerating angular velocities.
-        elif (
-            self.episode_phase == CartPole.EpisodePhase.BALANCE and
-            abs(pole_angle_deg_from_upright) > self.balance_phase_pole_angle
-        ):
-            self.episode_phase = CartPole.EpisodePhase.LOST_BALANCE
-            self.lost_balance_timestamp = time.time()
-            self.time_step_axv_lines[t] = {
-                'color': 'blue',
-                'linestyle': '--',
-                'label': 'Lost Balance'
-            }
-            logging.info(
-                f'Pole has fallen while balancing. Angle {pole_angle_deg_from_upright:.2f} exceeds maximum '
-                f'allowable of {self.balance_phase_pole_angle:.2f}. Starting lost-balance timer of '
-                f'{self.lost_balance_timer_seconds} seconds.'
-            )
+        truncated = False
 
-        # wait for timer to elapse and transition to truncated
-        elif (
-            self.episode_phase == CartPole.EpisodePhase.LOST_BALANCE and
-            (time.time() - self.lost_balance_timestamp) >= self.lost_balance_timer_seconds  # type: ignore[operator]
-        ):
-            new_truncation = True
-            logging.info(
-                f'Lost balance timer has elapsed. Truncating.'
-            )
-
-        # transition to truncated due to time limit regardless of the current phase
+        # truncate due to timer
         if (
-            self.episode_phase != CartPole.EpisodePhase.TRUNCATED and
-            t is not None and
-            self.T is not None
-            and t >= self.T
+            self.lost_balance_timestamp is not None and
+            (time.time() - self.lost_balance_timestamp) >= self.lost_balance_timer_seconds
         ):
-            new_truncation = True
-            logging.info(
-                f'Time step {t} is at or beyond permissible duration {self.T}. Truncating.'
-            )
+            truncated = True
 
-        if new_truncation:
-            self.episode_phase = CartPole.EpisodePhase.TRUNCATED
-            self.time_step_axv_lines[t] = {
-                'color': 'yellow',
-                'label': 'Truncated'
-            }
+        # truncate due to time steps
+        if t is not None and self.T is not None and t >= self.T:
+            truncated = True
 
         # terminate at violation of soft limit, since continuing might cause the cart to physically impact the
         # limit switch at a high speed. only do this if a termination value isn't being forced by the caller.
@@ -1975,7 +2003,7 @@ class CartPole(ContinuousMdpEnvironment):
             step=t,
             agent=self.agent,
             terminal=terminal,
-            truncated=self.episode_phase == CartPole.EpisodePhase.TRUNCATED
+            truncated=truncated
         )
 
     def close(
