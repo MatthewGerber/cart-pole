@@ -1566,10 +1566,8 @@ class CartPole(ContinuousMdpEnvironment):
         Turn off the LEDs.
         """
 
-        leds = [led for led in self.leds if led is not None]
-
-        for led in leds:
-            led.turn_off()
+        for led in self.leds:
+            CartPole.set_led(led, False)
 
     def flash_leds(
             self
@@ -1580,12 +1578,28 @@ class CartPole(ContinuousMdpEnvironment):
 
         self.turn_off_leds()
 
-        leds = [led for led in self.leds if led is not None]
-
         for _ in range(5):
-            for led in leds:
-                led.turn_on()
+            for led in self.leds:
+                CartPole.set_led(led, True)
                 time.sleep(0.1)
+                CartPole.set_led(led, False)
+
+    @staticmethod
+    def set_led(
+            led: Optional[LED],
+            on: bool
+    ):
+        """
+        Set LED on/off.
+
+        :param led: LED (can be None).
+        :param on: Whether to turn on (True) or off (False).
+        """
+
+        if led is not None:
+            if on:
+                led.turn_on()
+            else:
                 led.turn_off()
 
     def reset_for_new_run(
@@ -1710,32 +1724,21 @@ class CartPole(ContinuousMdpEnvironment):
         :return: 2-tuple of the new state and a reward.
         """
 
-        self.turn_off_leds()
-
         with self.state_lock:
 
             previous_state = self.state
 
             # update the current state if we haven't yet terminated
             if not previous_state.terminal:
-
                 self.state = self.get_state(t=t, terminal=None, update_velocity_and_acceleration=True)
-
-                if self.falling_led is not None and self.state.pole_is_falling:
-                    self.falling_led.turn_on()
-
-                if self.cart_moving_right_led is not None and self.state.cart_velocity_mm_per_second > 0.0:
-                    self.cart_moving_right_led.turn_on()
+                CartPole.set_led(self.falling_led, self.state.pole_is_falling)
+                CartPole.set_led(self.cart_moving_right_led, self.state.cart_velocity_mm_per_second > 0.0)
 
             new_termination = not previous_state.terminal and self.state.terminal
             new_truncation = not previous_state.truncated and self.state.truncated
 
             if new_termination:
-
-                if self.termination_led is not None:
-                    self.termination_led.turn_on()
-
-                # stop the cart if we just terminated
+                CartPole.set_led(self.termination_led, True)
                 self.stop_cart()
 
             if new_truncation:
@@ -1909,7 +1912,8 @@ class CartPole(ContinuousMdpEnvironment):
         pole_is_balancing = abs(pole_angle_deg_from_upright) <= self.balance_pole_angle
         pole_is_balancing_slowly = abs(pole_state.angular_velocity) <= self.balance_angular_velocity
 
-        # swing up
+        # swing up:  we're in the swing-up phase if we're not progressive upright (which implies also not balancing). we
+        # start each episode in the swing-up phase, so this will only apply if we've fallen below upright.
         if self.episode_phase != EpisodePhase.SWING_UP and not pole_is_progressive_upright:
 
             self.episode_phase = EpisodePhase.SWING_UP
@@ -1928,7 +1932,11 @@ class CartPole(ContinuousMdpEnvironment):
                     f'{self.lost_balance_timer_seconds} seconds.'
                 )
 
-        # progressive upright
+            for led in [self.progressive_upright_led, self.balance_led]:
+                CartPole.set_led(led, False)
+
+        # progressive upright:  anything upright, including balancing but moving too quickly. the balance policy is only
+        # for balancing slowly.
         if (
             self.episode_phase != EpisodePhase.PROGRESSIVE_UPRIGHT and
             (
@@ -1937,38 +1945,30 @@ class CartPole(ContinuousMdpEnvironment):
             )
         ):
             self.episode_phase = EpisodePhase.PROGRESSIVE_UPRIGHT
-
-            if self.progressive_upright_led is not None:
-                self.progressive_upright_led.turn_on()
-
             self.achieved_progressive_upright = True
             logging.info(f'Progressive upright @ {pole_angle_deg_from_upright:.1f} degrees.')
-
             self.time_step_axv_lines[t] = {
                 'color': 'purple',
                 'label': 'Progressive upright'
             }
+            CartPole.set_led(self.progressive_upright_led, True)
+            CartPole.set_led(self.balance_led, False)
 
-        # balancing
+        # balancing:  above the balance threshold and moving slowly.
         if self.episode_phase != EpisodePhase.BALANCE and pole_is_balancing and pole_is_balancing_slowly:
-
             self.episode_phase = EpisodePhase.BALANCE
-
-            if self.balance_led is not None:
-                self.balance_led.turn_on()
-
             logging.info(
                 f'Balancing @ {pole_angle_deg_from_upright:.1f} deg @ {pole_state.angular_velocity:.1f} deg/sec.'
             )
-
-            if self.balance_gamma != self.agent.gamma:
-                self.agent.gamma = self.balance_gamma
-                logging.info(f'Switched to upright with gamma={self.agent.gamma}.')
-
             self.time_step_axv_lines[t] = {
                 'color': 'blue',
                 'label': 'Balance'
             }
+            CartPole.set_led(self.balance_led, True)
+            CartPole.set_led(self.progressive_upright_led, False)
+            if self.balance_gamma != self.agent.gamma:
+                self.agent.gamma = self.balance_gamma
+                logging.info(f'Set agent.gamma={self.agent.gamma}.')
 
         truncated = False
 
