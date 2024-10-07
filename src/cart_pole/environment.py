@@ -707,7 +707,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.progressive_upright_pole_angle = 175.0
         self.achieved_progressive_upright = False
         self.balance_pole_angle = 35.0
-        self.balance_angular_velocity = 5.0 * self.balance_pole_angle
+        self.balance_angular_velocity = 8.0 * self.balance_pole_angle
         self.lost_balance_timestamp: Optional[float] = None
         self.lost_balance_timer_seconds = 20.0
         self.cart_rotary_encoder_angular_velocity_step_size = 0.9
