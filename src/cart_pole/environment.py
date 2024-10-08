@@ -714,6 +714,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.cart_rotary_encoder_angular_acceleration_step_size = 0.25
         self.pole_rotary_encoder_angular_velocity_step_size = 0.9
         self.pole_rotary_encoder_angular_acceleration_step_size = 0.25
+        self.fraction_time_balancing = IncrementalSampleAverager()
 
         (
             self.state_lock,
@@ -1648,6 +1649,8 @@ class CartPole(ContinuousMdpEnvironment):
             }
         )
 
+        self.fraction_time_balancing.reset()
+
         if self.original_agent_gamma is None:
             self.original_agent_gamma = self.agent.gamma
 
@@ -1825,6 +1828,10 @@ class CartPole(ContinuousMdpEnvironment):
             self.plot_label_data_kwargs['Pole Angular Acc.'][0][t] = (
                 self.state.pole_angular_acceleration_deg_per_sec_squared
             )
+
+            self.fraction_time_balancing.update(float(self.episode_phase == EpisodePhase.BALANCE))
+            if self.state.terminal:
+                self.metric_value['Fraction Balancing'] = self.fraction_time_balancing.get_value()
 
             return self.state, Reward(None, reward_value)
 
