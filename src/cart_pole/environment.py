@@ -1871,6 +1871,47 @@ class CartPole(ContinuousMdpEnvironment):
 
         self.stop_cart()
 
+    def get_episode_phase(
+            self,
+            pole_angle_deg_from_upright: float,
+            pole_angular_velocity: float
+    ) -> EpisodePhase:
+        """
+        Get the episode phase.
+
+        :param pole_angle_deg_from_upright: Pole's angle in degrees from upright.
+        :param pole_angular_velocity: Pole's angular velocity.
+        :return: Episode phase.
+        """
+
+        pole_is_progressive_upright = abs(pole_angle_deg_from_upright) <= self.progressive_upright_pole_angle
+        pole_is_balancing = abs(pole_angle_deg_from_upright) <= self.balance_pole_angle
+        pole_is_balancing_slowly = abs(pole_angular_velocity) <= self.balance_angular_velocity
+
+        # swing up:  we're in the swing-up phase if we're not progressive upright (which implies also not balancing).
+        if not pole_is_progressive_upright:
+            episode_phase = EpisodePhase.SWING_UP
+
+        # progressive upright:  anything upright, including balancing but moving too quickly. the balance policy is only
+        # for balancing slowly.
+        elif (
+            (pole_is_progressive_upright and not pole_is_balancing) or
+            (pole_is_balancing and not pole_is_balancing_slowly)
+        ):
+            episode_phase = EpisodePhase.PROGRESSIVE_UPRIGHT
+
+        # balancing:  above the balance threshold and moving slowly.
+        elif pole_is_balancing and pole_is_balancing_slowly:
+            episode_phase = EpisodePhase.BALANCE
+
+        # must be in one of the above phases
+        else:
+            raise ValueError(
+                f'Unknown episode phase:  {pole_angle_deg_from_upright} deg @ {pole_angular_velocity} deg/s'
+            )
+
+        return episode_phase
+
     def get_state(
             self,
             t: Optional[int],
@@ -1915,67 +1956,59 @@ class CartPole(ContinuousMdpEnvironment):
         else:
             pole_angle_deg_from_upright = -np.sign(pole_angle_deg_from_bottom) * 180.0 + pole_angle_deg_from_bottom
 
-        pole_is_progressive_upright = abs(pole_angle_deg_from_upright) <= self.progressive_upright_pole_angle
-        pole_is_balancing = abs(pole_angle_deg_from_upright) <= self.balance_pole_angle
-        pole_is_balancing_slowly = abs(pole_state.angular_velocity) <= self.balance_angular_velocity
+        # check whether the episode phase has changed
+        episode_phase = self.get_episode_phase(pole_angle_deg_from_upright, pole_state.angular_velocity)
+        if self.episode_phase != episode_phase:
 
-        # swing up:  we're in the swing-up phase if we're not progressive upright (which implies also not balancing). we
-        # start each episode in the swing-up phase, so this will only apply if we've fallen below upright.
-        if self.episode_phase != EpisodePhase.SWING_UP and not pole_is_progressive_upright:
+            self.episode_phase = episode_phase
 
-            self.episode_phase = EpisodePhase.SWING_UP
+            # we begin each episode in the swing-up phase, so this will only apply if we've fallen below upright.
+            if self.episode_phase == EpisodePhase.SWING_UP:
 
-            # if this is the first time we went back to swing-up, then start the lost-balance timer.
-            if self.lost_balance_timestamp is None:
-                self.lost_balance_timestamp = time.time()
+                # if this is the first time we went back to swing-up, then start the lost-balance timer.
+                if self.lost_balance_timestamp is None:
+                    self.lost_balance_timestamp = time.time()
+                    self.time_step_axv_lines[t] = {
+                        'color': 'purple',
+                        'linestyle': '--',
+                        'label': 'Lost upright'
+                    }
+                    logging.info(
+                        f'Pole has lost its upright position. Angle {pole_angle_deg_from_upright:.2f} exceeds the maximum '
+                        f'allowable of {self.progressive_upright_pole_angle:.1f}. Starting lost-balance timer of '
+                        f'{self.lost_balance_timer_seconds} seconds.'
+                    )
+
+                for led in [self.progressive_upright_led, self.balance_led]:
+                    CartPole.set_led(led, False)
+
+            elif self.episode_phase == EpisodePhase.PROGRESSIVE_UPRIGHT:
+                self.episode_phase = EpisodePhase.PROGRESSIVE_UPRIGHT
+                self.achieved_progressive_upright = True
+                logging.info(f'Progressive upright @ {pole_angle_deg_from_upright:.1f} degrees.')
                 self.time_step_axv_lines[t] = {
                     'color': 'purple',
-                    'linestyle': '--',
-                    'label': 'Lost upright'
+                    'label': 'Progressive upright'
                 }
+                CartPole.set_led(self.progressive_upright_led, True)
+                CartPole.set_led(self.balance_led, False)
+
+            elif self.episode_phase == EpisodePhase.BALANCE:
                 logging.info(
-                    f'Pole has lost its upright position. Angle {pole_angle_deg_from_upright:.2f} exceeds the maximum '
-                    f'allowable of {self.progressive_upright_pole_angle:.1f}. Starting lost-balance timer of '
-                    f'{self.lost_balance_timer_seconds} seconds.'
+                    f'Balancing @ {pole_angle_deg_from_upright:.1f} deg @ {pole_state.angular_velocity:.1f} deg/sec.'
                 )
+                self.time_step_axv_lines[t] = {
+                    'color': 'blue',
+                    'label': 'Balance'
+                }
+                CartPole.set_led(self.balance_led, True)
+                CartPole.set_led(self.progressive_upright_led, False)
+                if self.balance_gamma != self.agent.gamma:
+                    self.agent.gamma = self.balance_gamma
+                    logging.info(f'Set agent.gamma={self.agent.gamma}.')
 
-            for led in [self.progressive_upright_led, self.balance_led]:
-                CartPole.set_led(led, False)
-
-        # progressive upright:  anything upright, including balancing but moving too quickly. the balance policy is only
-        # for balancing slowly.
-        if (
-            self.episode_phase != EpisodePhase.PROGRESSIVE_UPRIGHT and
-            (
-                (pole_is_progressive_upright and not pole_is_balancing) or
-                (pole_is_balancing and not pole_is_balancing_slowly)
-            )
-        ):
-            self.episode_phase = EpisodePhase.PROGRESSIVE_UPRIGHT
-            self.achieved_progressive_upright = True
-            logging.info(f'Progressive upright @ {pole_angle_deg_from_upright:.1f} degrees.')
-            self.time_step_axv_lines[t] = {
-                'color': 'purple',
-                'label': 'Progressive upright'
-            }
-            CartPole.set_led(self.progressive_upright_led, True)
-            CartPole.set_led(self.balance_led, False)
-
-        # balancing:  above the balance threshold and moving slowly.
-        if self.episode_phase != EpisodePhase.BALANCE and pole_is_balancing and pole_is_balancing_slowly:
-            self.episode_phase = EpisodePhase.BALANCE
-            logging.info(
-                f'Balancing @ {pole_angle_deg_from_upright:.1f} deg @ {pole_state.angular_velocity:.1f} deg/sec.'
-            )
-            self.time_step_axv_lines[t] = {
-                'color': 'blue',
-                'label': 'Balance'
-            }
-            CartPole.set_led(self.balance_led, True)
-            CartPole.set_led(self.progressive_upright_led, False)
-            if self.balance_gamma != self.agent.gamma:
-                self.agent.gamma = self.balance_gamma
-                logging.info(f'Set agent.gamma={self.agent.gamma}.')
+            else:
+                raise ValueError(f'Unknown episode phase:  {self.episode_phase}')
 
         truncated = False
 
