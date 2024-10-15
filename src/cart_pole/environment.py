@@ -198,7 +198,8 @@ class CartPoleState(MdpState):
             step: Optional[int],
             agent: MdpAgent,
             terminal: bool,
-            truncated: bool
+            truncated: bool,
+            episode_phase: EpisodePhase
     ):
         """
         Initialize the state.
@@ -218,6 +219,7 @@ class CartPoleState(MdpState):
         :param truncated: Whether the state is truncated, meaning the episode has ended for some reason other than the
         natural dynamics of the environment. For example, imposing an artificial time limit on an episode might cause
         the episode to end without the agent in a terminal state.
+        :param episode_phase: Episode phase.
         """
 
         self.cart_mm_from_center = cart_mm_from_center
@@ -226,6 +228,7 @@ class CartPoleState(MdpState):
         self.pole_angular_velocity_deg_per_sec = pole_angular_velocity_deg_per_sec
         self.pole_angular_acceleration_deg_per_sec_squared = pole_angular_acceleration_deg_per_sec_squared
         self.step = step
+        self.episode_phase = episode_phase
 
         self.observation = np.array([
             self.cart_mm_from_center,
@@ -698,7 +701,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.previous_timestep_epoch: Optional[float] = None
         self.current_timesteps_per_second = IncrementalSampleAverager(initial_value=0.0, alpha=0.25)
         self.timestep_sleep_seconds = 1.0 / self.timesteps_per_second
-        self.min_seconds_for_full_motor_speed_range = 0.20
+        self.min_seconds_for_full_motor_speed_range = 0.1
         self.original_agent_gamma: Optional[float] = None
         self.truncation_gamma: Optional[float] = None  # unused. unclear if this is effective.
         self.max_pole_angular_speed_deg_per_second = 1080.0
@@ -707,9 +710,9 @@ class CartPole(ContinuousMdpEnvironment):
         self.progressive_upright_pole_angle = 175.0
         self.achieved_progressive_upright = False
         self.balance_pole_angle = 35.0
-        self.balance_angular_velocity = 8.0 * self.balance_pole_angle
+        self.balance_angular_velocity = 7.0 * self.balance_pole_angle
         self.lost_balance_timestamp: Optional[float] = None
-        self.lost_balance_timer_seconds = 20.0
+        self.lost_balance_timer_seconds = 30.0
         self.cart_rotary_encoder_angular_velocity_step_size = 0.9
         self.cart_rotary_encoder_angular_acceleration_step_size = 0.25
         self.pole_rotary_encoder_angular_velocity_step_size = 0.9
@@ -1817,7 +1820,7 @@ class CartPole(ContinuousMdpEnvironment):
             time.sleep(self.timestep_sleep_seconds)
 
             # calculate reward
-            reward_value = self.get_reward(self.state)
+            reward_value = self.get_reward(self.state, previous_state)
 
             logging.debug(f'State {t}:  {self.state}')
             logging.debug(f'Reward {t}:  {reward_value}')
@@ -1837,17 +1840,26 @@ class CartPole(ContinuousMdpEnvironment):
 
     @staticmethod
     def get_reward(
-            state: CartPoleState
+            state: CartPoleState,
+            previous_state: CartPoleState
     ) -> float:
         """
         Get reward for a state.
 
         :param state: State.
+        :param previous_state: Previous state.
         :return: Reward.
         """
 
+        # penalize end of episode
         if state.terminal:
             reward = -1.0
+
+        # penalize changes back to the swing-up phase
+        elif previous_state.episode_phase != EpisodePhase.SWING_UP and state.episode_phase == EpisodePhase.SWING_UP:
+            reward = -1.0
+
+        # reward according to pole and speed
         else:
             reward = (
                 state.zero_to_one_pole_angle *
@@ -2043,7 +2055,8 @@ class CartPole(ContinuousMdpEnvironment):
             step=t,
             agent=self.agent,
             terminal=terminal,
-            truncated=truncated
+            truncated=truncated,
+            episode_phase=episode_phase
         )
 
     def close(
