@@ -199,7 +199,7 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         scaled_feature_vector_with_intercepts = np.append(
             self.state_category_interacter.interact(
                 state_indicator_matrix,
-                np.array([1.0])
+                np.array([[1.0]])
             )[0],
             scaled_state_indicator_feature_vector
         )
