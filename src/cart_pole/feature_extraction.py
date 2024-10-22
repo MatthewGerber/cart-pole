@@ -165,30 +165,46 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         ])
         ranged_feature_vector = signs * (1.0 - zero_to_one_values)  # invert back to 1.0 being most physically extreme
 
-        # scaling the features to be in [-1.0, 1.0] according to their theoretical bounds doesn't mean that the
-        # distribution of observed values will be similar when running. for example, the observed cart and pole
-        # velocities might be quite small relative to their ranges and the observed values of cart and pole positions.
-        # these differences in observed distribution across features result in the usual issues pertaining to step
-        # sizes in the policy updates. standardize the scaled feature vector so that a single step size will be
-        # feasible.
-        scaled_feature_vector = self.scaler.scale_features(np.array([ranged_feature_vector]), refit_scaler)[0]
-
-        # prepend constant intercept and add multiplicative interaction terms
-        state_feature_vector = np.append(
-            [1.0],
+        # create the full vector of multiplicative interaction terms between the ranged feature values
+        feature_vector = np.array(
             [
-                np.prod(scaled_feature_vector[term_indices])
+                np.prod(ranged_feature_vector[term_indices])
                 for term_indices in self.interaction_term_indices
             ]
         )
 
+        # prepare the state-indicator matrix
+        state_indicator_matrix = np.array([state.observation])
+
         # interact the feature vector according to its state segment
         state_indicator_feature_vector = self.state_category_interacter.interact(
-            np.array([state.observation]),
-            np.array([state_feature_vector])
+            state_indicator_matrix,
+            np.array([feature_vector])
         )[0]
 
-        return state_indicator_feature_vector
+        # ranging the feature values to be in [-1.0, 1.0] according to their theoretical bounds doesn't mean that the
+        # distribution of observed values will be similar when running. for example, the observed cart and pole
+        # velocities might be quite small relative to their ranges and the observed values of cart and pole positions.
+        # these differences in observed distribution across features result in the usual issues pertaining to step
+        # sizes in the policy updates. standardize the ranged feature vector so that a single step size will be
+        # suitable for learning. we scale here, after interaction, to ensure that observations in each state segment
+        # are scaled according to their naturally observed distributions.
+        scaled_state_indicator_feature_vector = self.scaler.scale_features(
+            np.array([state_indicator_feature_vector]),
+            refit_scaler
+        )[0]
+
+        # prepend a vector of intercept terms according to the state segment. we do this here, after scaling, so that
+        # the constant intercept terms remain as 1.0.
+        scaled_feature_vector_with_intercepts = np.append(
+            self.state_category_interacter.interact(
+                state_indicator_matrix,
+                np.array([1.0])
+            )[0],
+            scaled_state_indicator_feature_vector
+        )
+
+        return scaled_feature_vector_with_intercepts
 
     def get_interacter(
             self
