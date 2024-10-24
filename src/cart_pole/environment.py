@@ -1659,8 +1659,9 @@ class CartPole(ContinuousMdpEnvironment):
 
         # reset original agent gamma value. we manipulate gamma during episode phases and for post-truncation
         # convergence.
-        self.agent.gamma = self.original_agent_gamma
-        logging.info(f'Restored agent.gamma to {self.agent.gamma}.')
+        if self.agent.gamma != self.original_agent_gamma:
+            self.agent.gamma = self.original_agent_gamma
+            logging.info(f'Restored agent.gamma to {self.agent.gamma}.')
 
         # if the previous episode achieved progressive upright, then reduce the angle down to the balance angle.
         if self.achieved_progressive_upright:
