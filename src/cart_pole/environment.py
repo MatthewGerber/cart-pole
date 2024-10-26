@@ -1297,7 +1297,6 @@ class CartPole(ContinuousMdpEnvironment):
                 # hitting a limit switch in the middle of an episode means that we've lost calibration. the soft limits
                 # should have prevented this, but this failed. end the episode and calibrate upon the next episode
                 # reset.
-                self.state: MdpState
                 if self.state is not None and not self.state.terminal:
                     self.state = self.get_state(t=None, terminal=True, update_velocity_and_acceleration=False)
                     self.calibrate_on_next_reset = True
