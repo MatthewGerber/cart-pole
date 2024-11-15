@@ -1,5 +1,6 @@
 import itertools
 from argparse import ArgumentParser
+from copy import deepcopy
 from typing import List, Tuple, Dict, Optional
 
 import numpy as np
@@ -11,7 +12,8 @@ from rlai.state_value.function_approximation.models.feature_extraction import (
     StateFeatureExtractor,
     OneHotStateIndicatorFeatureInteracter,
     StateDimensionSegment,
-    StateLambdaIndicator
+    StateLambdaIndicator,
+    StateIndicator
 )
 from rlai.utils import parse_arguments
 
@@ -79,10 +81,17 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         self.environment = environment
 
         self.interaction_term_indices: Optional[List[Tuple]] = None
-        (
-            self.state_category_feature_interacter,
-            self.state_category_intercept_interacter
-        ) = self.get_interacters()
+
+        indicators = self.get_state_indicators()
+
+        # it's important to scale features independently within each state segment, since we'll make many observations
+        # in certain segments early in the learning before ever getting to the other segments (e.g., for balancing). we
+        # don't want the early zero-valued features for unobserved segments (due to one-hot segment encoding) to pollute
+        # the scalers used for segments observed later in learning.
+        self.state_category_feature_interacter = OneHotStateIndicatorFeatureInteracter(indicators, True)
+
+        # do not scale intercepts when encoding them
+        self.state_category_intercept_interacter = OneHotStateIndicatorFeatureInteracter(indicators, False)
 
     def __getstate__(
             self
@@ -95,8 +104,17 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
 
         state = dict(self.__dict__)
 
-        state['state_category_feature_interacter'] = None
-        state['state_category_intercept_interacter'] = None
+        # can't pickle/deepcopy the indicators, one of which has a lambda function in it.
+        state['state_category_feature_interacter'].indicators = None
+        state['state_category_feature_interacter'] = deepcopy(state['state_category_feature_interacter'])
+
+        state['state_category_intercept_interacter'].indicators = None
+        state['state_category_intercept_interacter'] = deepcopy(state['state_category_intercept_interacter'])
+
+        # restore the indicators
+        indicators = self.get_state_indicators()
+        self.state_category_feature_interacter.indicators = indicators
+        self.state_category_intercept_interacter.indicators = indicators
 
         return state
 
@@ -112,10 +130,10 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
 
         self.__dict__ = state
 
-        (
-            self.state_category_feature_interacter,
-            self.state_category_intercept_interacter
-        ) = self.get_interacters()
+        # restore the indicators
+        indicators = self.get_state_indicators()
+        self.state_category_feature_interacter.indicators = indicators
+        self.state_category_intercept_interacter.indicators = indicators
 
     def extracts_intercept(
             self
@@ -229,13 +247,13 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
 
         return scaled_state_indicator_feature_matrix_with_intercepts
 
-    def get_interacters(
+    def get_state_indicators(
             self
-    ) -> Tuple[OneHotStateIndicatorFeatureInteracter, OneHotStateIndicatorFeatureInteracter]:
+    ) -> List[StateIndicator]:
         """
-        Get interacters.
+        Get state indicators for feature interacters.
 
-        :return: Interacters, one for features and one for intercepts.
+        :return: Indicators.
         """
 
         indicators = [
@@ -262,13 +280,4 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
             )
         ]
 
-        # it's important to scale features independently within each state segment, since we'll make many observations
-        # in certain segments early in the learning before ever getting to the other segments (e.g., for balancing). we
-        # don't want the early zero-valued features for unobserved segments (due to one-hot segment encoding) to pollute
-        # the scalers used for segments observed later in learning.
-        feature_interacter = OneHotStateIndicatorFeatureInteracter(indicators, True)
-
-        # do not scale intercepts when encoding them
-        intercept_interacter = OneHotStateIndicatorFeatureInteracter(indicators, False)
-
-        return feature_interacter, intercept_interacter
+        return indicators

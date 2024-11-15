@@ -1,4 +1,5 @@
 import logging
+import math
 import os.path
 import pickle
 import time
@@ -10,6 +11,8 @@ from typing import List, Tuple, Any, Optional, Dict
 
 import RPi.GPIO as gpio
 import numpy as np
+from matplotlib import pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
 from numpy.random import RandomState
 from smbus2 import SMBus
 
@@ -26,6 +29,10 @@ from raspberry_py.gpio.sensors import (
 )
 from rlai.core import MdpState, Action, Agent, Reward, Environment, MdpAgent, ContinuousMultiDimensionalAction
 from rlai.core.environments.mdp import ContinuousMdpEnvironment
+from rlai.policy_gradient import ParameterizedMdpAgent
+from rlai.policy_gradient.policies.continuous_action import ContinuousActionBetaDistributionPolicy
+from rlai.state_value.function_approximation import ApproximateStateValueEstimator
+from rlai.state_value.function_approximation.models.feature_extraction import StateFeatureExtractor
 from rlai.utils import parse_arguments, IncrementalSampleAverager
 
 
@@ -698,6 +705,9 @@ class CartPole(ContinuousMdpEnvironment):
         self.midline_mm = self.limit_to_limit_mm / 2.0
         self.soft_limit_mm_from_midline = self.midline_mm - self.soft_limit_standoff_mm - self.cart_width_mm / 2.0
         self.agent: Optional[MdpAgent] = None
+        self.policy: Optional[ContinuousActionBetaDistributionPolicy] = None
+        self.policy_feature_extractor: Optional[StateFeatureExtractor] = None
+        self.baseline_feature_extractor: Optional[StateFeatureExtractor] = None
         self.previous_timestep_epoch: Optional[float] = None
         self.current_timesteps_per_second = IncrementalSampleAverager(initial_value=0.0, alpha=0.25)
         self.timestep_sleep_seconds = 1.0 / self.timesteps_per_second
@@ -718,6 +728,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.pole_rotary_encoder_angular_velocity_step_size = 0.9
         self.pole_rotary_encoder_angular_acceleration_step_size = 0.25
         self.fraction_time_balancing = IncrementalSampleAverager()
+        self.shape_dim_iter_coef = {}
 
         (
             self.state_lock,
@@ -1681,6 +1692,19 @@ class CartPole(ContinuousMdpEnvironment):
         self.episode_phase = EpisodePhase.SWING_UP
         self.lost_balance_timestamp = None
 
+        # ensure that the environment referenced by the policy's feature extractor is the current one
+        assert isinstance(self.agent, ParameterizedMdpAgent)
+        assert isinstance(self.agent.pi, ContinuousActionBetaDistributionPolicy)
+        assert self.agent.pi.environment == self
+        assert self.agent.pi.feature_extractor.environment == self
+        self.policy = self.agent.pi
+        self.policy_feature_extractor = self.agent.pi.feature_extractor
+
+        # ensure that the agent's baseline feature extractor references the current environment
+        assert isinstance(self.agent.v_S, ApproximateStateValueEstimator)
+        assert self.agent.v_S.feature_extractor.environment == self
+        self.baseline_feature_extractor = self.agent.v_S.feature_extractor
+
         self.motor.start()
 
         # calibrate if needed
@@ -1696,6 +1720,36 @@ class CartPole(ContinuousMdpEnvironment):
         self.state = self.get_state(t=None, terminal=False, update_velocity_and_acceleration=False)
         self.previous_timestep_epoch = None
         self.current_timesteps_per_second.reset()
+
+        # track policy coefficients over episodes
+        if self.policy.action_theta_a is not None:
+            assert self.policy.action_theta_a.shape[0] == 1
+            if not hasattr(self, 'shape_dim_iter_coef'):
+                self.shape_dim_iter_coef = {}
+            if 'a' not in self.shape_dim_iter_coef:
+                self.shape_dim_iter_coef['a'] = {
+                    dim: {}
+                    for dim in range(self.policy.action_theta_a.shape[1])
+                }
+            for dim in range(self.policy.action_theta_a.shape[1]):
+                self.shape_dim_iter_coef['a'][dim][self.num_resets] = float(self.policy.action_theta_a[0, dim])
+
+            n_row_col = math.floor(math.sqrt(self.policy.action_theta_a.shape[1]) + 1)
+            fig, axes = plt.subplots(nrows=n_row_col, ncols=n_row_col, figsize=(25, 25))
+            for dim in range(self.policy.action_theta_a.shape[1]):
+                row = dim // n_row_col
+                col = dim % n_row_col
+                axe = axes[row, col]
+                axe.plot(
+                    list(self.shape_dim_iter_coef['a'][dim].keys()),
+                    list(self.shape_dim_iter_coef['a'][dim].values()),
+                    label=f'a({dim})'
+                )
+
+            pdf = PdfPages(os.path.expanduser(f'~/Desktop/{self.num_resets}-coef.pdf'))
+            pdf.savefig()
+            plt.close()
+            pdf.close()
 
         logging.info(f'State after reset:  {self.state}')
 

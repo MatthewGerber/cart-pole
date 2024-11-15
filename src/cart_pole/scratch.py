@@ -1,10 +1,7 @@
-import time
+import numpy as np
 
-from smbus2 import SMBus
-import RPi.GPIO as gpio
-from raspberry_py.gpio import CkPin, setup, cleanup
-from raspberry_py.gpio.integrated_circuits import PulseWaveModulatorPCA9685PW
-from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectPCA9685PW
+from rlai.state_value.function_approximation.models.feature_extraction import OneHotStateIndicatorFeatureInteracter, \
+    StateLambdaIndicator
 
 
 def main():
@@ -12,38 +9,35 @@ def main():
     Scratch.
     """
 
-    setup()
+    # num_state_dims = 5
+    # indices = list(range(num_state_dims))
+    # interaction_term_indices = [
+    #     list(term_indices_tuple)
+    #     for term_order in range(1, num_state_dims + 1)
+    #     for term_indices_tuple in itertools.combinations(indices, term_order)
+    # ]
+    # print(len(interaction_term_indices))
 
-    gpio.setup(CkPin.GPIO6, gpio.OUT)
-    gpio.output(CkPin.GPIO6, gpio.LOW)
-
-    pca9685pw = PulseWaveModulatorPCA9685PW(
-        bus=SMBus('/dev/i2c-1'),
-        address=PulseWaveModulatorPCA9685PW.PCA9685PW_ADDRESS,
-        frequency_hz=100
+    interacter = OneHotStateIndicatorFeatureInteracter(
+        [
+            StateLambdaIndicator(lambda v: v[0] < 0.0, [True, False])
+        ],
+        False
     )
-    motor = DcMotor(
-        driver=DcMotorDriverIndirectPCA9685PW(
-            pca9685pw=pca9685pw,
-            pwm_channel=0,
-            direction_pin=CkPin.GPIO21,
-            reverse=True
-        ),
-        speed=0
+
+    v = np.array(['a', 'b', 'c'])
+
+    vv = interacter.interact(
+        np.array([
+            [-1.0]
+        ]),
+        np.array([
+            v
+        ]),
+        False
     )
-    motor.start()
 
-    try:
-        while True:
-            motor.set_speed(0)
-            time.sleep(1.0)
-            motor.set_speed(100)
-            time.sleep(0.00001)
-    except KeyboardInterrupt:
-        pass
-
-    motor.set_speed(0)
-    cleanup()
+    print(f'{vv}')
 
 
 if __name__ == '__main__':
