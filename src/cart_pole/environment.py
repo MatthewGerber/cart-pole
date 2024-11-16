@@ -1696,14 +1696,47 @@ class CartPole(ContinuousMdpEnvironment):
         assert isinstance(self.agent, ParameterizedMdpAgent)
         assert isinstance(self.agent.pi, ContinuousActionBetaDistributionPolicy)
         assert self.agent.pi.environment == self
-        assert self.agent.pi.feature_extractor.environment == self
+        assert self.agent.pi.feature_extractor.environment == self  # type: ignore
         self.policy = self.agent.pi
         self.policy_feature_extractor = self.agent.pi.feature_extractor
 
         # ensure that the agent's baseline feature extractor references the current environment
         assert isinstance(self.agent.v_S, ApproximateStateValueEstimator)
-        assert self.agent.v_S.feature_extractor.environment == self
+        assert self.agent.v_S.feature_extractor.environment == self  # type: ignore
         self.baseline_feature_extractor = self.agent.v_S.feature_extractor
+
+        # track policy coefficients over episodes
+        if self.policy.action_theta_a is not None and self.policy.action_theta_b is not None:
+            assert self.policy.action_theta_a.shape[0] == 1
+            if not hasattr(self, 'shape_dim_iter_coef'):
+                self.shape_dim_iter_coef = {}
+            if 'a' not in self.shape_dim_iter_coef:
+                self.shape_dim_iter_coef['a'] = {
+                    dim: {}
+                    for dim in range(self.policy.action_theta_a.shape[1])
+                }
+            for dim in range(self.policy.action_theta_a.shape[1]):
+                self.shape_dim_iter_coef['a'][dim][self.num_resets] = float(self.policy.action_theta_a[0, dim])
+
+            # plot every few episodes
+            if self.num_resets % 10 == 0:
+                logging.info('Plotting policy coefficients.')
+                n_row_col = math.floor(math.sqrt(self.policy.action_theta_a.shape[1]) + 1)
+                fig, axes = plt.subplots(nrows=n_row_col, ncols=n_row_col, figsize=(30, 30))
+                for dim in range(self.policy.action_theta_a.shape[1]):
+                    row = dim // n_row_col
+                    col = dim % n_row_col
+                    axe = axes[row, col]
+                    axe.plot(  # type: ignore
+                        list(self.shape_dim_iter_coef['a'][dim].keys()),
+                        list(self.shape_dim_iter_coef['a'][dim].values()),
+                        label=f'a({dim})'
+                    )
+                pdf = PdfPages(os.path.expanduser(f'~/Desktop/{self.num_resets}-a-coef.pdf'))
+                pdf.savefig()
+                plt.close()
+                pdf.close()
+                logging.info('Done.')
 
         self.motor.start()
 
@@ -1720,36 +1753,6 @@ class CartPole(ContinuousMdpEnvironment):
         self.state = self.get_state(t=None, terminal=False, update_velocity_and_acceleration=False)
         self.previous_timestep_epoch = None
         self.current_timesteps_per_second.reset()
-
-        # track policy coefficients over episodes
-        if self.policy.action_theta_a is not None:
-            assert self.policy.action_theta_a.shape[0] == 1
-            if not hasattr(self, 'shape_dim_iter_coef'):
-                self.shape_dim_iter_coef = {}
-            if 'a' not in self.shape_dim_iter_coef:
-                self.shape_dim_iter_coef['a'] = {
-                    dim: {}
-                    for dim in range(self.policy.action_theta_a.shape[1])
-                }
-            for dim in range(self.policy.action_theta_a.shape[1]):
-                self.shape_dim_iter_coef['a'][dim][self.num_resets] = float(self.policy.action_theta_a[0, dim])
-
-            n_row_col = math.floor(math.sqrt(self.policy.action_theta_a.shape[1]) + 1)
-            fig, axes = plt.subplots(nrows=n_row_col, ncols=n_row_col, figsize=(25, 25))
-            for dim in range(self.policy.action_theta_a.shape[1]):
-                row = dim // n_row_col
-                col = dim % n_row_col
-                axe = axes[row, col]
-                axe.plot(
-                    list(self.shape_dim_iter_coef['a'][dim].keys()),
-                    list(self.shape_dim_iter_coef['a'][dim].values()),
-                    label=f'a({dim})'
-                )
-
-            pdf = PdfPages(os.path.expanduser(f'~/Desktop/{self.num_resets}-coef.pdf'))
-            pdf.savefig()
-            plt.close()
-            pdf.close()
 
         logging.info(f'State after reset:  {self.state}')
 
