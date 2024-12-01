@@ -1707,6 +1707,8 @@ class CartPole(ContinuousMdpEnvironment):
 
         # track policy coefficients over episodes
         if self.policy.action_theta_a is not None and self.policy.action_theta_b is not None:
+
+            # theta-a
             assert self.policy.action_theta_a.shape[0] == 1
             if not hasattr(self, 'shape_dim_iter_coef'):
                 self.shape_dim_iter_coef = {}
@@ -1718,9 +1720,21 @@ class CartPole(ContinuousMdpEnvironment):
             for dim in range(self.policy.action_theta_a.shape[1]):
                 self.shape_dim_iter_coef['a'][dim][self.num_resets] = float(self.policy.action_theta_a[0, dim])
 
-            # plot every few episodes
+            # theta-b
+            assert self.policy.action_theta_b.shape[0] == 1
+            if not hasattr(self, 'shape_dim_iter_coef'):
+                self.shape_dim_iter_coef = {}
+            if 'b' not in self.shape_dim_iter_coef:
+                self.shape_dim_iter_coef['b'] = {
+                    dim: {}
+                    for dim in range(self.policy.action_theta_b.shape[1])
+                }
+            for dim in range(self.policy.action_theta_b.shape[1]):
+                self.shape_dim_iter_coef['b'][dim][self.num_resets] = float(self.policy.action_theta_b[0, dim])
+
             if self.num_resets % 10 == 0:
-                logging.info('Plotting policy coefficients.')
+
+                logging.info('Plotting policy coefficients for beta-a.')
                 n_row_col = math.floor(math.sqrt(self.policy.action_theta_a.shape[1]) + 1)
                 fig, axes = plt.subplots(nrows=n_row_col, ncols=n_row_col, figsize=(30, 30))
                 for dim in range(self.policy.action_theta_a.shape[1]):
@@ -1733,6 +1747,24 @@ class CartPole(ContinuousMdpEnvironment):
                         label=f'a({dim})'
                     )
                 pdf = PdfPages(os.path.expanduser(f'~/Desktop/{self.num_resets}-a-coef.pdf'))
+                pdf.savefig()
+                plt.close()
+                pdf.close()
+                logging.info('Done.')
+
+                logging.info('Plotting policy coefficients for beta-b.')
+                n_row_col = math.floor(math.sqrt(self.policy.action_theta_b.shape[1]) + 1)
+                fig, axes = plt.subplots(nrows=n_row_col, ncols=n_row_col, figsize=(30, 30))
+                for dim in range(self.policy.action_theta_b.shape[1]):
+                    row = dim // n_row_col
+                    col = dim % n_row_col
+                    axe = axes[row, col]
+                    axe.plot(  # type: ignore
+                        list(self.shape_dim_iter_coef['b'][dim].keys()),
+                        list(self.shape_dim_iter_coef['b'][dim].values()),
+                        label=f'b({dim})'
+                    )
+                pdf = PdfPages(os.path.expanduser(f'~/Desktop/{self.num_resets}-b-coef.pdf'))
                 pdf.savefig()
                 plt.close()
                 pdf.close()
@@ -1809,7 +1841,8 @@ class CartPole(ContinuousMdpEnvironment):
                 logging.info('Truncated.')
                 self.time_step_axv_lines[t] = {
                     'color': 'yellow',
-                    'label': 'Truncated'
+                    'label': 'Truncated',
+                    'linewidth': 0.5
                 }
 
                 # post-truncation convergence to zero takes too long with gammas close to 1.0 and a slow physical
@@ -2040,6 +2073,7 @@ class CartPole(ContinuousMdpEnvironment):
                     self.time_step_axv_lines[t] = {
                         'color': 'purple',
                         'linestyle': '--',
+                        'linewidth': 0.5,
                         'label': 'Lost upright'
                     }
                     logging.info(
@@ -2057,6 +2091,7 @@ class CartPole(ContinuousMdpEnvironment):
                 logging.info(f'Progressive upright @ {pole_angle_deg_from_upright:.1f} degrees.')
                 self.time_step_axv_lines[t] = {
                     'color': 'purple',
+                    'linewidth': 0.5,
                     'label': 'Progressive upright'
                 }
                 CartPole.set_led(self.progressive_upright_led, True)
@@ -2068,7 +2103,8 @@ class CartPole(ContinuousMdpEnvironment):
                 )
                 self.time_step_axv_lines[t] = {
                     'color': 'blue',
-                    'label': 'Balance'
+                    'label': 'Balance',
+                    'linewidth': 0.5
                 }
                 CartPole.set_led(self.balance_led, True)
                 CartPole.set_led(self.progressive_upright_led, False)

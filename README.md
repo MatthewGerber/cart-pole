@@ -14,7 +14,5 @@ poetry install
 ```
 
 # To Do/Try
-* Decrease pole mass.
-* Progress threshold farther.
-* Smoother velocity and acceleration estimates.
+* Monitor multiprocessing for killed processes
 * Check state-action tuple equality in reinforce first-visit check.
