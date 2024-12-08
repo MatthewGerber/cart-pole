@@ -4,7 +4,11 @@
 First SSH into the Raspberry Pi system.
 
 Then clone the repository and configure a virtual environment. The following steps use 
-[poetry](https://python-poetry.org/) for installation:
+[poetry](https://python-poetry.org/) for installation. You might need the following prior to installing:
+
+```shell
+export PYTHON_KEYRING_BACKEND=keyring.backends.fail.Keyring
+```
 
 ```shell
 git clone --recurse-submodules git@github.com:MatthewGerber/cart-pole.git
