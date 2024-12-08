@@ -14,5 +14,7 @@ poetry install
 ```
 
 # To Do/Try
-* Monitor multiprocessing for killed processes
+* Monitor multiprocessing for killed processes.
+* Resume latest checkpoint if file not specified.
+* Shouldn't need "--save-agent-path" in resume.
 * Check state-action tuple equality in reinforce first-visit check.
