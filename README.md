@@ -18,6 +18,11 @@ poetry install
 ```
 
 # To Do/Try
+* Slack in belt causes cart state to drift such that the cart is actually farther left than the state indicates, which
+*   makes sense since there is more slack when pulling the cart right, and our clockwise indicator is more often incorrect 
+*   in that scenario being driven by the motor speed rather than direct observation.
+* Need to lock shared-memory Value objects.
+* Hide dual rotary encoders underlying the DMP class.
 * Monitor multiprocessing for killed processes.
 * Resume latest checkpoint if file not specified.
 * Shouldn't need "--save-agent-path" in resume.

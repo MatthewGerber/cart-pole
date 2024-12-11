@@ -1086,6 +1086,7 @@ class CartPole(ContinuousMdpEnvironment):
             abs(self.identify_motor_speed_deadzone_limit(CartDirection.LEFT)),
             abs(self.identify_motor_speed_deadzone_limit(CartDirection.RIGHT))
         )
+        logging.info(f'Deadzone boundary speed:  {deadzone_speed}')
         self.motor_deadzone_speed_left = -deadzone_speed
         self.motor_deadzone_speed_right = deadzone_speed
 
@@ -1121,7 +1122,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.midline_degrees = (self.left_limit_degrees + self.right_limit_degrees) / 2.0
 
         # identify maximum cart speed
-        logging.info('Identifying maximum cart speed...')
+        logging.info('Identifying maximum cart speed.')
         self.set_motor_speed(
             speed=-100 if cart_position == CartPosition.RIGHT_OF_CENTER else 100,
             acceleration_interval=timedelta(seconds=0.5)
