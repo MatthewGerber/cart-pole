@@ -21,6 +21,7 @@ matplotlib = '~=3.8'
 pandas = '~=2.1'
 raspberry-py = { path = 'submodules/raspberry-py', develop = true }
 rlai = { path = 'submodules/rlai', develop = true}
+pyserial = "^3.5"
 
 [tool.poetry.group.dev]
 optional = true
