@@ -1,7 +1,7 @@
 
 
 void setup() {
-  Serial.begin(9600, SERIAL_8N1);
+  Serial.begin(115200, SERIAL_8N1);
   //Serial.setTimeout(1);
 }
 
@@ -34,5 +34,4 @@ void loop() {
     new_buff[0] = (byte) value >> 24;
     Serial.write(new_buff, 4);
   }
-  delay(100);
 }

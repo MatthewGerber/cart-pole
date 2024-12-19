@@ -2,6 +2,8 @@ import time
 
 import serial
 
+from raspberry_py.utils import IncrementalSampleAverager
+
 
 def main():
 
@@ -11,7 +13,7 @@ def main():
         port='/dev/ttyS0',
 
         # Rate at which the information is shared to the communication channel
-        baudrate=9600,
+        baudrate=115200,
 
         # Applying Parity Checking (none in this case)
         parity=serial.PARITY_NONE,
@@ -24,11 +26,17 @@ def main():
     )
 
     x = 1
+    avg_time = IncrementalSampleAverager(0, alpha=0.5)
+    i = 0
     while True:
+        start = time.time()
         ser.write(x.to_bytes(4))
         x = int.from_bytes(ser.read(4))
-        print(f'Received:  {x}')
-        time.sleep(0.1)
+        end = time.time()
+        avg_time.update(end - start)
+        i += 1
+        if i % 10000 == 0:
+            print(f'Average time:  {avg_time.get_value()}')
 
 
 if __name__ == '__main__':
