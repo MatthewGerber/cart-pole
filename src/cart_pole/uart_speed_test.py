@@ -35,8 +35,10 @@ def main():
         end = time.time()
         avg_time.update(end - start)
         i += 1
+        print(f'{x}')
+        time.sleep(0.001)
         if i % 10000 == 0:
-            print(f'Average time:  {avg_time.get_value()}')
+            print(f'Average time:  {avg_time.get_value()}, value {x}')
 
 
 if __name__ == '__main__':

@@ -2,36 +2,33 @@
 
 void setup() {
   Serial.begin(115200, SERIAL_8N1);
-  //Serial.setTimeout(1);
+}
+
+long bytes_to_long(byte bytes[]) {
+  long value = 0;
+  value += bytes[0] << 24;
+  value += bytes[1] << 16;
+  value += bytes[2] << 8;
+  value += bytes[3];
+  return value;
+}
+
+byte* long_to_bytes(long value) {
+  byte* bytes = new byte[4];
+  bytes[3] = (byte) value;
+  bytes[2] = (byte) value >> 8;
+  bytes[1] = (byte) value >> 16;
+  bytes[0] = (byte) value >> 24;
+  return bytes;
 }
 
 void loop() {
-  /*byte byte_mask = B11111111;
-  for (int i = 0; i <= 300; ++i) {
-    byte bytes[] = {
-      i & byte_mask,
-      i & (byte_mask << 8),
-      i & (byte_mask << 16),
-      i & (byte_mask << 24)
-    };
-    Serial.write(bytes, 4);
-  }*/
   if (Serial.available()) {
-
     byte buffer[4];
     Serial.readBytes(buffer, 4);
-    long value = 0;
-    value += buffer[0] << 24;
-    value += buffer[1] << 16;
-    value += buffer[2] << 8;
-    value += buffer[3];
-    value += 1;
-    
-    byte new_buff[4];
-    new_buff[3] = (byte) value;
-    new_buff[2] = (byte) value >> 8;
-    new_buff[1] = (byte) value >> 16;
-    new_buff[0] = (byte) value >> 24;
-    Serial.write(new_buff, 4);
+    long value = bytes_to_long(buffer) + 1;
+    byte* return_buffer = long_to_bytes(value);
+    Serial.write(return_buffer, 4);
+    delete[] return_buffer;
   }
 }
