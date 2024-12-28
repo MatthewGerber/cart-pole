@@ -1,34 +1,57 @@
+typedef union
+{
+  float number;
+  uint8_t bytes[4];
+} FLOATUNION_t;
+
 int cart_rotary_encoder_identifier = 0;
-int cart_rotary_white_pin = 2;
-int cart_rotary_green_pin = 4;
+int cart_rotary_white_pin;
+int cart_rotary_green_pin;
 volatile long cart_rotary_index = 0;
-volatile unsigned long cart_rotary_num_changes = 0;
-bool cart_rotary_clockwise = false;
+volatile bool cart_rotary_clockwise = false;
+int cart_rotary_phase_changes_per_rotation = 1200;
+int cart_rotary_phase_changes_per_degree = cart_rotary_phase_changes_per_rotation / 360.0;
+FLOATUNION_t cart_rotary_net_degrees;
+FLOATUNION_t cart_rotary_degrees;
+FLOATUNION_t cart_velocity;
+FLOATUNION_t cart_velocity_step_size;
+FLOATUNION_t cart_acceleration;
+FLOATUNION_t cart_acceleration_step_size;
+unsigned long cart_rotary_state_time = -1;
 
 int pole_rotary_encoder_identifier = 1;
-int pole_rotary_white_pin = 3;
-int pole_rotary_green_pin = 5;
+int pole_rotary_white_pin;
+int pole_rotary_green_pin;
 volatile long pole_rotary_index = 0;
-volatile unsigned long pole_rotary_num_changes = 0;
-bool pole_rotary_clockwise = false;
+volatile bool pole_rotary_clockwise = false;
+int pole_rotary_phase_changes_per_rotation = 1200;
+int pole_rotary_phase_changes_per_degree = pole_rotary_phase_changes_per_rotation / 360.0;
+FLOATUNION_t pole_rotary_net_degrees;
+FLOATUNION_t pole_rotary_degrees;
+FLOATUNION_t pole_velocity;
+FLOATUNION_t pole_velocity_step_size;
+FLOATUNION_t pole_acceleration;
+FLOATUNION_t pole_acceleration_step_size;
+unsigned long pole_rotary_state_time = -1;
 
-byte START = 0;
-byte GET_STATE = 1;
-byte STOP = 2;
+byte START = 1;
+byte GET_STATE = 2;
+byte WAIT_FOR_STATIONARITY = 3;
+byte STOP = 4;
 
 void setup() {
 
-  pinMode(cart_rotary_white_pin, INPUT_PULLUP);
-  digitalWrite(cart_rotary_white_pin, HIGH);
-  pinMode(cart_rotary_green_pin, INPUT_PULLUP);
-  digitalWrite(cart_rotary_green_pin, HIGH);
-
-  pinMode(pole_rotary_white_pin, INPUT_PULLUP);
-  digitalWrite(pole_rotary_white_pin, HIGH);
-  pinMode(pole_rotary_green_pin, INPUT_PULLUP);
-  digitalWrite(pole_rotary_green_pin, HIGH);
-
   Serial.begin(9600, SERIAL_8N1);
+
+  cart_rotary_net_degrees.number = 0.0;
+  cart_rotary_degrees.number = 0.0;
+  cart_velocity.number = 0.0;
+  cart_acceleration.number = 0.0;
+
+  pole_rotary_net_degrees.number = 0.0;
+  pole_rotary_degrees.number = 0.0;
+  pole_velocity.number = 0.0;
+  pole_acceleration.number = 0.0;
 
 }
 
@@ -42,7 +65,6 @@ void cart_white_changed() {
     cart_rotary_index += 1;
     cart_rotary_clockwise = true;
   }
-  cart_rotary_num_changes += 1;
 }
 
 void pole_white_changed() {
@@ -55,7 +77,6 @@ void pole_white_changed() {
     pole_rotary_index += 1;
     pole_rotary_clockwise = true;
   }
-  pole_rotary_num_changes += 1;
 }
 
 long bytes_to_long(byte bytes[]) {
@@ -96,24 +117,82 @@ void loop() {
     byte identifier = command_bytes[1];
 
     if (command == START) {
-      attachInterrupt(digitalPinToInterrupt(cart_rotary_white_pin), cart_white_changed, CHANGE);
-      attachInterrupt(digitalPinToInterrupt(pole_rotary_white_pin), pole_white_changed, CHANGE);
-      delay(1000);
-      cart_rotary_index = 0;
-      pole_rotary_index = 0;
+
+      int start_bytes_len = 13;
+      byte start_bytes[start_bytes_len];
+      Serial.readBytes(start_bytes, start_bytes_len);
+
+      if (identifier == cart_rotary_encoder_identifier) {
+        cart_rotary_white_pin = start_bytes[0];
+        pinMode(cart_rotary_white_pin, INPUT_PULLUP);
+        digitalWrite(cart_rotary_white_pin, HIGH);
+        cart_rotary_green_pin = start_bytes[1];
+        pinMode(cart_rotary_green_pin, INPUT_PULLUP);
+        digitalWrite(cart_rotary_green_pin, HIGH);
+
+        cart_velocity_step_size.bytes[0] = start_bytes[5];
+        cart_velocity_step_size.bytes[1] = start_bytes[6];
+        cart_velocity_step_size.bytes[2] = start_bytes[7];
+        cart_velocity_step_size.bytes[3] = start_bytes[8];
+
+        cart_acceleration_step_size.bytes[0] = start_bytes[9];
+        cart_acceleration_step_size.bytes[1] = start_bytes[10];
+        cart_acceleration_step_size.bytes[2] = start_bytes[11];
+        cart_acceleration_step_size.bytes[3] = start_bytes[12];
+
+        attachInterrupt(digitalPinToInterrupt(cart_rotary_white_pin), cart_white_changed, CHANGE);
+        delay(1000);
+        cart_rotary_index = 0;
+      }
+      else if (identifier == pole_rotary_encoder_identifier) {
+        pole_rotary_white_pin = start_bytes[0];
+        pinMode(pole_rotary_white_pin, INPUT_PULLUP);
+        digitalWrite(pole_rotary_white_pin, HIGH);
+        pole_rotary_green_pin = start_bytes[1];
+        pinMode(pole_rotary_green_pin, INPUT_PULLUP);
+        digitalWrite(pole_rotary_green_pin, HIGH);
+
+        pole_velocity_step_size.bytes[0] = start_bytes[5];
+        pole_velocity_step_size.bytes[1] = start_bytes[6];
+        pole_velocity_step_size.bytes[2] = start_bytes[7];
+        pole_velocity_step_size.bytes[3] = start_bytes[8];
+
+        pole_velocity_step_size.bytes[0] = start_bytes[9];
+        pole_velocity_step_size.bytes[1] = start_bytes[10];
+        pole_velocity_step_size.bytes[2] = start_bytes[11];
+        pole_velocity_step_size.bytes[3] = start_bytes[12];
+
+        attachInterrupt(digitalPinToInterrupt(pole_rotary_white_pin), pole_white_changed, CHANGE);
+        delay(1000);
+        pole_rotary_index = 0;
+      }
     }
 
     else if (command == GET_STATE) {
 
+      bool update_velocity_and_acceleration = Serial.read();
+
       if (identifier == cart_rotary_encoder_identifier) {
-        write_long(cart_rotary_num_changes);
-        write_long(cart_rotary_index);
-        write_bool(cart_rotary_clockwise);
       }
       else if (identifier == pole_rotary_encoder_identifier) {
-        write_long(pole_rotary_num_changes);
-        write_long(pole_rotary_index);
-        write_bool(pole_rotary_clockwise);
+        float net_total_degrees = pole_rotary_index / pole_rotary_phase_changes_per_degree;
+        if (update_velocity_and_acceleration) {
+          unsigned long curr_time = millis();
+          if (pole_rotary_state_time == -1) {
+            pole_rotary_state_time = curr_time;
+          }
+          else {
+            float elapsed_seconds = (curr_time - pole_rotary_state_time) / 1000.0;
+            float previous_pole_velocity = pole_velocity.number;
+            float current_pole_velocity = (net_total_degrees - pole_rotary_net_degrees.number) / elapsed_seconds;
+            pole_velocity.number = (1.0 - pole_velocity_step_size.number) * previous_pole_velocity + pole_velocity_step_size.number * current_pole_velocity;
+            float current_pole_acceleration = (current_pole_velocity - previous_pole_velocity) / elapsed_seconds;
+            pole_acceleration.number = (1.0 - pole_acceleration_step_size.number) * pole_acceleration.number + pole_acceleration_step_size.number * current_pole_acceleration;
+          }
+          pole_rotary_state_time = curr_time;
+        }
+        pole_rotary_net_degrees.number = net_total_degrees;
+        pole_rotary_degrees.number = ((int)net_total_degrees) % 360;
       }
     }
 
