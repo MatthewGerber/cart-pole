@@ -11,6 +11,7 @@ typedef union
 byte cart_rotary_encoder_identifier = 0;
 byte cart_rotary_white_pin;
 byte cart_rotary_green_pin;
+volatile unsigned long cart_num_phase_changes;
 volatile long cart_rotary_index;
 volatile bool cart_rotary_clockwise;
 unsigned int cart_rotary_phase_changes_per_rotation;
@@ -27,6 +28,7 @@ unsigned long cart_rotary_state_time_ms;
 byte pole_rotary_encoder_identifier = 1;
 byte pole_rotary_white_pin;
 byte pole_rotary_green_pin;
+volatile unsigned long pole_num_phase_changes;
 volatile long pole_rotary_index;
 volatile bool pole_rotary_clockwise;
 unsigned int pole_rotary_phase_changes_per_rotation;
@@ -61,6 +63,7 @@ void cart_white_changed() {
     cart_rotary_index += 1;
     cart_rotary_clockwise = true;
   }
+  cart_num_phase_changes += 1;
 }
 
 void pole_white_changed() {
@@ -73,6 +76,7 @@ void pole_white_changed() {
     pole_rotary_index += 1;
     pole_rotary_clockwise = true;
   }
+  pole_num_phase_changes += 1;
 }
 
 long bytes_to_long(byte bytes[]) {
@@ -113,14 +117,6 @@ void set_float_bytes(byte dest[], byte src[], size_t src_start_idx) {
 }
 
 void loop() {
-
-  byte bytes[4];
-  Serial.readBytes(bytes, 4);
-  floatbytes value;
-  set_float_bytes(value.bytes, bytes, 0);
-  value.number += 1.0;
-  write_float(value);
-  return;
 
   unsigned long curr_time_ms = millis();
 
@@ -184,6 +180,7 @@ void loop() {
 
         attachInterrupt(digitalPinToInterrupt(cart_rotary_white_pin), cart_white_changed, CHANGE);
         delay(1000);
+        cart_num_phase_changes = 0;
         cart_rotary_index = 0;
         cart_rotary_net_degrees.number = 0.0;
         cart_velocity.number = 0.0;
@@ -213,6 +210,7 @@ void loop() {
 
         attachInterrupt(digitalPinToInterrupt(pole_rotary_white_pin), pole_white_changed, CHANGE);
         delay(1000);
+        pole_num_phase_changes = 0;
         pole_rotary_index = 0;
         pole_rotary_net_degrees.number = 0.0;
         pole_velocity.number = 0.0;
@@ -224,12 +222,14 @@ void loop() {
 
     else if (command == GET_STATE) {
       if (identifier == cart_rotary_encoder_identifier) {
+        write_long(cart_num_phase_changes);
         write_float(cart_rotary_net_degrees);
         write_float(cart_velocity);
         write_float(cart_acceleration);
         write_bool(cart_rotary_clockwise);
       }
       else if (identifier == pole_rotary_encoder_identifier) {
+        write_long(pole_num_phase_changes);
         write_float(pole_rotary_net_degrees);
         write_float(pole_velocity);
         write_float(pole_acceleration);

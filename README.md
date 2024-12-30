@@ -11,8 +11,10 @@ export PYTHON_KEYRING_BACKEND=keyring.backends.fail.Keyring
 ```
 
 To use rotary encoders via the Arduino interface:
-1. Use `sudo raspi-config` to disable the serial shell and enable UART.
+1. Disable the serial command line by editing `/boot/firmware/cmdline.txt` to remove `console=serial0,115200`.
 2. Add `enable_uart=1` to `/boot/firmware/config.txt`.
+3. Use `sudo raspi-config` to disable the serial shell and enable UART.
+4. Reboot.
 
 ```shell
 git clone --recurse-submodules git@github.com:MatthewGerber/cart-pole.git
