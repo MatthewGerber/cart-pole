@@ -1,7 +1,7 @@
 import time
 
-from raspberry_py.gpio import CkPin, setup, cleanup
-from raspberry_py.gpio.sensors import MultiprocessRotaryEncoder, DualMultiprocessRotaryEncoder
+from raspberry_py.gpio import setup, cleanup, CkPin
+from raspberry_py.gpio.lights import LED
 
 
 def main():
@@ -11,28 +11,17 @@ def main():
 
     setup()
 
-    encoder = DualMultiprocessRotaryEncoder(
-        CkPin.SCLK,
-        CkPin.GPIO22,
-        CkPin.GPIO4,
-        1200,
-        1.0,
-        1.0
-    )
-    encoder.wait_for_startup()
-
     try:
+        led = LED(CkPin.GPIO19)
         while True:
-            time.sleep(1.0/10.0)
-            encoder.update_state(True)
-            state: MultiprocessRotaryEncoder.State = encoder.state
-            print(
-                f'Degrees:  {state.degrees}; RPM:  {60.0 * state.angular_velocity / 360.0:.1f} '
-                f'(clockwise={state.clockwise})'
-            )
+            time.sleep(1.0)
+            if led.is_on():
+                led.turn_off()
+            else:
+                led.turn_on()
+
     except KeyboardInterrupt:
-        encoder.wait_for_termination()
-        time.sleep(1.0)
+        pass
 
     cleanup()
 

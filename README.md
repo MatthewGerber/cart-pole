@@ -10,6 +10,10 @@ Then clone the repository and configure a virtual environment. The following ste
 export PYTHON_KEYRING_BACKEND=keyring.backends.fail.Keyring
 ```
 
+To use rotary encoders via the Arduino interface:
+1. Use `sudo raspi-config` to disable the serial shell and enable UART.
+2. Add `enable_uart=1` to `/boot/firmware/config.txt`.
+
 ```shell
 git clone --recurse-submodules git@github.com:MatthewGerber/cart-pole.git
 cd cart-pole

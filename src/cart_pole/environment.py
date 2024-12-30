@@ -11,9 +11,11 @@ from typing import List, Tuple, Any, Optional, Dict
 
 import RPi.GPIO as gpio
 import numpy as np
+import serial
 from matplotlib import pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from numpy.random import RandomState
+from serial import Serial
 from smbus2 import SMBus
 
 from raspberry_py.gpio import CkPin, get_ck_pin, setup, cleanup
@@ -21,12 +23,7 @@ from raspberry_py.gpio.controls import LimitSwitch
 from raspberry_py.gpio.integrated_circuits import PulseWaveModulatorPCA9685PW
 from raspberry_py.gpio.lights import LED
 from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectPCA9685PW
-from raspberry_py.gpio.sensors import (
-    MultiprocessRotaryEncoder,
-    RotaryEncoder,
-    DualMultiprocessRotaryEncoder,
-    UltrasonicRangeFinder
-)
+from raspberry_py.gpio.sensors import RotaryEncoder, UltrasonicRangeFinder
 from rlai.core import MdpState, Action, Agent, Reward, Environment, MdpAgent, ContinuousMultiDimensionalAction
 from rlai.core.environments.mdp import ContinuousMdpEnvironment
 from rlai.policy_gradient import ParameterizedMdpAgent
@@ -132,9 +129,9 @@ class CartDirection(Enum):
     RIGHT = auto()
 
 
-class CartRotaryEncoder(MultiprocessRotaryEncoder):
+class CartRotaryEncoder(RotaryEncoder):
     """
-    Extension of the multiprocess rotary encoder that adds cart centering.
+    Extension of the rotary encoder that adds cart centering.
     """
 
     def wait_for_cart_to_cross_center(
@@ -156,7 +153,7 @@ class CartRotaryEncoder(MultiprocessRotaryEncoder):
         """
 
         while CartPole.get_cart_position(
-            cart_net_total_degrees=self.get_net_total_degrees(True),
+            cart_net_total_degrees=self.get_net_total_degrees(),
             left_limit_degrees=left_limit_degrees,
             cart_mm_per_degree=cart_mm_per_degree,
             midline_mm=midline_mm
@@ -388,41 +385,33 @@ class CartPole(ContinuousMdpEnvironment):
 
         parser.add_argument(
             '--cart-rotary-encoder-phase-a-pin',
-            type=get_ck_pin,
+            type=int,
             help=(
-                'GPIO pin connected to the phase-a input of the cart\'s rotary encoder. This can be an enumerated '
-                'type and name from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
-                'raspberry_py.gpio.CkPin class (e.g., CkPin.GPIO5).'
+                'Arduino GPIO pin connected to the phase-a input of the cart\'s rotary encoder.'
             )
         )
 
         parser.add_argument(
-            '--pole-rotary-encoder-speed-phase-a-pin',
-            type=get_ck_pin,
+            '--cart-rotary-encoder-phase-b-pin',
+            type=int,
             help=(
-                'GPIO pin connected to the phase-a input of the pole\'s rotary encoder. This can be an enumerated '
-                'type and name from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
-                'raspberry_py.gpio.CkPin class (e.g., CkPin.GPIO5).'
+                'Arduino GPIO pin connected to the phase-b input of the cart\'s rotary encoder.'
             )
         )
 
         parser.add_argument(
-            '--pole-rotary-encoder-direction-phase-a-pin',
-            type=get_ck_pin,
+            '--pole-rotary-encoder-phase-a-pin',
+            type=int,
             help=(
-                'GPIO pin connected to the phase-a input of the pole\'s rotary encoder. This can be an enumerated '
-                'type and name from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
-                'raspberry_py.gpio.CkPin class (e.g., CkPin.GPIO5).'
+                'Arduino GPIO pin connected to the phase-a input of the pole\'s rotary encoder.'
             )
         )
 
         parser.add_argument(
-            '--pole-rotary-encoder-direction-phase-b-pin',
-            type=get_ck_pin,
+            '--pole-rotary-encoder-phase-b-pin',
+            type=int,
             help=(
-                'GPIO pin connected to the phase-b input of the pole\'s rotary encoder. This can be an enumerated '
-                'type and name from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
-                'raspberry_py.gpio.CkPin class (e.g., CkPin.GPIO5).'
+                'Arduino GPIO pin connected to the phase-b input of the pole\'s rotary encoder.'
             )
         )
 
@@ -618,10 +607,10 @@ class CartPole(ContinuousMdpEnvironment):
             motor_pwm_channel: int,
             motor_pwm_direction_pin: CkPin,
             motor_negative_speed_is_right: bool,
-            cart_rotary_encoder_phase_a_pin: CkPin,
-            pole_rotary_encoder_speed_phase_a_pin: CkPin,
-            pole_rotary_encoder_direction_phase_a_pin: CkPin,
-            pole_rotary_encoder_direction_phase_b_pin: CkPin,
+            cart_rotary_encoder_phase_a_pin: int,
+            cart_rotary_encoder_phase_b_pin: int,
+            pole_rotary_encoder_phase_a_pin: int,
+            pole_rotary_encoder_phase_b_pin: int,
             left_limit_switch_input_pin: CkPin,
             right_limit_switch_input_pin: CkPin,
             timesteps_per_second: float,
@@ -649,9 +638,9 @@ class CartPole(ContinuousMdpEnvironment):
         :param motor_pwm_direction_pin: Motor's PWM direction pin.
         :param motor_negative_speed_is_right: Whether negative motor speeds move the cart to the right.
         :param cart_rotary_encoder_phase_a_pin: Cart rotary encoder phase-a pin.
-        :param pole_rotary_encoder_speed_phase_a_pin: Pole rotary encoder phase-a pin.
-        :param pole_rotary_encoder_direction_phase_a_pin: Pole rotary encoder phase-a pin.
-        :param pole_rotary_encoder_direction_phase_b_pin: Pole rotary encoder phase-b pin.
+        :param cart_rotary_encoder_phase_b_pin: Cart rotary encoder phase-b pin.
+        :param pole_rotary_encoder_phase_a_pin: Pole rotary encoder phase-a pin.
+        :param pole_rotary_encoder_phase_b_pin: Pole rotary encoder phase-b pin.
         :param left_limit_switch_input_pin: Left limit pin.
         :param right_limit_switch_input_pin: Right limit pin.
         :param timesteps_per_second: Number of environment advancement steps to execute per second.
@@ -684,9 +673,9 @@ class CartPole(ContinuousMdpEnvironment):
         self.motor_pwm_direction_pin = motor_pwm_direction_pin
         self.motor_negative_speed_is_right = motor_negative_speed_is_right
         self.cart_rotary_encoder_phase_a_pin = cart_rotary_encoder_phase_a_pin
-        self.pole_rotary_encoder_speed_phase_a_pin = pole_rotary_encoder_speed_phase_a_pin
-        self.pole_rotary_encoder_direction_phase_a_pin = pole_rotary_encoder_direction_phase_a_pin
-        self.pole_rotary_encoder_direction_phase_b_pin = pole_rotary_encoder_direction_phase_b_pin
+        self.cart_rotary_encoder_phase_b_pin = cart_rotary_encoder_phase_b_pin
+        self.pole_rotary_encoder_phase_a_pin = pole_rotary_encoder_phase_a_pin
+        self.pole_rotary_encoder_phase_b_pin = pole_rotary_encoder_phase_b_pin
         self.left_limit_switch_input_pin = left_limit_switch_input_pin
         self.right_limit_switch_input_pin = right_limit_switch_input_pin
         self.timesteps_per_second = timesteps_per_second
@@ -749,7 +738,8 @@ class CartPole(ContinuousMdpEnvironment):
             self.termination_led,
             self.calibrate_on_next_reset,
             self.centering_range_finder,
-            self.leds
+            self.leds,
+            self.arduino_serial_connection
         ) = self.get_components()
 
         # configure the continuous action with a single dimension ranging the maximum motor speed change
@@ -777,10 +767,6 @@ class CartPole(ContinuousMdpEnvironment):
             self.cart_mm_per_degree: Optional[float] = None
             self.midline_degrees: Optional[float] = None
             self.max_cart_speed_mm_per_second: Optional[float] = None
-            self.cart_phase_change_index_at_center: Optional[int] = None
-            self.cart_phase_change_index_at_left_limit: Optional[int] = None
-            self.cart_phase_change_index_at_right_limit: Optional[int] = None
-            self.pole_phase_change_index_at_bottom: Optional[int] = None
             self.pole_degrees_at_bottom: Optional[float] = None
             self.calibrate_on_next_reset = True
 
@@ -847,7 +833,8 @@ class CartPole(ContinuousMdpEnvironment):
             self.termination_led,
             self.calibrate_on_next_reset,
             self.centering_range_finder,
-            self.leds
+            self.leds,
+            self.arduino_serial_connection
         ) = self.get_components()
 
     def get_components(
@@ -857,7 +844,7 @@ class CartPole(ContinuousMdpEnvironment):
         PulseWaveModulatorPCA9685PW,
         DcMotor,
         CartRotaryEncoder,
-        DualMultiprocessRotaryEncoder,
+        RotaryEncoder,
         LimitSwitch,
         Event,
         Event,
@@ -871,7 +858,8 @@ class CartPole(ContinuousMdpEnvironment):
         Optional[LED],
         bool,
         UltrasonicRangeFinder,
-        List[Optional[LED]]
+        List[Optional[LED]],
+        RotaryEncoder.Arduino.LockingSerial
     ]:
         """
         Get circuitry components and other attributes that cannot be pickled. This is primarily used to restore the 
@@ -888,28 +876,45 @@ class CartPole(ContinuousMdpEnvironment):
             frequency_hz=500
         )
 
-        # we use the motor output speed (+/-) as our direction signal, so we can use a single-signal encoder for the
-        # cart. a dual-multiprocess encoder would be better, but the pi only has four cores. use one here, two for the
-        # pole below, and the fourth for the main thread of the program.
-        cart_rotary_encoder = CartRotaryEncoder(
-            phase_a_pin=self.cart_rotary_encoder_phase_a_pin,
-            phase_b_pin=None,
-            phase_changes_per_rotation=1200,
-            phase_change_mode=RotaryEncoder.PhaseChangeMode.ONE_SIGNAL_ONE_EDGE,
-            angular_velocity_step_size=self.cart_rotary_encoder_angular_velocity_step_size,
-            angular_acceleration_step_size=self.cart_rotary_encoder_angular_acceleration_step_size
+        arduino_serial_connection = RotaryEncoder.Arduino.LockingSerial(
+            connection=Serial(
+                port='/dev/serial0',
+                baudrate=9600,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE,
+                bytesize=serial.EIGHTBITS
+            )
         )
-        cart_rotary_encoder.wait_for_startup()
 
-        pole_rotary_encoder = DualMultiprocessRotaryEncoder(
-            speed_phase_a_pin=self.pole_rotary_encoder_speed_phase_a_pin,
-            direction_phase_a_pin=self.pole_rotary_encoder_direction_phase_a_pin,
-            direction_phase_b_pin=self.pole_rotary_encoder_direction_phase_b_pin,
-            phase_changes_per_rotation=1200,
-            angular_velocity_step_size=self.pole_rotary_encoder_angular_velocity_step_size,
-            angular_acceleration_step_size=self.pole_rotary_encoder_angular_acceleration_step_size
+        cart_rotary_encoder = CartRotaryEncoder(
+            interface=RotaryEncoder.Arduino(
+                phase_a_pin=self.cart_rotary_encoder_phase_a_pin,
+                phase_b_pin=self.cart_rotary_encoder_phase_b_pin,
+                phase_changes_per_rotation=1200,
+                phase_change_mode=RotaryEncoder.PhaseChangeMode.ONE_SIGNAL_TWO_EDGE,
+                angular_velocity_step_size=self.cart_rotary_encoder_angular_velocity_step_size,
+                angular_acceleration_step_size=self.cart_rotary_encoder_angular_acceleration_step_size,
+                serial=arduino_serial_connection,
+                identifier=0,
+                state_update_hz=int(self.timesteps_per_second)
+            )
         )
-        pole_rotary_encoder.wait_for_startup()
+        cart_rotary_encoder.start()
+
+        pole_rotary_encoder = RotaryEncoder(
+            interface=RotaryEncoder.Arduino(
+                phase_a_pin=self.pole_rotary_encoder_phase_a_pin,
+                phase_b_pin=self.pole_rotary_encoder_phase_b_pin,
+                phase_changes_per_rotation=1200,
+                phase_change_mode=RotaryEncoder.PhaseChangeMode.ONE_SIGNAL_TWO_EDGE,
+                angular_velocity_step_size=self.pole_rotary_encoder_angular_velocity_step_size,
+                angular_acceleration_step_size=self.pole_rotary_encoder_angular_acceleration_step_size,
+                serial=arduino_serial_connection,
+                identifier=1,
+                state_update_hz=int(self.timesteps_per_second)
+            )
+        )
+        pole_rotary_encoder.start()
 
         left_limit_switch = LimitSwitch(
             input_pin=self.left_limit_switch_input_pin,
@@ -986,7 +991,8 @@ class CartPole(ContinuousMdpEnvironment):
                 echo_pin=self.centering_range_finder_echo_pin,
                 measurements_per_second=4
             ),
-            leds
+            leds,
+            arduino_serial_connection
         )
 
     def load_calibration(
@@ -1095,25 +1101,21 @@ class CartPole(ContinuousMdpEnvironment):
         # of center depends on having a value for the left limit. regardless, capture the rotary encoder's state at the
         # right and left limits for subsequent restoration.
         if self.left_limit_degrees is not None and CartPole.get_cart_position(
-            self.cart_rotary_encoder.get_net_total_degrees(False),
+            self.cart_rotary_encoder.get_net_total_degrees(),
             self.left_limit_degrees,
             self.cart_mm_per_degree,
             self.midline_mm
         ) == CartPosition.LEFT_OF_CENTER:
             self.move_cart_to_left_limit()
-            self.left_limit_degrees = self.cart_rotary_encoder.get_net_total_degrees(False)
-            self.cart_phase_change_index_at_left_limit = self.cart_rotary_encoder.phase_change_index.value
+            self.left_limit_degrees = self.cart_rotary_encoder.get_net_total_degrees()
             self.move_cart_to_right_limit()
-            self.right_limit_degrees = self.cart_rotary_encoder.get_net_total_degrees(False)
-            self.cart_phase_change_index_at_right_limit = self.cart_rotary_encoder.phase_change_index.value
+            self.right_limit_degrees = self.cart_rotary_encoder.get_net_total_degrees()
             cart_position = CartPosition.RIGHT_OF_CENTER
         else:
             self.move_cart_to_right_limit()
-            self.right_limit_degrees = self.cart_rotary_encoder.get_net_total_degrees(False)
-            self.cart_phase_change_index_at_right_limit = self.cart_rotary_encoder.phase_change_index.value
+            self.right_limit_degrees = self.cart_rotary_encoder.get_net_total_degrees()
             self.move_cart_to_left_limit()
-            self.left_limit_degrees = self.cart_rotary_encoder.get_net_total_degrees(False)
-            self.cart_phase_change_index_at_left_limit = self.cart_rotary_encoder.phase_change_index.value
+            self.left_limit_degrees = self.cart_rotary_encoder.get_net_total_degrees()
             cart_position = CartPosition.LEFT_OF_CENTER
 
         # calibrate mm/degree and the midline
@@ -1134,30 +1136,22 @@ class CartPole(ContinuousMdpEnvironment):
             midline_mm=self.midline_mm,
             check_delay_seconds=0.1
         )
-        cart_state: MultiprocessRotaryEncoder.State = self.cart_rotary_encoder.state
+        cart_state: RotaryEncoder.State = self.cart_rotary_encoder.state
         self.max_cart_speed_mm_per_second = abs(cart_state.angular_velocity * self.cart_mm_per_degree)
         self.stop_cart()
 
         # set central phase change indices
-        self.cart_phase_change_index_at_center = int(
-            self.midline_degrees * self.cart_rotary_encoder.phase_changes_per_degree
-        )
-        self.pole_phase_change_index_at_bottom = self.pole_rotary_encoder.speed_encoder.phase_change_index.value
-        self.pole_degrees_at_bottom = self.pole_rotary_encoder.speed_encoder.get_degrees(False)
+        self.pole_degrees_at_bottom = self.pole_rotary_encoder.get_degrees(False)
 
         calibration = {
             'motor_deadzone_speed_left': self.motor_deadzone_speed_left,
             'motor_deadzone_speed_right': self.motor_deadzone_speed_right,
             'left_limit_degrees': self.left_limit_degrees,
-            'cart_phase_change_index_at_left_limit': self.cart_phase_change_index_at_left_limit,
             'right_limit_degrees': self.right_limit_degrees,
-            'cart_phase_change_index_at_right_limit': self.cart_phase_change_index_at_right_limit,
             'limit_to_limit_degrees': self.limit_to_limit_degrees,
             'cart_mm_per_degree': self.cart_mm_per_degree,
             'midline_degrees': self.midline_degrees,
             'max_cart_speed_mm_per_second': self.max_cart_speed_mm_per_second,
-            'cart_phase_change_index_at_center': self.cart_phase_change_index_at_center,
-            'pole_phase_change_index_at_bottom': self.pole_phase_change_index_at_bottom,
             'pole_degrees_at_bottom': self.pole_degrees_at_bottom
         }
 
@@ -1196,11 +1190,11 @@ class CartPole(ContinuousMdpEnvironment):
         moving_ticks_required = 5
         moving_ticks_remaining = moving_ticks_required
         speed = self.motor.get_speed()
-        self.cart_rotary_encoder.update_state(True)
+        self.cart_rotary_encoder.update_state()
         while moving_ticks_remaining > 0:
             time.sleep(0.5)
             assert not limit_switch.is_pressed()
-            if abs(self.cart_rotary_encoder.get_angular_velocity(True)) < 50.0:
+            if abs(self.cart_rotary_encoder.get_angular_velocity()) < 50.0:
                 moving_ticks_remaining = moving_ticks_required
                 speed += increment
                 self.set_motor_speed(speed)
@@ -1310,7 +1304,7 @@ class CartPole(ContinuousMdpEnvironment):
                 # should have prevented this, but this failed. end the episode and calibrate upon the next episode
                 # reset.
                 if self.state is not None and not self.state.terminal:
-                    self.state = self.get_state(t=None, terminal=True, update_velocity_and_acceleration=False)
+                    self.state = self.get_state(t=None, terminal=True)
                     self.calibrate_on_next_reset = True
 
             # another thread may attempt to wait for the switch to be released immediately upon the pressed event being
@@ -1347,7 +1341,7 @@ class CartPole(ContinuousMdpEnvironment):
         assert self.cart_mm_per_degree is not None, 'Must calibrate before centering.'
 
         original_position = CartPole.get_cart_position(
-            self.cart_rotary_encoder.get_net_total_degrees(False),
+            self.cart_rotary_encoder.get_net_total_degrees(),
             self.left_limit_degrees,
             self.cart_mm_per_degree,
             self.midline_mm
@@ -1368,12 +1362,12 @@ class CartPole(ContinuousMdpEnvironment):
 
             if original_position == CartPosition.LEFT_OF_CENTER:
                 self.move_cart_to_left_limit()
-                self.cart_rotary_encoder.phase_change_index.value = self.cart_phase_change_index_at_left_limit
+                self.cart_rotary_encoder.set_net_total_degrees(self.left_limit_degrees)
             else:
                 self.move_cart_to_right_limit()
-                self.cart_rotary_encoder.phase_change_index.value = self.cart_phase_change_index_at_right_limit
+                self.cart_rotary_encoder.set_net_total_degrees(self.right_limit_degrees)
 
-            self.cart_rotary_encoder.update_state(False)
+            self.cart_rotary_encoder.update_state()
 
         while original_position != CartPosition.CENTERED:
             original_position = self.center_cart_at_speed(True, original_position)
@@ -1383,17 +1377,17 @@ class CartPole(ContinuousMdpEnvironment):
             logging.info('Cart centered.')
 
         logging.info('Waiting for stationary pole.')
-        self.pole_rotary_encoder.speed_encoder.wait_for_stationarity()
+        self.pole_rotary_encoder.wait_for_stationarity()
 
         if restore_center_state:
-            self.cart_rotary_encoder.phase_change_index.value = self.cart_phase_change_index_at_center
-            self.cart_rotary_encoder.update_state(False)
-            self.pole_rotary_encoder.speed_encoder.phase_change_index.value = self.pole_phase_change_index_at_bottom
-            self.pole_rotary_encoder.speed_encoder.update_state(False)
+            self.cart_rotary_encoder.set_net_total_degrees(self.midline_degrees)
+            self.cart_rotary_encoder.update_state()
+            self.pole_rotary_encoder.set_net_total_degrees(self.pole_degrees_at_bottom)
+            self.pole_rotary_encoder.update_state()
 
         logging.info(
             f'Pole is stationary at degrees:  '
-            f'{self.pole_rotary_encoder.speed_encoder.get_net_total_degrees(False):.1f}'
+            f'{self.pole_rotary_encoder.get_net_total_degrees():.1f}'
         )
 
     def center_cart_at_speed(
@@ -1568,11 +1562,6 @@ class CartPole(ContinuousMdpEnvironment):
 
                 if per_speed_sleep_seconds is not None:
                     time.sleep(per_speed_sleep_seconds)
-
-            # the cart's rotary encoder uses uniphase tracking. it requires an external signal telling it which
-            # direction it is moving. provide that signal based on the input speed of the motor. this assumes negligible
-            # latency between setting the motor pwm input and registering the effect on rotary encoder output.
-            self.cart_rotary_encoder.clockwise.value = speed > 0
 
     def turn_off_leds(
             self
@@ -1783,7 +1772,7 @@ class CartPole(ContinuousMdpEnvironment):
         # just defer any errors until we hit a hard side limit, at which time we'll recalibrate.
         self.center_cart(False, True)
 
-        self.state = self.get_state(t=None, terminal=False, update_velocity_and_acceleration=False)
+        self.state = self.get_state(t=None, terminal=False)
         self.previous_timestep_epoch = None
         self.current_timesteps_per_second.reset()
 
@@ -1826,7 +1815,7 @@ class CartPole(ContinuousMdpEnvironment):
 
             # update the current state if we haven't yet terminated
             if not previous_state.terminal:
-                self.state = self.get_state(t=t, terminal=None, update_velocity_and_acceleration=True)
+                self.state = self.get_state(t=t, terminal=None)
                 CartPole.set_led(self.falling_led, self.state.pole_is_falling)
                 CartPole.set_led(self.cart_moving_right_led, self.state.cart_velocity_mm_per_second > 0.0)
 
@@ -2018,25 +2007,23 @@ class CartPole(ContinuousMdpEnvironment):
     def get_state(
             self,
             t: Optional[int],
-            terminal: Optional[bool],
-            update_velocity_and_acceleration: bool
+            terminal: Optional[bool]
     ) -> CartPoleState:
         """
         Get the current state.
 
         :param t: Time step to consider for episode truncation, or None if not in an episode.
         :param terminal: Whether to force a terminal state, or None for natural assessment.
-        :param update_velocity_and_acceleration: Whether to update velocity and acceleration estimates.
         :return: State.
         """
 
         assert self.agent is not None
 
-        self.cart_rotary_encoder.update_state(update_velocity_and_acceleration)
-        cart_state: MultiprocessRotaryEncoder.State = self.cart_rotary_encoder.state
+        self.cart_rotary_encoder.update_state()
+        cart_state: RotaryEncoder.State = self.cart_rotary_encoder.state
 
-        self.pole_rotary_encoder.update_state(update_velocity_and_acceleration)
-        pole_state: MultiprocessRotaryEncoder.State = self.pole_rotary_encoder.state
+        self.pole_rotary_encoder.update_state()
+        pole_state: RotaryEncoder.State = self.pole_rotary_encoder.state
 
         cart_mm_from_left_limit = abs(
             cart_state.net_total_degrees - self.left_limit_degrees
@@ -2162,14 +2149,16 @@ class CartPole(ContinuousMdpEnvironment):
 
         # noinspection PyBroadException
         try:
-            self.cart_rotary_encoder.wait_for_termination()
+            self.cart_rotary_encoder.cleanup()
         except Exception:
             pass
 
         # noinspection PyBroadException
         try:
-            self.pole_rotary_encoder.wait_for_termination()
+            self.pole_rotary_encoder.cleanup()
         except Exception:
             pass
+
+        self.arduino_serial_connection.connection.close()
 
         cleanup()
