@@ -50,14 +50,14 @@ def main():
     # return;
 
     arduino_interface = RotaryEncoder.Arduino(
-        phase_a_pin=3,
-        phase_b_pin=5,
+        phase_a_pin=2,
+        phase_b_pin=4,
         phase_changes_per_rotation=1200,
         phase_change_mode=RotaryEncoder.PhaseChangeMode.ONE_SIGNAL_TWO_EDGE,
         angular_velocity_step_size=1.0,
         angular_acceleration_step_size=1.0,
         serial=locking_serial,
-        identifier=1,
+        identifier=0,
         state_update_hz=10
     )
     rotary_encoder = RotaryEncoder(
@@ -87,6 +87,11 @@ def main():
         bounce_time_ms=5
     )
     led = LED(CkPin.GPIO19)
+    range_finder = UltrasonicRangeFinder(
+        trigger_pin=CkPin.GPIO23,
+        echo_pin=CkPin.GPIO24,
+        measurements_per_second=2
+    )
 
     def test_rotary_encoder_state():
         while True:
@@ -102,7 +107,7 @@ def main():
                 f'Acceleration:  {state.angular_acceleration} deg/s^2\n'
             )
 
-    def test_wait_for_stationarity():
+    def test_rotary_encoder_wait_for_stationarity():
         while True:
             time.sleep(1.0 / arduino_interface.state_update_hz)
             rotary_encoder.update_state()
@@ -122,7 +127,7 @@ def main():
                 led.turn_on()
             time.sleep(1.0)
 
-    def test_pi_pwm_motor():
+    def test_motor():
         gpio.output(CkPin.GPIO6, gpio.LOW)
         motor.start()
         motor.set_speed(50)
@@ -141,38 +146,57 @@ def main():
         time.sleep(30.0)
 
     def test_set_net_total_degrees():
-        pass
+        while True:
+            print('Will set net total degrees to 0.0 in 5 seconds.')
+            time.sleep(5.0)
+            rotary_encoder.set_net_total_degrees(0.0)
+            print('Set to 0.0.')
+            for _ in range(20):
+                rotary_encoder.update_state()
+                state: RotaryEncoder.State = rotary_encoder.get_state()
+                print(
+                    f'Num phase changes:  {state.num_phase_changes}\n'
+                    f'Net total degrees:  {state.net_total_degrees}\n'
+                    f'Degrees:  {state.degrees}\n'
+                    f'Clockwise:  {state.clockwise}\n'
+                    f'Velocity:  {state.angular_velocity} deg/s\n'
+                    f'Acceleration:  {state.angular_acceleration} deg/s^2\n'
+                )
+                time.sleep(1.0)
 
     def test_range_finder():
-        range_finder = UltrasonicRangeFinder(
-            trigger_pin=CkPin.GPIO23,
-            echo_pin=CkPin.GPIO24,
-            measurements_per_second=2
-        )
-        range_finder.event(lambda s: print(str(s)))
-        range_finder.start_measuring_distance()
-        time.sleep(30.0)
-        range_finder.stop_measuring_distance()
+        try:
+            range_finder.event(lambda s: print(str(s)))
+            range_finder.start_measuring_distance()
+            time.sleep(30.0)
+        except KeyboardInterrupt:
+            range_finder.stop_measuring_distance()
 
     def test_motor_failsafe():
-        gpio.output(CkPin.GPIO6, gpio.LOW)
-        motor.start()
-        motor.set_speed(50)
-        left_limit_switch.events.clear()
-        left_limit_switch.event(lambda s: (
-            gpio.output(CkPin.GPIO6, gpio.HIGH) if s.pressed
-            else gpio.output(CkPin.GPIO6, gpio.LOW)
-        ))
-        print('Press left limit switch...')
-        time.sleep(30.0)
+        try:
+            gpio.output(CkPin.GPIO6, gpio.LOW)
+            motor.start()
+            motor.set_speed(50)
+            left_limit_switch.events.clear()
+            left_limit_switch.event(lambda s: (
+                gpio.output(CkPin.GPIO6, gpio.HIGH) if s.pressed
+                else gpio.output(CkPin.GPIO6, gpio.LOW)
+            ))
+            print('Press left limit switch...')
+            time.sleep(30.0)
+        except KeyboardInterrupt:
+            motor.stop()
 
     try:
-        test_motor_failsafe()
+        print('Running test...')
+        # test_set_net_total_degrees()
+        # test_range_finder()
+        # test_motor_failsafe()
         # test_limit_switches()
-        # test_pi_pwm_motor()
+        # test_motor()
         # test_led()
-        # test_rotary_encoder_state()
-        # test_wait_for_stationarity()
+        test_rotary_encoder_state()
+        # test_rotary_encoder_wait_for_stationarity()
 
     except KeyboardInterrupt:
         pass

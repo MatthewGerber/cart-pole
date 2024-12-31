@@ -801,6 +801,7 @@ class CartPole(ContinuousMdpEnvironment):
         state['termination_led'] = None
         state['centering_range_finder'] = None
         state['leds'] = None
+        state['arduino_serial_connection'] = None
 
         return state
 
@@ -880,7 +881,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         arduino_serial_connection = LockingSerial(
             connection=Serial(
-                port='/dev/serial0',
+                port='/dev/ttyAMA0',
                 baudrate=9600,
                 parity=serial.PARITY_NONE,
                 stopbits=serial.STOPBITS_ONE,
