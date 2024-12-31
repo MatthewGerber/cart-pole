@@ -1,21 +1,24 @@
 import time
 
+import RPi.GPIO as gpio
 import serial
 from serial import Serial
 from smbus2 import SMBus
-import RPi.GPIO as gpio
+
 from raspberry_py.gpio import setup, cleanup, CkPin
+from raspberry_py.gpio.communication import LockingSerial
+from raspberry_py.gpio.controls import LimitSwitch
 from raspberry_py.gpio.integrated_circuits import PulseWaveModulatorPCA9685PW
 from raspberry_py.gpio.lights import LED
 from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectPCA9685PW
-from raspberry_py.gpio.sensors import RotaryEncoder
+from raspberry_py.gpio.sensors import RotaryEncoder, UltrasonicRangeFinder
 
 
 def main():
 
     setup()
 
-    locking_serial = RotaryEncoder.Arduino.LockingSerial(
+    locking_serial = LockingSerial(
         connection=Serial(
             port='/dev/ttyAMA0',
             baudrate=9600,
@@ -61,9 +64,31 @@ def main():
         interface=arduino_interface
     )
     rotary_encoder.start()
+    pca9685pw = PulseWaveModulatorPCA9685PW(
+        bus=SMBus('/dev/i2c-1'),
+        address=PulseWaveModulatorPCA9685PW.PCA9685PW_ADDRESS,
+        frequency_hz=400
+    )
+    motor = DcMotor(
+        driver=DcMotorDriverIndirectPCA9685PW(
+            pca9685pw=pca9685pw,
+            pwm_channel=0,
+            direction_pin=CkPin.GPIO21
+        ),
+        speed=0
+    )
+    gpio.setup(CkPin.GPIO6, gpio.OUT)
+    left_limit_switch = LimitSwitch(
+        input_pin=CkPin.GPIO20,
+        bounce_time_ms=5
+    )
+    right_limit_switch = LimitSwitch(
+        input_pin=CkPin.GPIO16,
+        bounce_time_ms=5
+    )
+    led = LED(CkPin.GPIO19)
 
     def test_rotary_encoder_state():
-
         while True:
             time.sleep(1.0 / arduino_interface.state_update_hz)
             rotary_encoder.update_state()
@@ -90,36 +115,15 @@ def main():
                 time.sleep(1.0)
 
     def test_led():
-        led = LED(CkPin.GPIO19)
         while True:
-            time.sleep(1.0)
             if led.is_on():
                 led.turn_off()
             else:
                 led.turn_on()
+            time.sleep(1.0)
 
     def test_pi_pwm_motor():
-
-        # disable failsafe
-        gpio.setup(CkPin.GPIO6, gpio.OUT)
         gpio.output(CkPin.GPIO6, gpio.LOW)
-
-        # set up pwm chip
-        pca9685pw = PulseWaveModulatorPCA9685PW(
-            bus=SMBus('/dev/i2c-1'),
-            address=PulseWaveModulatorPCA9685PW.PCA9685PW_ADDRESS,
-            frequency_hz=400
-        )
-
-        # test motor
-        motor = DcMotor(
-            driver=DcMotorDriverIndirectPCA9685PW(
-                pca9685pw=pca9685pw,
-                pwm_channel=0,
-                direction_pin=CkPin.GPIO21
-            ),
-            speed=0
-        )
         motor.start()
         motor.set_speed(50)
         time.sleep(1)
@@ -128,9 +132,44 @@ def main():
         motor.set_speed(0)
         motor.stop()
 
-    try:
+    def test_limit_switches():
+        left_limit_switch.events.clear()
+        left_limit_switch.event(lambda s: print('left pressed') if s.pressed else print('left released'))
+        right_limit_switch.events.clear()
+        right_limit_switch.event(lambda s: print('right pressed') if s.pressed else print('right released'))
+        print('Press left or right limit switches...')
+        time.sleep(30.0)
 
-        test_pi_pwm_motor()
+    def test_set_net_total_degrees():
+        pass
+
+    def test_range_finder():
+        range_finder = UltrasonicRangeFinder(
+            trigger_pin=CkPin.GPIO23,
+            echo_pin=CkPin.GPIO24,
+            measurements_per_second=2
+        )
+        range_finder.event(lambda s: print(str(s)))
+        range_finder.start_measuring_distance()
+        time.sleep(30.0)
+        range_finder.stop_measuring_distance()
+
+    def test_motor_failsafe():
+        gpio.output(CkPin.GPIO6, gpio.LOW)
+        motor.start()
+        motor.set_speed(50)
+        left_limit_switch.events.clear()
+        left_limit_switch.event(lambda s: (
+            gpio.output(CkPin.GPIO6, gpio.HIGH) if s.pressed
+            else gpio.output(CkPin.GPIO6, gpio.LOW)
+        ))
+        print('Press left limit switch...')
+        time.sleep(30.0)
+
+    try:
+        test_motor_failsafe()
+        # test_limit_switches()
+        # test_pi_pwm_motor()
         # test_led()
         # test_rotary_encoder_state()
         # test_wait_for_stationarity()

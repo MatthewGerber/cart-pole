@@ -245,12 +245,14 @@ void loop() {
       set_float_bytes(net_total_degrees.bytes, subcommand_bytes, 0);
 
       if (identifier == cart_rotary_encoder_identifier) {
-        cart_rotary_net_degrees.number = net_total_degrees.number;
-        cart_rotary_index = (long) cart_rotary_net_degrees.number * cart_rotary_phase_changes_per_degree;
+        cart_rotary_index = (long) net_total_degrees.number * cart_rotary_phase_changes_per_degree;
+        cart_rotary_net_degrees.number = cart_rotary_index / cart_rotary_phase_changes_per_degree;
+        cart_rotary_state_time_ms = curr_time_ms;
       }
       else if (identifier == pole_rotary_encoder_identifier) {
-        pole_rotary_net_degrees.number = net_total_degrees.number;
         pole_rotary_index = (long) pole_rotary_net_degrees.number * pole_rotary_phase_changes_per_degree;
+        pole_rotary_net_degrees.number = pole_rotary_index / pole_rotary_phase_changes_per_degree;;
+        pole_rotary_state_time_ms = curr_time_ms;
       }
     }
 

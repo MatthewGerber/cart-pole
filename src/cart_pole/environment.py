@@ -19,6 +19,7 @@ from serial import Serial
 from smbus2 import SMBus
 
 from raspberry_py.gpio import CkPin, get_ck_pin, setup, cleanup
+from raspberry_py.gpio.communication import LockingSerial
 from raspberry_py.gpio.controls import LimitSwitch
 from raspberry_py.gpio.integrated_circuits import PulseWaveModulatorPCA9685PW
 from raspberry_py.gpio.lights import LED
@@ -92,13 +93,14 @@ class EpisodePhase(Enum):
     """
 
     # The initial phase, in which the cart must oscillate left and right to build angular momentum that swings the
-    # pole to the vertical position.
+    # pole to the vertical position, either progressive upright or balancing.
     SWING_UP = auto()
 
-    # The pole is upright with respect to a progressive threshold.
+    # The pole is upright with respect to a progressive threshold that moves higher as episodes progress and the
+    # threshold is reached.
     PROGRESSIVE_UPRIGHT = auto()
 
-    # The pole is balancing properly with respect to angle and velocity.
+    # The pole is balancing properly with respect to the desired angle and velocity.
     BALANCE = auto()
 
 
@@ -717,7 +719,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.pole_rotary_encoder_angular_velocity_step_size = 0.9
         self.pole_rotary_encoder_angular_acceleration_step_size = 0.25
         self.fraction_time_balancing = IncrementalSampleAverager()
-        self.shape_dim_iter_coef = {}
+        self.beta_shape_param_iter_coef = {}
 
         (
             self.state_lock,
@@ -859,7 +861,7 @@ class CartPole(ContinuousMdpEnvironment):
         bool,
         UltrasonicRangeFinder,
         List[Optional[LED]],
-        RotaryEncoder.Arduino.LockingSerial
+        LockingSerial
     ]:
         """
         Get circuitry components and other attributes that cannot be pickled. This is primarily used to restore the 
@@ -876,7 +878,7 @@ class CartPole(ContinuousMdpEnvironment):
             frequency_hz=500
         )
 
-        arduino_serial_connection = RotaryEncoder.Arduino.LockingSerial(
+        arduino_serial_connection = LockingSerial(
             connection=Serial(
                 port='/dev/serial0',
                 baudrate=9600,
@@ -896,7 +898,7 @@ class CartPole(ContinuousMdpEnvironment):
                 angular_acceleration_step_size=self.cart_rotary_encoder_angular_acceleration_step_size,
                 serial=arduino_serial_connection,
                 identifier=0,
-                state_update_hz=int(self.timesteps_per_second)
+                state_update_hz=int(self.timesteps_per_second) + 1  # ensure updates are at least the environments hz
             )
         )
         cart_rotary_encoder.start()
@@ -911,7 +913,7 @@ class CartPole(ContinuousMdpEnvironment):
                 angular_acceleration_step_size=self.pole_rotary_encoder_angular_acceleration_step_size,
                 serial=arduino_serial_connection,
                 identifier=1,
-                state_update_hz=int(self.timesteps_per_second)
+                state_update_hz=int(self.timesteps_per_second) + 1  # ensure updates are at least the environments hz
             )
         )
         pole_rotary_encoder.start()
@@ -1086,37 +1088,18 @@ class CartPole(ContinuousMdpEnvironment):
 
         # identify the minimum motor speeds that will get the cart to move left and right. there's a deadzone in the
         # middle that depends on the logic of the motor circuitry, mass and friction of the assembly, etc. this
-        # nonlinearity of motor speed and cart velocity will confuse the controller. use the same speed in each
-        # direction, choosing the max if they are different.
-        deadzone_speed = max(
-            abs(self.identify_motor_speed_deadzone_limit(CartDirection.LEFT)),
-            abs(self.identify_motor_speed_deadzone_limit(CartDirection.RIGHT))
-        )
-        logging.info(f'Deadzone boundary speed:  {deadzone_speed}')
-        self.motor_deadzone_speed_left = -deadzone_speed
-        self.motor_deadzone_speed_right = deadzone_speed
+        # nonlinearity of motor speed and cart velocity will confuse the controller.
+        self.motor_deadzone_speed_left = self.identify_motor_speed_deadzone_limit(CartDirection.LEFT)
+        logging.info(f'Deadzone boundary speed to the {CartDirection.LEFT.name}:  {self.motor_deadzone_speed_left}')
+        self.motor_deadzone_speed_right = self.identify_motor_speed_deadzone_limit(CartDirection.RIGHT)
+        logging.info(f'Deadzone boundary speed to the {CartDirection.RIGHT.name}:  {self.motor_deadzone_speed_right}')
 
-        # mark degrees at left and right limits. do this in whatever order is the most efficient given the cart's
-        # current position. we can only do this efficiency trick after the initial calibration, since determining left
-        # of center depends on having a value for the left limit. regardless, capture the rotary encoder's state at the
-        # right and left limits for subsequent restoration.
-        if self.left_limit_degrees is not None and CartPole.get_cart_position(
-            self.cart_rotary_encoder.get_net_total_degrees(),
-            self.left_limit_degrees,
-            self.cart_mm_per_degree,
-            self.midline_mm
-        ) == CartPosition.LEFT_OF_CENTER:
-            self.move_cart_to_left_limit()
-            self.left_limit_degrees = self.cart_rotary_encoder.get_net_total_degrees()
-            self.move_cart_to_right_limit()
-            self.right_limit_degrees = self.cart_rotary_encoder.get_net_total_degrees()
-            cart_position = CartPosition.RIGHT_OF_CENTER
-        else:
-            self.move_cart_to_right_limit()
-            self.right_limit_degrees = self.cart_rotary_encoder.get_net_total_degrees()
-            self.move_cart_to_left_limit()
-            self.left_limit_degrees = self.cart_rotary_encoder.get_net_total_degrees()
-            cart_position = CartPosition.LEFT_OF_CENTER
+        # mark degrees at left and right limits
+        self.move_cart_to_left_limit()
+        self.left_limit_degrees = self.cart_rotary_encoder.get_net_total_degrees()
+        self.move_cart_to_right_limit()
+        self.right_limit_degrees = self.cart_rotary_encoder.get_net_total_degrees()
+        cart_position = CartPosition.RIGHT_OF_CENTER
 
         # calibrate mm/degree and the midline
         self.limit_to_limit_degrees = abs(self.left_limit_degrees - self.right_limit_degrees)
@@ -1141,7 +1124,8 @@ class CartPole(ContinuousMdpEnvironment):
         self.stop_cart()
 
         # set central phase change indices
-        self.pole_degrees_at_bottom = self.pole_rotary_encoder.get_degrees(False)
+        self.pole_rotary_encoder.wait_for_stationarity()
+        self.pole_degrees_at_bottom = self.pole_rotary_encoder.get_degrees()
 
         calibration = {
             'motor_deadzone_speed_left': self.motor_deadzone_speed_left,
@@ -1193,8 +1177,9 @@ class CartPole(ContinuousMdpEnvironment):
         self.cart_rotary_encoder.update_state()
         while moving_ticks_remaining > 0:
             time.sleep(0.5)
-            assert not limit_switch.is_pressed()
-            if abs(self.cart_rotary_encoder.get_angular_velocity()) < 50.0:
+            if limit_switch.is_pressed():
+                raise ValueError(f'Hit limit switch in the {direction.name} direction. Failure.')
+            elif abs(self.cart_rotary_encoder.get_angular_velocity()) < 50.0:
                 moving_ticks_remaining = moving_ticks_required
                 speed += increment
                 self.set_motor_speed(speed)
@@ -1331,8 +1316,8 @@ class CartPole(ContinuousMdpEnvironment):
 
         :param restore_limit_state: Whether to restore the limit state before centering the cart. Doing this ensures
         that the centering calculation will be accurate and that any out-of-calibration issues will be mitigated. This
-        is somewhat expensive, since it involves physically moving the cart to a nearby limit switch before moving the
-        cart to the center.
+        is somewhat expensive, since it involves physically moving the cart to a limit switch before moving the cart to
+        the center.
         :param restore_center_state: Whether to restore the center state after centering. This ensures that the initial
         movements away from the center will be equivalent to previous such movements at that position.
         """
@@ -1700,27 +1685,23 @@ class CartPole(ContinuousMdpEnvironment):
 
             # theta-a
             assert self.policy.action_theta_a.shape[0] == 1
-            if not hasattr(self, 'shape_dim_iter_coef'):
-                self.shape_dim_iter_coef = {}
-            if 'a' not in self.shape_dim_iter_coef:
-                self.shape_dim_iter_coef['a'] = {
+            if 'a' not in self.beta_shape_param_iter_coef:
+                self.beta_shape_param_iter_coef['a'] = {
                     dim: {}
                     for dim in range(self.policy.action_theta_a.shape[1])
                 }
             for dim in range(self.policy.action_theta_a.shape[1]):
-                self.shape_dim_iter_coef['a'][dim][self.num_resets] = float(self.policy.action_theta_a[0, dim])
+                self.beta_shape_param_iter_coef['a'][dim][self.num_resets] = float(self.policy.action_theta_a[0, dim])
 
             # theta-b
             assert self.policy.action_theta_b.shape[0] == 1
-            if not hasattr(self, 'shape_dim_iter_coef'):
-                self.shape_dim_iter_coef = {}
-            if 'b' not in self.shape_dim_iter_coef:
-                self.shape_dim_iter_coef['b'] = {
+            if 'b' not in self.beta_shape_param_iter_coef:
+                self.beta_shape_param_iter_coef['b'] = {
                     dim: {}
                     for dim in range(self.policy.action_theta_b.shape[1])
                 }
             for dim in range(self.policy.action_theta_b.shape[1]):
-                self.shape_dim_iter_coef['b'][dim][self.num_resets] = float(self.policy.action_theta_b[0, dim])
+                self.beta_shape_param_iter_coef['b'][dim][self.num_resets] = float(self.policy.action_theta_b[0, dim])
 
             if self.num_resets % 10 == 0:
 
@@ -1732,8 +1713,8 @@ class CartPole(ContinuousMdpEnvironment):
                     col = dim % n_row_col
                     axe = axes[row, col]
                     axe.plot(  # type: ignore
-                        list(self.shape_dim_iter_coef['a'][dim].keys()),
-                        list(self.shape_dim_iter_coef['a'][dim].values()),
+                        list(self.beta_shape_param_iter_coef['a'][dim].keys()),
+                        list(self.beta_shape_param_iter_coef['a'][dim].values()),
                         label=f'a({dim})'
                     )
                 pdf = PdfPages(os.path.expanduser(f'~/Desktop/{self.num_resets}-a-coef.pdf'))
@@ -1750,8 +1731,8 @@ class CartPole(ContinuousMdpEnvironment):
                     col = dim % n_row_col
                     axe = axes[row, col]
                     axe.plot(  # type: ignore
-                        list(self.shape_dim_iter_coef['b'][dim].keys()),
-                        list(self.shape_dim_iter_coef['b'][dim].values()),
+                        list(self.beta_shape_param_iter_coef['b'][dim].keys()),
+                        list(self.beta_shape_param_iter_coef['b'][dim].values()),
                         label=f'b({dim})'
                     )
                 pdf = PdfPages(os.path.expanduser(f'~/Desktop/{self.num_resets}-b-coef.pdf'))
