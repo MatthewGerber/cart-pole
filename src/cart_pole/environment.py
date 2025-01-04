@@ -1343,9 +1343,7 @@ class CartPole(ContinuousMdpEnvironment):
         # was when we calibrated. this corrects any loss of calibration that occurred while moving the cart. do this in
         # whatever order is the most efficient given the cart's current position.
         if restore_limit_state:
-
             logging.info('Restoring limit state.')
-
             if original_position == CartPosition.LEFT_OF_CENTER:
                 self.move_cart_to_left_limit()
                 self.cart_rotary_encoder.set_net_total_degrees(self.left_limit_degrees)
@@ -1366,10 +1364,25 @@ class CartPole(ContinuousMdpEnvironment):
         self.pole_rotary_encoder.wait_for_stationarity()
 
         if restore_center_state:
+            logging.info(
+                f'Pre-restoration cart degrees at center={self.cart_rotary_encoder.get_net_total_degrees():.1f}; '
+                f'nominal degrees at center={self.midline_degrees:.1f}.'
+            )
             self.cart_rotary_encoder.set_net_total_degrees(self.midline_degrees)
             self.cart_rotary_encoder.update_state()
+            logging.info(
+                f'Post-restoration cart degrees at center={self.cart_rotary_encoder.get_net_total_degrees():.1f}.'
+            )
+
+            logging.info(
+                f'Pre-restoration pole degrees at bottom={self.pole_rotary_encoder.get_net_total_degrees():.1f}; '
+                f'nominal degrees at bottom={self.pole_degrees_at_bottom:.1f}.'
+            )
             self.pole_rotary_encoder.set_net_total_degrees(self.pole_degrees_at_bottom)
             self.pole_rotary_encoder.update_state()
+            logging.info(
+                f'Post-restoration pole degrees at bottom={self.pole_rotary_encoder.get_net_total_degrees():.1f}.'
+            )
 
         logging.info(
             f'Pole is stationary at degrees:  '
@@ -1620,7 +1633,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.plot_label_data_kwargs['Pole Angle * 10'] = (
             dict(),
             {
-                'linewidth': 0.5
+                'marker': '.'
             }
         )
 
@@ -1756,7 +1769,6 @@ class CartPole(ContinuousMdpEnvironment):
 
         self.state = self.get_state(t=None, terminal=False)
         self.previous_timestep_epoch = None
-        self.current_timesteps_per_second.reset()
 
         logging.info(f'State after reset:  {self.state}')
 
@@ -1888,7 +1900,9 @@ class CartPole(ContinuousMdpEnvironment):
             logging.debug(f'Reward {t}:  {reward_value}')
 
             self.plot_label_data_kwargs['Motor Speed'][0][t] = self.motor.get_speed()
-            self.plot_label_data_kwargs['Pole Angle * 10'][0][t] = self.state.pole_angle_deg_from_upright * 10.0
+            self.plot_label_data_kwargs['Pole Angle'][0][t] = (
+                np.sign(self.state.pole_angle_deg_from_upright) * self.state.zero_to_one_pole_angle
+            )
             self.plot_label_data_kwargs['Pole Angular Vel.'][0][t] = self.state.pole_angular_velocity_deg_per_sec
             self.plot_label_data_kwargs['Pole Angular Acc.'][0][t] = (
                 self.state.pole_angular_acceleration_deg_per_sec_squared
