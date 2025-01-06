@@ -817,6 +817,11 @@ class CartPole(ContinuousMdpEnvironment):
 
         self.__dict__ = state
 
+        self.cart_rotary_encoder_angular_velocity_step_size = 0.25
+        self.cart_rotary_encoder_angular_acceleration_step_size = 0.1
+        self.pole_rotary_encoder_angular_velocity_step_size = 0.25
+        self.pole_rotary_encoder_angular_acceleration_step_size = 0.1
+
         (
             self.state_lock,
             self.pca9685pw,
@@ -1900,7 +1905,7 @@ class CartPole(ContinuousMdpEnvironment):
             logging.debug(f'Reward {t}:  {reward_value}')
 
             self.plot_label_data_kwargs['Motor Speed'][0][t] = self.motor.get_speed()
-            self.plot_label_data_kwargs['Pole Angle'][0][t] = (
+            self.plot_label_data_kwargs['Pole Angle [-1000.0,+1000.0]'][0][t] = (
                 np.sign(self.state.pole_angle_deg_from_upright) * self.state.zero_to_one_pole_angle
             )
             self.plot_label_data_kwargs['Pole Angular Vel.'][0][t] = self.state.pole_angular_velocity_deg_per_sec
