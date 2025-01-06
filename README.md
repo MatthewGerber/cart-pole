@@ -24,6 +24,10 @@ poetry install
 ```
 
 # To Do/Try
+* Rotary encoder losses
+* Increase smoothing.
+* Add time series database/dashboard.
+* Move motor speed control to Arduino, including next-set promise.
 * Add noInterrupts / interrupts to loop to prevent corrupted values.
 * Add serial read/write throughput.
 * Add I2C and serial devices to CLI args.
