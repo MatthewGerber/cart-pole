@@ -1900,7 +1900,7 @@ class CartPole(ContinuousMdpEnvironment):
 
             self.plot_label_data_kwargs['Motor Speed'][0][t] = self.motor.get_speed()
             self.plot_label_data_kwargs['Pole Angle'][0][t] = (
-                1000.0 * np.sign(self.state.pole_angle_deg_from_upright) * self.state.zero_to_one_pole_angle
+                1000.0 * -np.sign(self.state.pole_angle_deg_from_upright) * self.state.zero_to_one_pole_angle
             )
             self.plot_label_data_kwargs['Pole Angular Vel.'][0][t] = self.state.pole_angular_velocity_deg_per_sec
             self.plot_label_data_kwargs['Pole Angular Acc.'][0][t] = (
