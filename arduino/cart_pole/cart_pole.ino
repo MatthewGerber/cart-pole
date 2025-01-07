@@ -22,7 +22,7 @@ floatbytes cart_velocity_step_size;
 floatbytes cart_acceleration;
 floatbytes cart_acceleration_step_size;
 unsigned int cart_state_update_hz;
-float cart_state_update_interval_ms;
+unsigned long cart_state_update_interval_ms;
 unsigned long cart_rotary_state_time_ms;
 
 byte pole_rotary_encoder_identifier = 1;
@@ -39,7 +39,7 @@ floatbytes pole_velocity_step_size;
 floatbytes pole_acceleration;
 floatbytes pole_acceleration_step_size;
 unsigned int pole_state_update_hz;
-float pole_state_update_interval_ms;
+unsigned long pole_state_update_interval_ms;
 unsigned long pole_rotary_state_time_ms;
 
 byte START_COMMAND = 1;
@@ -119,31 +119,43 @@ void set_float_bytes(byte dest[], byte src[], size_t src_start_idx) {
 void loop() {
 
   unsigned long curr_time_ms = millis();
-
-  unsigned long cart_rotary_state_elapsed_ms = curr_time_ms - cart_rotary_state_time_ms;
-  if (cart_rotary_state_elapsed_ms >= cart_state_update_interval_ms) {
-    float net_total_degrees = cart_rotary_index / cart_rotary_phase_changes_per_degree;
-    float elapsed_seconds = cart_rotary_state_elapsed_ms / 1000.0;
-    float current_cart_velocity = (net_total_degrees - cart_rotary_net_degrees.number) / elapsed_seconds;
-    cart_rotary_net_degrees.number = net_total_degrees;
-    float previous_cart_velocity = cart_velocity.number;
-    cart_velocity.number = (1.0 - cart_velocity_step_size.number) * previous_cart_velocity + cart_velocity_step_size.number * current_cart_velocity;
-    float current_cart_acceleration = (cart_velocity.number - previous_cart_velocity) / elapsed_seconds;
-    cart_acceleration.number = (1.0 - cart_acceleration_step_size.number) * cart_acceleration.number + cart_acceleration_step_size.number * current_cart_acceleration;
+  if (curr_time_ms <= cart_rotary_state_time_ms) {
     cart_rotary_state_time_ms = curr_time_ms;
   }
+  else {
+    unsigned long elapsed_ms = curr_time_ms - cart_rotary_state_time_ms;
+    if (elapsed_ms >= cart_state_update_interval_ms) {
+      float previous_net_degrees = cart_rotary_net_degrees.number;
+      cart_rotary_net_degrees.number = cart_rotary_index / cart_rotary_phase_changes_per_degree;
+      float elapsed_seconds = (float) (elapsed_ms / 1000.0);
+      float previous_velocity = cart_velocity.number;
+      float current_velocity = (cart_rotary_net_degrees.number - previous_net_degrees) / elapsed_seconds;
+      cart_velocity.number = (1.0 - cart_velocity_step_size.number) * previous_velocity + cart_velocity_step_size.number * current_velocity;
+      float previous_acceleration = cart_acceleration.number;
+      float current_acceleration = (cart_velocity.number - previous_velocity) / elapsed_seconds;
+      cart_acceleration.number = (1.0 - cart_acceleration_step_size.number) * previous_acceleration + cart_acceleration_step_size.number * current_acceleration;
+      cart_rotary_state_time_ms = curr_time_ms;
+    }
+  }
 
-  unsigned long pole_rotary_state_elapsed_ms = curr_time_ms - pole_rotary_state_time_ms;
-  if (pole_rotary_state_elapsed_ms >= pole_state_update_interval_ms) {
-    float net_total_degrees = pole_rotary_index / pole_rotary_phase_changes_per_degree;
-    float elapsed_seconds = pole_rotary_state_elapsed_ms / 1000.0;
-    float current_pole_velocity = (net_total_degrees - pole_rotary_net_degrees.number) / elapsed_seconds;
-    pole_rotary_net_degrees.number = net_total_degrees;
-    float previous_pole_velocity = pole_velocity.number;
-    pole_velocity.number = (1.0 - pole_velocity_step_size.number) * previous_pole_velocity + pole_velocity_step_size.number * current_pole_velocity;
-    float current_pole_acceleration = (pole_velocity.number - previous_pole_velocity) / elapsed_seconds;
-    pole_acceleration.number = (1.0 - pole_acceleration_step_size.number) * pole_acceleration.number + pole_acceleration_step_size.number * current_pole_acceleration;
+  curr_time_ms = millis();
+  if (curr_time_ms <= pole_rotary_state_time_ms) {
     pole_rotary_state_time_ms = curr_time_ms;
+  }
+  else {
+    unsigned long elapsed_ms = curr_time_ms - pole_rotary_state_time_ms;
+    if (elapsed_ms >= pole_state_update_interval_ms) {
+      float previous_net_degrees = pole_rotary_net_degrees.number;
+      pole_rotary_net_degrees.number = pole_rotary_index / pole_rotary_phase_changes_per_degree;
+      float elapsed_seconds = (float) (elapsed_ms / 1000.0);
+      float previous_velocity = pole_velocity.number;
+      float current_velocity = (pole_rotary_net_degrees.number - previous_net_degrees) / elapsed_seconds;
+      pole_velocity.number = (1.0 - pole_velocity_step_size.number) * previous_velocity + pole_velocity_step_size.number * current_velocity;
+      float previous_acceleration = pole_acceleration.number;
+      float current_acceleration = (pole_velocity.number - previous_velocity) / elapsed_seconds;
+      pole_acceleration.number = (1.0 - pole_acceleration_step_size.number) * previous_acceleration + pole_acceleration_step_size.number * current_acceleration;
+      pole_rotary_state_time_ms = curr_time_ms;
+    }
   }
 
   if (Serial.available()) {
@@ -176,7 +188,7 @@ void loop() {
         set_float_bytes(cart_acceleration_step_size.bytes, subcommand_bytes, 9);
 
         cart_state_update_hz = subcommand_bytes[13];
-        cart_state_update_interval_ms = 1000.0 / (float)cart_state_update_hz;
+        cart_state_update_interval_ms = (unsigned long) (1000.0 / (float) cart_state_update_hz);
 
         attachInterrupt(digitalPinToInterrupt(cart_rotary_white_pin), cart_white_changed, CHANGE);
         delay(1000);
@@ -186,7 +198,7 @@ void loop() {
         cart_velocity.number = 0.0;
         cart_acceleration.number = 0.0;
         cart_rotary_clockwise = false;
-        cart_rotary_state_time_ms = curr_time_ms;
+        cart_rotary_state_time_ms = millis();
       }
       else if (rotary_encoder_identifier == pole_rotary_encoder_identifier) {
         pole_rotary_white_pin = subcommand_bytes[0];
@@ -206,7 +218,7 @@ void loop() {
         set_float_bytes(pole_acceleration_step_size.bytes, subcommand_bytes, 9);
 
         pole_state_update_hz = subcommand_bytes[13];
-        pole_state_update_interval_ms = 1000.0 / (float)pole_state_update_hz;
+        pole_state_update_interval_ms = (unsigned long) (1000.0 / (float) pole_state_update_hz);
 
         attachInterrupt(digitalPinToInterrupt(pole_rotary_white_pin), pole_white_changed, CHANGE);
         delay(1000);
@@ -216,7 +228,7 @@ void loop() {
         pole_velocity.number = 0.0;
         pole_acceleration.number = 0.0;
         pole_rotary_clockwise = false;
-        pole_rotary_state_time_ms = curr_time_ms;
+        pole_rotary_state_time_ms = millis();
       }
     }
 
@@ -227,6 +239,7 @@ void loop() {
         write_float(cart_velocity);
         write_float(cart_acceleration);
         write_bool(cart_rotary_clockwise);
+        write_long(cart_rotary_state_time_ms);
       }
       else if (rotary_encoder_identifier == pole_rotary_encoder_identifier) {
         write_long(pole_num_phase_changes);
@@ -234,6 +247,7 @@ void loop() {
         write_float(pole_velocity);
         write_float(pole_acceleration);
         write_bool(pole_rotary_clockwise);
+        write_long(pole_rotary_state_time_ms);
       }
     }
 
@@ -250,12 +264,12 @@ void loop() {
       if (rotary_encoder_identifier == cart_rotary_encoder_identifier) {
         cart_rotary_index = (long) net_total_degrees.number * cart_rotary_phase_changes_per_degree;
         cart_rotary_net_degrees.number = cart_rotary_index / cart_rotary_phase_changes_per_degree;
-        cart_rotary_state_time_ms = curr_time_ms;
+        cart_rotary_state_time_ms = millis();
       }
       else if (rotary_encoder_identifier == pole_rotary_encoder_identifier) {
         pole_rotary_index = (long) net_total_degrees.number * pole_rotary_phase_changes_per_degree;
         pole_rotary_net_degrees.number = pole_rotary_index / pole_rotary_phase_changes_per_degree;;
-        pole_rotary_state_time_ms = curr_time_ms;
+        pole_rotary_state_time_ms = millis();
       }
 
       interrupts();

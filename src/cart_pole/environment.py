@@ -714,10 +714,10 @@ class CartPole(ContinuousMdpEnvironment):
         self.balance_angular_velocity = 7.0 * self.balance_pole_angle
         self.lost_balance_timestamp: Optional[float] = None
         self.lost_balance_timer_seconds = 30.0
-        self.cart_rotary_encoder_angular_velocity_step_size = 0.9
-        self.cart_rotary_encoder_angular_acceleration_step_size = 0.25
-        self.pole_rotary_encoder_angular_velocity_step_size = 0.9
-        self.pole_rotary_encoder_angular_acceleration_step_size = 0.25
+        self.cart_rotary_encoder_angular_velocity_step_size = 1.0
+        self.cart_rotary_encoder_angular_acceleration_step_size = 1.0
+        self.pole_rotary_encoder_angular_velocity_step_size = 1.0
+        self.pole_rotary_encoder_angular_acceleration_step_size = 1.0
         self.fraction_time_balancing = IncrementalSampleAverager()
         self.beta_shape_param_iter_coef = {}
 
@@ -816,11 +816,6 @@ class CartPole(ContinuousMdpEnvironment):
         """
 
         self.__dict__ = state
-
-        self.cart_rotary_encoder_angular_velocity_step_size = 0.25
-        self.cart_rotary_encoder_angular_acceleration_step_size = 0.1
-        self.pole_rotary_encoder_angular_velocity_step_size = 0.25
-        self.pole_rotary_encoder_angular_acceleration_step_size = 0.1
 
         (
             self.state_lock,
@@ -1628,32 +1623,31 @@ class CartPole(ContinuousMdpEnvironment):
 
         self.flash_leds()
 
+        plot_kwargs = {
+            'marker': '.',
+            'markersize': 4,
+            'linewidth': 0.5,
+            'alpha': 0.5
+        }
+
         self.plot_label_data_kwargs['Motor Speed'] = (
             dict(),
-            {
-                'linewidth': 0.5
-            }
+            plot_kwargs
         )
 
-        self.plot_label_data_kwargs['Pole Angle * 10'] = (
+        self.plot_label_data_kwargs['Pole Angle'] = (
             dict(),
-            {
-                'marker': '.'
-            }
+            plot_kwargs
         )
 
         self.plot_label_data_kwargs['Pole Angular Vel.'] = (
             dict(),
-            {
-                'linewidth': 0.5
-            }
+            plot_kwargs
         )
 
         self.plot_label_data_kwargs['Pole Angular Acc.'] = (
             dict(),
-            {
-                'linewidth': 0.5
-            }
+            plot_kwargs
         )
 
         self.fraction_time_balancing.reset()
@@ -1905,8 +1899,8 @@ class CartPole(ContinuousMdpEnvironment):
             logging.debug(f'Reward {t}:  {reward_value}')
 
             self.plot_label_data_kwargs['Motor Speed'][0][t] = self.motor.get_speed()
-            self.plot_label_data_kwargs['Pole Angle [-1000.0,+1000.0]'][0][t] = (
-                np.sign(self.state.pole_angle_deg_from_upright) * self.state.zero_to_one_pole_angle
+            self.plot_label_data_kwargs['Pole Angle'][0][t] = (
+                1000.0 * np.sign(self.state.pole_angle_deg_from_upright) * self.state.zero_to_one_pole_angle
             )
             self.plot_label_data_kwargs['Pole Angular Vel.'][0][t] = self.state.pole_angular_velocity_deg_per_sec
             self.plot_label_data_kwargs['Pole Angular Acc.'][0][t] = (

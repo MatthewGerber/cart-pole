@@ -2,6 +2,7 @@ import time
 
 import RPi.GPIO as gpio
 import serial
+from matplotlib import pyplot as plt
 from serial import Serial
 from smbus2 import SMBus
 
@@ -50,15 +51,15 @@ def main():
     # return;
 
     arduino_interface = RotaryEncoder.Arduino(
-        phase_a_pin=2,
-        phase_b_pin=4,
+        phase_a_pin=3,
+        phase_b_pin=5,
         phase_changes_per_rotation=1200,
         phase_change_mode=RotaryEncoder.PhaseChangeMode.ONE_SIGNAL_TWO_EDGE,
         angular_velocity_step_size=1.0,
         angular_acceleration_step_size=1.0,
         serial=locking_serial,
         identifier=0,
-        state_update_hz=10
+        state_update_hz=20
     )
     rotary_encoder = RotaryEncoder(
         interface=arduino_interface
@@ -106,6 +107,36 @@ def main():
                 f'Velocity:  {state.angular_velocity} deg/s\n'
                 f'Acceleration:  {state.angular_acceleration} deg/s^2\n'
             )
+
+    def test_plot_rotary_encoder_state():
+        print('Will begin recording state in 5 seconds...', end='')
+        time.sleep(5)
+        print('recording.')
+        test_start = time.time()
+        times = []
+        net_total_degrees = []
+        degrees = []
+        velocities = []
+        accelerations = []
+        while time.time() - test_start < 10.0:
+            time.sleep(1.0 / arduino_interface.state_update_hz)
+            rotary_encoder.update_state()
+            state: RotaryEncoder.State = rotary_encoder.get_state()
+            times.append(state.epoch_ms)
+            net_total_degrees.append(state.net_total_degrees)
+            degrees.append(state.degrees)
+            velocities.append(state.angular_velocity)
+            accelerations.append(state.angular_acceleration)
+
+        plt.gcf().set_size_inches(10.0, 10.0)
+        plt.plot(times, net_total_degrees, label='total degrees')
+        plt.plot(times, degrees, label='degrees')
+        plt.plot(times, velocities, label='velocity')
+        plt.plot(times, accelerations, label='acceleration')
+        plt.grid()
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
 
     def test_rotary_encoder_wait_for_stationarity():
         while True:
@@ -195,7 +226,8 @@ def main():
         # test_limit_switches()
         # test_motor()
         # test_led()
-        test_rotary_encoder_state()
+        # test_rotary_encoder_state()
+        test_plot_rotary_encoder_state()
         # test_rotary_encoder_wait_for_stationarity()
 
     except KeyboardInterrupt:
