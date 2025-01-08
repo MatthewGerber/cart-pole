@@ -1630,6 +1630,11 @@ class CartPole(ContinuousMdpEnvironment):
             'alpha': 0.5
         }
 
+        self.plot_label_data_kwargs['Cart Position'] = (
+            dict(),
+            plot_kwargs
+        )
+
         self.plot_label_data_kwargs['Motor Speed'] = (
             dict(),
             plot_kwargs
@@ -1898,6 +1903,7 @@ class CartPole(ContinuousMdpEnvironment):
             logging.debug(f'State {t}:  {self.state}')
             logging.debug(f'Reward {t}:  {reward_value}')
 
+            self.plot_label_data_kwargs['Cart Position'][0][t] = self.state.cart_mm_from_center
             self.plot_label_data_kwargs['Motor Speed'][0][t] = self.motor.get_speed()
             self.plot_label_data_kwargs['Pole Angle'][0][t] = (
                 1000.0 * -np.sign(self.state.pole_angle_deg_from_upright) * self.state.zero_to_one_pole_angle

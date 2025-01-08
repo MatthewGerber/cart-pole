@@ -59,7 +59,7 @@ def main():
         angular_acceleration_step_size=1.0,
         serial=locking_serial,
         identifier=0,
-        state_update_hz=20
+        state_update_hz=100
     )
     rotary_encoder = RotaryEncoder(
         interface=arduino_interface
@@ -119,7 +119,7 @@ def main():
         velocities = []
         accelerations = []
         while time.time() - test_start < 10.0:
-            time.sleep(1.0 / arduino_interface.state_update_hz)
+            time.sleep(1.0 / 10.0)
             rotary_encoder.update_state()
             state: RotaryEncoder.State = rotary_encoder.get_state()
             times.append(state.epoch_ms)
@@ -128,7 +128,7 @@ def main():
             velocities.append(state.angular_velocity)
             accelerations.append(state.angular_acceleration)
 
-        plt.gcf().set_size_inches(10.0, 10.0)
+        plt.gcf().set_size_inches(20.0, 20.0)
         plt.plot(times, net_total_degrees, label='total degrees')
         plt.plot(times, degrees, label='degrees')
         plt.plot(times, velocities, label='velocity')

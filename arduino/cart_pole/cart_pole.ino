@@ -125,8 +125,11 @@ void loop() {
   else {
     unsigned long elapsed_ms = curr_time_ms - cart_rotary_state_time_ms;
     if (elapsed_ms >= cart_state_update_interval_ms) {
+      noInterrupts();
+      long cart_rotary_index_value = cart_rotary_index;
+      interrupts();
       float previous_net_degrees = cart_rotary_net_degrees.number;
-      cart_rotary_net_degrees.number = cart_rotary_index / cart_rotary_phase_changes_per_degree;
+      cart_rotary_net_degrees.number = cart_rotary_index_value / cart_rotary_phase_changes_per_degree;
       float elapsed_seconds = (float) (elapsed_ms / 1000.0);
       float previous_velocity = cart_velocity.number;
       float current_velocity = (cart_rotary_net_degrees.number - previous_net_degrees) / elapsed_seconds;
@@ -145,8 +148,11 @@ void loop() {
   else {
     unsigned long elapsed_ms = curr_time_ms - pole_rotary_state_time_ms;
     if (elapsed_ms >= pole_state_update_interval_ms) {
+      noInterrupts();
+      long pole_rotary_index_value = pole_rotary_index;
+      interrupts();
       float previous_net_degrees = pole_rotary_net_degrees.number;
-      pole_rotary_net_degrees.number = pole_rotary_index / pole_rotary_phase_changes_per_degree;
+      pole_rotary_net_degrees.number = pole_rotary_index_value / pole_rotary_phase_changes_per_degree;
       float elapsed_seconds = (float) (elapsed_ms / 1000.0);
       float previous_velocity = pole_velocity.number;
       float current_velocity = (pole_rotary_net_degrees.number - previous_net_degrees) / elapsed_seconds;
