@@ -49,7 +49,7 @@ byte STOP_COMMAND = 4;
 
 void setup() {
 
-  Serial.begin(9600, SERIAL_8N1);
+  Serial.begin(115200, SERIAL_8N1);
 
 }
 
@@ -130,7 +130,7 @@ void loop() {
       interrupts();
       float previous_net_degrees = cart_rotary_net_degrees.number;
       cart_rotary_net_degrees.number = cart_rotary_index_value / cart_rotary_phase_changes_per_degree;
-      float elapsed_seconds = (float) (elapsed_ms / 1000.0);
+      float elapsed_seconds = float(elapsed_ms) / 1000.0;
       float previous_velocity = cart_velocity.number;
       float current_velocity = (cart_rotary_net_degrees.number - previous_net_degrees) / elapsed_seconds;
       cart_velocity.number = (1.0 - cart_velocity_step_size.number) * previous_velocity + cart_velocity_step_size.number * current_velocity;
@@ -153,7 +153,7 @@ void loop() {
       interrupts();
       float previous_net_degrees = pole_rotary_net_degrees.number;
       pole_rotary_net_degrees.number = pole_rotary_index_value / pole_rotary_phase_changes_per_degree;
-      float elapsed_seconds = (float) (elapsed_ms / 1000.0);
+      float elapsed_seconds = float(elapsed_ms) / 1000.0;
       float previous_velocity = pole_velocity.number;
       float current_velocity = (pole_rotary_net_degrees.number - previous_net_degrees) / elapsed_seconds;
       pole_velocity.number = (1.0 - pole_velocity_step_size.number) * previous_velocity + pole_velocity_step_size.number * current_velocity;
@@ -186,7 +186,7 @@ void loop() {
 
         // todo:  2 bytes for phase changes per rotation
         cart_rotary_phase_changes_per_rotation = 1200;
-        cart_rotary_phase_changes_per_degree = cart_rotary_phase_changes_per_rotation / 360.0;
+        cart_rotary_phase_changes_per_degree = float(cart_rotary_phase_changes_per_rotation) / 360.0;
 
         // todo:  1 byte for phase-change mode
 
@@ -194,7 +194,7 @@ void loop() {
         set_float_bytes(cart_acceleration_step_size.bytes, subcommand_bytes, 9);
 
         cart_state_update_hz = subcommand_bytes[13];
-        cart_state_update_interval_ms = (unsigned long) (1000.0 / (float) cart_state_update_hz);
+        cart_state_update_interval_ms = (unsigned long) (1000.0 / float(cart_state_update_hz));
 
         attachInterrupt(digitalPinToInterrupt(cart_rotary_white_pin), cart_white_changed, CHANGE);
         delay(1000);
@@ -216,7 +216,7 @@ void loop() {
 
         // todo:  2 bytes for phase changes per rotation
         pole_rotary_phase_changes_per_rotation = 1200;
-        pole_rotary_phase_changes_per_degree = pole_rotary_phase_changes_per_rotation / 360.0;
+        pole_rotary_phase_changes_per_degree = float(pole_rotary_phase_changes_per_rotation) / 360.0;
 
         // todo:  1 byte for phase-change mode
 
@@ -224,7 +224,7 @@ void loop() {
         set_float_bytes(pole_acceleration_step_size.bytes, subcommand_bytes, 9);
 
         pole_state_update_hz = subcommand_bytes[13];
-        pole_state_update_interval_ms = (unsigned long) (1000.0 / (float) pole_state_update_hz);
+        pole_state_update_interval_ms = (unsigned long) (1000.0 / float(pole_state_update_hz));
 
         attachInterrupt(digitalPinToInterrupt(pole_rotary_white_pin), pole_white_changed, CHANGE);
         delay(1000);

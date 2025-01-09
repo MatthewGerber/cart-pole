@@ -22,7 +22,7 @@ def main():
     locking_serial = LockingSerial(
         connection=Serial(
             port='/dev/ttyAMA0',
-            baudrate=9600,
+            baudrate=115200,
             parity=serial.PARITY_NONE,
             stopbits=serial.STOPBITS_ONE,
             bytesize=serial.EIGHTBITS
@@ -55,8 +55,8 @@ def main():
         phase_b_pin=5,
         phase_changes_per_rotation=1200,
         phase_change_mode=RotaryEncoder.PhaseChangeMode.ONE_SIGNAL_TWO_EDGE,
-        angular_velocity_step_size=1.0,
-        angular_acceleration_step_size=1.0,
+        angular_velocity_step_size=0.25,
+        angular_acceleration_step_size=0.25,
         serial=locking_serial,
         identifier=0,
         state_update_hz=100
@@ -119,7 +119,7 @@ def main():
         velocities = []
         accelerations = []
         while time.time() - test_start < 10.0:
-            time.sleep(1.0 / 10.0)
+            time.sleep(1.0 / 50.0)
             rotary_encoder.update_state()
             state: RotaryEncoder.State = rotary_encoder.get_state()
             times.append(state.epoch_ms)
