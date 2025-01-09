@@ -55,11 +55,11 @@ def main():
         phase_b_pin=5,
         phase_changes_per_rotation=1200,
         phase_change_mode=RotaryEncoder.PhaseChangeMode.ONE_SIGNAL_TWO_EDGE,
-        angular_velocity_step_size=0.25,
-        angular_acceleration_step_size=0.25,
+        angular_velocity_step_size=0.5,
+        angular_acceleration_step_size=0.2,
         serial=locking_serial,
         identifier=0,
-        state_update_hz=100
+        state_update_hz=50
     )
     rotary_encoder = RotaryEncoder(
         interface=arduino_interface
@@ -119,7 +119,7 @@ def main():
         velocities = []
         accelerations = []
         while time.time() - test_start < 10.0:
-            time.sleep(1.0 / 50.0)
+            time.sleep(1.0 / 25.0)
             rotary_encoder.update_state()
             state: RotaryEncoder.State = rotary_encoder.get_state()
             times.append(state.epoch_ms)

@@ -714,10 +714,10 @@ class CartPole(ContinuousMdpEnvironment):
         self.balance_angular_velocity = 7.0 * self.balance_pole_angle
         self.lost_balance_timestamp: Optional[float] = None
         self.lost_balance_timer_seconds = 30.0
-        self.cart_rotary_encoder_angular_velocity_step_size = 1.0
-        self.cart_rotary_encoder_angular_acceleration_step_size = 1.0
-        self.pole_rotary_encoder_angular_velocity_step_size = 1.0
-        self.pole_rotary_encoder_angular_acceleration_step_size = 1.0
+        self.cart_rotary_encoder_angular_velocity_step_size = 0.5
+        self.cart_rotary_encoder_angular_acceleration_step_size = 0.2
+        self.pole_rotary_encoder_angular_velocity_step_size = 0.5
+        self.pole_rotary_encoder_angular_acceleration_step_size = 0.2
         self.fraction_time_balancing = IncrementalSampleAverager()
         self.beta_shape_param_iter_coef = {}
 
@@ -882,7 +882,7 @@ class CartPole(ContinuousMdpEnvironment):
         arduino_serial_connection = LockingSerial(
             connection=Serial(
                 port='/dev/ttyAMA0',
-                baudrate=9600,
+                baudrate=115200,
                 parity=serial.PARITY_NONE,
                 stopbits=serial.STOPBITS_ONE,
                 bytesize=serial.EIGHTBITS
@@ -899,7 +899,7 @@ class CartPole(ContinuousMdpEnvironment):
                 angular_acceleration_step_size=self.cart_rotary_encoder_angular_acceleration_step_size,
                 serial=arduino_serial_connection,
                 identifier=0,
-                state_update_hz=int(self.timesteps_per_second) + 1  # ensure updates are at least the environments hz
+                state_update_hz=2 * int(self.timesteps_per_second)  # ensure updates are at least the environment's hz
             )
         )
         cart_rotary_encoder.start()
@@ -914,7 +914,7 @@ class CartPole(ContinuousMdpEnvironment):
                 angular_acceleration_step_size=self.pole_rotary_encoder_angular_acceleration_step_size,
                 serial=arduino_serial_connection,
                 identifier=1,
-                state_update_hz=int(self.timesteps_per_second) + 1  # ensure updates are at least the environments hz
+                state_update_hz=2 * int(self.timesteps_per_second)  # ensure updates are at least the environment's hz
             )
         )
         pole_rotary_encoder.start()
