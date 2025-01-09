@@ -720,6 +720,8 @@ class CartPole(ContinuousMdpEnvironment):
         self.pole_rotary_encoder_angular_acceleration_step_size = 0.2
         self.fraction_time_balancing = IncrementalSampleAverager()
         self.beta_shape_param_iter_coef = {}
+        self.coef_plot_dir = os.path.expanduser('~/Desktop/cartpole-coefficients')
+        os.makedirs(self.coef_plot_dir, exist_ok=True)
 
         (
             self.state_lock,
@@ -1735,7 +1737,7 @@ class CartPole(ContinuousMdpEnvironment):
                         list(self.beta_shape_param_iter_coef['a'][dim].values()),
                         label=f'a({dim})'
                     )
-                pdf = PdfPages(os.path.expanduser(f'~/Desktop/{self.num_resets}-a-coef.pdf'))
+                pdf = PdfPages(os.path.join(self.coef_plot_dir, f'{self.num_resets}-a-coef.pdf'))
                 pdf.savefig()
                 plt.close()
                 pdf.close()
@@ -1753,7 +1755,7 @@ class CartPole(ContinuousMdpEnvironment):
                         list(self.beta_shape_param_iter_coef['b'][dim].values()),
                         label=f'b({dim})'
                     )
-                pdf = PdfPages(os.path.expanduser(f'~/Desktop/{self.num_resets}-b-coef.pdf'))
+                pdf = PdfPages(os.path.join(self.coef_plot_dir, f'{self.num_resets}-b-coef.pdf'))
                 pdf.savefig()
                 plt.close()
                 pdf.close()
