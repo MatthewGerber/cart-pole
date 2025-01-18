@@ -1082,7 +1082,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         # create some space to do deadzone identification
         logging.info('Moving cart to right limit to create space for deadzone identification.')
-        self.set_motor_speed(20)
+        self.set_motor_speed(30)
         self.right_limit_pressed.wait()
         self.set_motor_speed(-20)
         time.sleep(3.0)
