@@ -1,5 +1,5 @@
 const size_t COMMAND_BYTES_LEN = 2;
-const size_t START_SUBCOMMAND_BYTES_LEN = 14;
+const size_t START_ROTARY_SUBCOMMAND_BYTES_LEN = 14;
 const size_t FLOAT_BYTES_LEN = 4;
 
 typedef union
@@ -8,7 +8,7 @@ typedef union
   byte bytes[FLOAT_BYTES_LEN];
 } floatbytes;
 
-byte cart_rotary_encoder_identifier = 0;
+byte CART_ROTARY_ENCODER_ID = 0;
 byte cart_rotary_white_pin;
 byte cart_rotary_green_pin;
 volatile unsigned long cart_num_phase_changes;
@@ -25,7 +25,7 @@ unsigned int cart_state_update_hz;
 unsigned long cart_state_update_interval_ms;
 unsigned long cart_rotary_state_time_ms;
 
-byte pole_rotary_encoder_identifier = 1;
+byte POLE_ROTARY_ENCODER_ID = 1;
 byte pole_rotary_white_pin;
 byte pole_rotary_green_pin;
 volatile unsigned long pole_num_phase_changes;
@@ -41,6 +41,10 @@ floatbytes pole_acceleration_step_size;
 unsigned int pole_state_update_hz;
 unsigned long pole_state_update_interval_ms;
 unsigned long pole_rotary_state_time_ms;
+
+byte MOTOR_ID = 2;
+byte motor_dir_pin;
+byte motor_pwm_pin;
 
 byte START_COMMAND = 1;
 byte GET_STATE_COMMAND = 2;
@@ -169,14 +173,13 @@ void loop() {
     byte command_bytes[COMMAND_BYTES_LEN];
     Serial.readBytes(command_bytes, COMMAND_BYTES_LEN);
     byte command = command_bytes[0];
-    byte rotary_encoder_identifier = command_bytes[1];
+    byte component_id = command_bytes[1];
 
     if (command == START_COMMAND) {
 
-      byte subcommand_bytes[START_SUBCOMMAND_BYTES_LEN];
-      Serial.readBytes(subcommand_bytes, START_SUBCOMMAND_BYTES_LEN);
-
-      if (rotary_encoder_identifier == cart_rotary_encoder_identifier) {
+      if (component_id == CART_ROTARY_ENCODER_ID) {
+        byte subcommand_bytes[START_ROTARY_SUBCOMMAND_BYTES_LEN];
+        Serial.readBytes(subcommand_bytes, START_ROTARY_SUBCOMMAND_BYTES_LEN);
         cart_rotary_white_pin = subcommand_bytes[0];
         pinMode(cart_rotary_white_pin, INPUT_PULLUP);
         digitalWrite(cart_rotary_white_pin, HIGH);
@@ -206,7 +209,9 @@ void loop() {
         cart_rotary_clockwise = false;
         cart_rotary_state_time_ms = millis();
       }
-      else if (rotary_encoder_identifier == pole_rotary_encoder_identifier) {
+      else if (component_id == POLE_ROTARY_ENCODER_ID) {
+        byte subcommand_bytes[START_ROTARY_SUBCOMMAND_BYTES_LEN];
+        Serial.readBytes(subcommand_bytes, START_ROTARY_SUBCOMMAND_BYTES_LEN);
         pole_rotary_white_pin = subcommand_bytes[0];
         pinMode(pole_rotary_white_pin, INPUT_PULLUP);
         digitalWrite(pole_rotary_white_pin, HIGH);
@@ -237,9 +242,12 @@ void loop() {
         pole_rotary_state_time_ms = millis();
       }
     }
+    else if (component_id == MOTOR_ID) {
+
+    }
 
     else if (command == GET_STATE_COMMAND) {
-      if (rotary_encoder_identifier == cart_rotary_encoder_identifier) {
+      if (component_id == CART_ROTARY_ENCODER_ID) {
         write_long(cart_num_phase_changes);
         write_float(cart_rotary_net_degrees);
         write_float(cart_velocity);
@@ -247,7 +255,7 @@ void loop() {
         write_bool(cart_rotary_clockwise);
         write_long(cart_rotary_state_time_ms);
       }
-      else if (rotary_encoder_identifier == pole_rotary_encoder_identifier) {
+      else if (component_id == POLE_ROTARY_ENCODER_ID) {
         write_long(pole_num_phase_changes);
         write_float(pole_rotary_net_degrees);
         write_float(pole_velocity);
@@ -267,12 +275,12 @@ void loop() {
       floatbytes net_total_degrees;
       set_float_bytes(net_total_degrees.bytes, subcommand_bytes, 0);
 
-      if (rotary_encoder_identifier == cart_rotary_encoder_identifier) {
+      if (component_id == CART_ROTARY_ENCODER_ID) {
         cart_rotary_index = (long) net_total_degrees.number * cart_rotary_phase_changes_per_degree;
         cart_rotary_net_degrees.number = cart_rotary_index / cart_rotary_phase_changes_per_degree;
         cart_rotary_state_time_ms = millis();
       }
-      else if (rotary_encoder_identifier == pole_rotary_encoder_identifier) {
+      else if (component_id == POLE_ROTARY_ENCODER_ID) {
         pole_rotary_index = (long) net_total_degrees.number * pole_rotary_phase_changes_per_degree;
         pole_rotary_net_degrees.number = pole_rotary_index / pole_rotary_phase_changes_per_degree;;
         pole_rotary_state_time_ms = millis();
