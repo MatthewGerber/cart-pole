@@ -1,5 +1,3 @@
-const size_t COMMAND_BYTES_LEN = 2;
-const size_t START_ROTARY_SUBCOMMAND_BYTES_LEN = 14;
 const size_t FLOAT_BYTES_LEN = 4;
 
 typedef union
@@ -8,7 +6,8 @@ typedef union
   byte bytes[FLOAT_BYTES_LEN];
 } floatbytes;
 
-byte CART_ROTARY_ENCODER_ID = 0;
+// cart rotary encoder
+const byte CART_ROTARY_ENCODER_ID = 0;
 byte cart_rotary_white_pin;
 byte cart_rotary_green_pin;
 volatile unsigned long cart_num_phase_changes;
@@ -25,7 +24,8 @@ unsigned int cart_state_update_hz;
 unsigned long cart_state_update_interval_ms;
 unsigned long cart_rotary_state_time_ms;
 
-byte POLE_ROTARY_ENCODER_ID = 1;
+// pole rotary encoder
+const byte POLE_ROTARY_ENCODER_ID = 1;
 byte pole_rotary_white_pin;
 byte pole_rotary_green_pin;
 volatile unsigned long pole_num_phase_changes;
@@ -42,15 +42,31 @@ unsigned int pole_state_update_hz;
 unsigned long pole_state_update_interval_ms;
 unsigned long pole_rotary_state_time_ms;
 
-byte MOTOR_ID = 2;
+// motor
+const byte MOTOR_ID = 2;
 byte motor_dir_pin;
 byte motor_pwm_pin;
+unsigned long motor_next_set_speed_promise_time_ms;
 
-byte START_COMMAND = 1;
-byte GET_STATE_COMMAND = 2;
-byte SET_NET_TOTAL_DEGREES_COMMAND = 3;
-byte STOP_COMMAND = 4;
+// top-level command:  command id and component id
+const size_t CMD_BYTES_LEN = 2;
 
+// init components
+const byte CMD_INIT = 1;
+const size_t CMD_INIT_ROTARY_ARGS_LEN = 14;
+const size_t CMD_INIT_MOTOR_ARGS_LEN = 2;
+
+// get/set rotary state
+const byte CMD_GET_ROTARY_STATE = 2;
+const byte CMD_SET_ROTARY_NET_TOTAL_DEGREES = 3;
+
+// stop rotary updates
+const byte CMD_STOP_ROTARY = 4;
+
+// set motor speed
+const byte CMD_SET_MOTOR_SPEED = 5;
+const size_t CMD_SET_MOTOR_SPEED_ARGS_LEN = 3;
+ 
 void setup() {
 
   Serial.begin(115200, SERIAL_8N1);
@@ -92,6 +108,20 @@ long bytes_to_long(byte bytes[]) {
   return value;
 }
 
+unsigned int bytes_to_unsigned_int(byte bytes[]) {
+  unsigned int value = 0;
+  value += ((unsigned int)bytes[0]) << 8;
+  value += ((unsigned int)bytes[1]);
+  return value;
+}
+
+int bytes_to_int(byte bytes[]) {
+  int value = 0;
+  value += ((int)bytes[0]) << 8;
+  value += ((int)bytes[1]);
+  return value;
+}
+
 void long_to_bytes(long value, byte bytes[]) {
   bytes[3] = (byte)value;
   bytes[2] = (byte)(value >> 8);
@@ -122,6 +152,7 @@ void set_float_bytes(byte dest[], byte src[], size_t src_start_idx) {
 
 void loop() {
 
+  // update cart rotary encoder state
   unsigned long curr_time_ms = millis();
   if (curr_time_ms <= cart_rotary_state_time_ms) {
     cart_rotary_state_time_ms = curr_time_ms;
@@ -145,6 +176,7 @@ void loop() {
     }
   }
 
+  // update pole rotary encoder state
   curr_time_ms = millis();
   if (curr_time_ms <= pole_rotary_state_time_ms) {
     pole_rotary_state_time_ms = curr_time_ms;
@@ -168,22 +200,30 @@ void loop() {
     }
   }
 
+  // check for a broken promise about setting the motor speed. stop motor if promise is broken.
+  if (motor_next_set_speed_promise_time_ms != 0 && millis() > motor_next_set_speed_promise_time_ms) {
+    analogWrite(motor_pwm_pin, 0);
+    motor_next_set_speed_promise_time_ms = 0;
+  }
+
+  // process a command sent over the serial connection
   if (Serial.available()) {
 
-    byte command_bytes[COMMAND_BYTES_LEN];
-    Serial.readBytes(command_bytes, COMMAND_BYTES_LEN);
+    byte command_bytes[CMD_BYTES_LEN];
+    Serial.readBytes(command_bytes, CMD_BYTES_LEN);
     byte command = command_bytes[0];
     byte component_id = command_bytes[1];
 
-    if (command == START_COMMAND) {
+    // initialize the component
+    if (command == CMD_INIT) {
 
       if (component_id == CART_ROTARY_ENCODER_ID) {
-        byte subcommand_bytes[START_ROTARY_SUBCOMMAND_BYTES_LEN];
-        Serial.readBytes(subcommand_bytes, START_ROTARY_SUBCOMMAND_BYTES_LEN);
-        cart_rotary_white_pin = subcommand_bytes[0];
+        byte args[CMD_INIT_ROTARY_ARGS_LEN];
+        Serial.readBytes(args, CMD_INIT_ROTARY_ARGS_LEN);
+        cart_rotary_white_pin = args[0];
         pinMode(cart_rotary_white_pin, INPUT_PULLUP);
         digitalWrite(cart_rotary_white_pin, HIGH);
-        cart_rotary_green_pin = subcommand_bytes[1];
+        cart_rotary_green_pin = args[1];
         pinMode(cart_rotary_green_pin, INPUT_PULLUP);
         digitalWrite(cart_rotary_green_pin, HIGH);
 
@@ -193,10 +233,10 @@ void loop() {
 
         // todo:  1 byte for phase-change mode
 
-        set_float_bytes(cart_velocity_step_size.bytes, subcommand_bytes, 5);
-        set_float_bytes(cart_acceleration_step_size.bytes, subcommand_bytes, 9);
+        set_float_bytes(cart_velocity_step_size.bytes, args, 5);
+        set_float_bytes(cart_acceleration_step_size.bytes, args, 9);
 
-        cart_state_update_hz = subcommand_bytes[13];
+        cart_state_update_hz = args[13];
         cart_state_update_interval_ms = (unsigned long) (1000.0 / float(cart_state_update_hz));
 
         attachInterrupt(digitalPinToInterrupt(cart_rotary_white_pin), cart_white_changed, CHANGE);
@@ -210,12 +250,12 @@ void loop() {
         cart_rotary_state_time_ms = millis();
       }
       else if (component_id == POLE_ROTARY_ENCODER_ID) {
-        byte subcommand_bytes[START_ROTARY_SUBCOMMAND_BYTES_LEN];
-        Serial.readBytes(subcommand_bytes, START_ROTARY_SUBCOMMAND_BYTES_LEN);
-        pole_rotary_white_pin = subcommand_bytes[0];
+        byte args[CMD_INIT_ROTARY_ARGS_LEN];
+        Serial.readBytes(args, CMD_INIT_ROTARY_ARGS_LEN);
+        pole_rotary_white_pin = args[0];
         pinMode(pole_rotary_white_pin, INPUT_PULLUP);
         digitalWrite(pole_rotary_white_pin, HIGH);
-        pole_rotary_green_pin = subcommand_bytes[1];
+        pole_rotary_green_pin = args[1];
         pinMode(pole_rotary_green_pin, INPUT_PULLUP);
         digitalWrite(pole_rotary_green_pin, HIGH);
 
@@ -225,10 +265,10 @@ void loop() {
 
         // todo:  1 byte for phase-change mode
 
-        set_float_bytes(pole_velocity_step_size.bytes, subcommand_bytes, 5);
-        set_float_bytes(pole_acceleration_step_size.bytes, subcommand_bytes, 9);
+        set_float_bytes(pole_velocity_step_size.bytes, args, 5);
+        set_float_bytes(pole_acceleration_step_size.bytes, args, 9);
 
-        pole_state_update_hz = subcommand_bytes[13];
+        pole_state_update_hz = args[13];
         pole_state_update_interval_ms = (unsigned long) (1000.0 / float(pole_state_update_hz));
 
         attachInterrupt(digitalPinToInterrupt(pole_rotary_white_pin), pole_white_changed, CHANGE);
@@ -241,12 +281,23 @@ void loop() {
         pole_rotary_clockwise = false;
         pole_rotary_state_time_ms = millis();
       }
-    }
-    else if (component_id == MOTOR_ID) {
+      else if (component_id == MOTOR_ID) {
+        byte args[CMD_INIT_MOTOR_ARGS_LEN];
+        Serial.readBytes(args, CMD_INIT_MOTOR_ARGS_LEN);
 
+        motor_dir_pin = args[0];
+        pinMode(motor_dir_pin, OUTPUT);
+        digitalWrite(motor_dir_pin, LOW);
+
+        motor_pwm_pin = args[1];
+        pinMode(motor_pwm_pin, OUTPUT);
+        analogWrite(motor_pwm_pin, 0);
+
+        motor_next_set_speed_promise_time_ms = 0;
+      }
     }
 
-    else if (command == GET_STATE_COMMAND) {
+    else if (command == CMD_GET_ROTARY_STATE) {
       if (component_id == CART_ROTARY_ENCODER_ID) {
         write_long(cart_num_phase_changes);
         write_float(cart_rotary_net_degrees);
@@ -265,15 +316,15 @@ void loop() {
       }
     }
 
-    else if (command == SET_NET_TOTAL_DEGREES_COMMAND) {
+    else if (command == CMD_SET_ROTARY_NET_TOTAL_DEGREES) {
 
-      byte subcommand_bytes[FLOAT_BYTES_LEN];
-      Serial.readBytes(subcommand_bytes, FLOAT_BYTES_LEN);
+      byte args[FLOAT_BYTES_LEN];
+      Serial.readBytes(args, FLOAT_BYTES_LEN);
 
       noInterrupts();
 
       floatbytes net_total_degrees;
-      set_float_bytes(net_total_degrees.bytes, subcommand_bytes, 0);
+      set_float_bytes(net_total_degrees.bytes, args, 0);
 
       if (component_id == CART_ROTARY_ENCODER_ID) {
         cart_rotary_index = (long) net_total_degrees.number * cart_rotary_phase_changes_per_degree;
@@ -290,9 +341,29 @@ void loop() {
 
     }
 
-    else if (command == STOP_COMMAND) {
+    else if (command == CMD_STOP_ROTARY) {
       detachInterrupt(digitalPinToInterrupt(cart_rotary_white_pin));
       detachInterrupt(digitalPinToInterrupt(pole_rotary_white_pin));
+    }
+
+    else if (command == CMD_SET_MOTOR_SPEED) {
+
+      byte args[CMD_SET_MOTOR_SPEED_ARGS_LEN];
+      Serial.readBytes(args, CMD_SET_MOTOR_SPEED_ARGS_LEN);
+
+      byte duty_cycle = args[0];
+      analogWrite(motor_pwm_pin, duty_cycle);
+
+      byte next_set_promise_bytes[2];
+      next_set_promise_bytes[0] = args[1];
+      next_set_promise_bytes[1] = args[2];
+      unsigned int next_set_promise_ms = bytes_to_unsigned_int(next_set_promise_bytes);
+      if (next_set_promise_ms == 0) {
+        motor_next_set_speed_promise_time_ms = 0;
+      }
+      else {
+        motor_next_set_speed_promise_time_ms = millis() + next_set_promise_ms;
+      }
     }
   }
 }
