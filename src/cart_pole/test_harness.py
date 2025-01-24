@@ -4,14 +4,12 @@ import RPi.GPIO as gpio
 import serial
 from matplotlib import pyplot as plt
 from serial import Serial
-from smbus2 import SMBus
 
 from raspberry_py.gpio import setup, cleanup, CkPin
 from raspberry_py.gpio.communication import LockingSerial
 from raspberry_py.gpio.controls import LimitSwitch
-from raspberry_py.gpio.integrated_circuits import PulseWaveModulatorPCA9685PW
 from raspberry_py.gpio.lights import LED
-from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectPCA9685PW
+from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectArduino
 from raspberry_py.gpio.sensors import RotaryEncoder, UltrasonicRangeFinder
 
 
@@ -26,7 +24,8 @@ def main():
             parity=serial.PARITY_NONE,
             stopbits=serial.STOPBITS_ONE,
             bytesize=serial.EIGHTBITS
-        )
+        ),
+        throughput_step_size=0.1
     )
 
     # basic write/read
@@ -65,17 +64,16 @@ def main():
         interface=arduino_interface
     )
     rotary_encoder.start()
-    pca9685pw = PulseWaveModulatorPCA9685PW(
-        bus=SMBus('/dev/i2c-1'),
-        address=PulseWaveModulatorPCA9685PW.PCA9685PW_ADDRESS,
-        frequency_hz=400
+    motor_driver = DcMotorDriverIndirectArduino(
+        identifier=2,
+        serial=locking_serial,
+        arduino_direction_pin=12,
+        arduino_pwm_pin=9,
+        next_set_speed_promise_ms=500,
+        reverse=False
     )
     motor = DcMotor(
-        driver=DcMotorDriverIndirectPCA9685PW(
-            pca9685pw=pca9685pw,
-            pwm_channel=0,
-            direction_pin=CkPin.GPIO21
-        ),
+        driver=motor_driver,
         speed=0
     )
     gpio.setup(CkPin.GPIO6, gpio.OUT)
@@ -224,10 +222,10 @@ def main():
         # test_range_finder()
         # test_motor_failsafe()
         # test_limit_switches()
-        # test_motor()
+        test_motor()
         # test_led()
         # test_rotary_encoder_state()
-        test_plot_rotary_encoder_state()
+        # test_plot_rotary_encoder_state()
         # test_rotary_encoder_wait_for_stationarity()
 
     except KeyboardInterrupt:

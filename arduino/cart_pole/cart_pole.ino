@@ -1,5 +1,6 @@
 const size_t FLOAT_BYTES_LEN = 4;
 
+// structure that gives simultaneous access to floating-point numbers and their underlying bytes.
 typedef union
 {
   float number;
@@ -46,7 +47,8 @@ unsigned long pole_rotary_state_time_ms;
 const byte MOTOR_ID = 2;
 byte motor_dir_pin;
 byte motor_pwm_pin;
-unsigned long motor_next_set_speed_promise_time_ms;
+int motor_current_speed;
+unsigned long motor_next_set_speed_promise_time_ms;  // epoch time by which the caller promises to set the speed again. the present code will stop the motor if the promise is not honored. a value of 0 indicates no promises.
 
 // top-level command:  command id and component id
 const size_t CMD_BYTES_LEN = 2;
@@ -63,9 +65,9 @@ const byte CMD_SET_ROTARY_NET_TOTAL_DEGREES = 3;
 // stop rotary updates
 const byte CMD_STOP_ROTARY = 4;
 
-// set motor speed
+// set motor speed with optional promise for next set
 const byte CMD_SET_MOTOR_SPEED = 5;
-const size_t CMD_SET_MOTOR_SPEED_ARGS_LEN = 3;
+const size_t CMD_SET_MOTOR_SPEED_ARGS_LEN = 4;
  
 void setup() {
 
@@ -202,7 +204,8 @@ void loop() {
 
   // check for a broken promise about setting the motor speed. stop motor if promise is broken.
   if (motor_next_set_speed_promise_time_ms != 0 && millis() > motor_next_set_speed_promise_time_ms) {
-    analogWrite(motor_pwm_pin, 0);
+    motor_current_speed = 0;
+    analogWrite(motor_pwm_pin, motor_current_speed);
     motor_next_set_speed_promise_time_ms = 0;
   }
 
@@ -214,7 +217,7 @@ void loop() {
     byte command = command_bytes[0];
     byte component_id = command_bytes[1];
 
-    // initialize the component
+    // initialize a component
     if (command == CMD_INIT) {
 
       if (component_id == CART_ROTARY_ENCODER_ID) {
@@ -282,6 +285,10 @@ void loop() {
         pole_rotary_state_time_ms = millis();
       }
       else if (component_id == MOTOR_ID) {
+
+        motor_current_speed = 0;
+        motor_next_set_speed_promise_time_ms = 0;
+
         byte args[CMD_INIT_MOTOR_ARGS_LEN];
         Serial.readBytes(args, CMD_INIT_MOTOR_ARGS_LEN);
 
@@ -291,9 +298,8 @@ void loop() {
 
         motor_pwm_pin = args[1];
         pinMode(motor_pwm_pin, OUTPUT);
-        analogWrite(motor_pwm_pin, 0);
-
-        motor_next_set_speed_promise_time_ms = 0;
+        analogWrite(motor_pwm_pin, motor_current_speed);
+  
       }
     }
 
@@ -351,9 +357,27 @@ void loop() {
       byte args[CMD_SET_MOTOR_SPEED_ARGS_LEN];
       Serial.readBytes(args, CMD_SET_MOTOR_SPEED_ARGS_LEN);
 
-      byte duty_cycle = args[0];
+      byte new_speed_bytes[2];
+      new_speed_bytes[0] = args[0];
+      new_speed_bytes[1] = args[1];
+      int new_speed = bytes_to_int(new_speed_bytes);
+
+      // change the direction output if needed. first set pwm to 0 if we're changing direction.
+      if (bitRead(motor_current_speed, 15) != bitRead(new_speed, 15)) {
+        analogWrite(motor_pwm_pin, 0);
+        if (new_speed > 0) {
+          digitalWrite(motor_dir_pin, HIGH);
+        }
+        else {
+          digitalWrite(motor_dir_pin, LOW);
+        }
+      }
+
+      // set the duty cycle
+      byte duty_cycle = (byte) 255.0 * 100.0 / abs(new_speed);
       analogWrite(motor_pwm_pin, duty_cycle);
 
+      // set new promise if we have one
       byte next_set_promise_bytes[2];
       next_set_promise_bytes[0] = args[1];
       next_set_promise_bytes[1] = args[2];

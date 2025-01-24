@@ -23,7 +23,7 @@ from raspberry_py.gpio.communication import LockingSerial
 from raspberry_py.gpio.controls import LimitSwitch
 from raspberry_py.gpio.integrated_circuits import PulseWaveModulatorPCA9685PW
 from raspberry_py.gpio.lights import LED
-from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectPCA9685PW
+from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectArduino
 from raspberry_py.gpio.sensors import RotaryEncoder, UltrasonicRangeFinder
 from rlai.core import MdpState, Action, Agent, Reward, Environment, MdpAgent, ContinuousMultiDimensionalAction
 from rlai.core.environments.mdp import ContinuousMdpEnvironment
@@ -726,6 +726,7 @@ class CartPole(ContinuousMdpEnvironment):
         (
             self.state_lock,
             self.pca9685pw,
+            self.motor_driver,
             self.motor,
             self.cart_rotary_encoder,
             self.pole_rotary_encoder,
@@ -822,6 +823,7 @@ class CartPole(ContinuousMdpEnvironment):
         (
             self.state_lock,
             self.pca9685pw,
+            self.motor_driver,
             self.motor,
             self.cart_rotary_encoder,
             self.pole_rotary_encoder,
@@ -847,6 +849,7 @@ class CartPole(ContinuousMdpEnvironment):
     ) -> Tuple[
         RLock,
         PulseWaveModulatorPCA9685PW,
+        DcMotorDriverIndirectArduino,
         DcMotor,
         CartRotaryEncoder,
         RotaryEncoder,
@@ -888,7 +891,8 @@ class CartPole(ContinuousMdpEnvironment):
                 parity=serial.PARITY_NONE,
                 stopbits=serial.STOPBITS_ONE,
                 bytesize=serial.EIGHTBITS
-            )
+            ),
+            throughput_step_size=0.1
         )
 
         cart_rotary_encoder = CartRotaryEncoder(
@@ -965,18 +969,25 @@ class CartPole(ContinuousMdpEnvironment):
             termination_led
         ]
 
+        motor_driver = DcMotorDriverIndirectArduino(
+            identifier=2,
+            serial=arduino_serial_connection,
+            arduino_direction_pin=12,
+            arduino_pwm_pin=9,
+            next_set_speed_promise_ms=int(10.0 * (1000.0 * 1.0 / self.timesteps_per_second)),
+            reverse=self.motor_negative_speed_is_right
+        )
+
+        motor = DcMotor(
+            driver=motor_driver,
+            speed=0
+        )
+
         return (
             RLock(),
             pca9685pw,
-            DcMotor(
-                driver=DcMotorDriverIndirectPCA9685PW(
-                    pca9685pw=pca9685pw,
-                    pwm_channel=self.motor_pwm_channel,
-                    direction_pin=self.motor_pwm_direction_pin,
-                    reverse=self.motor_negative_speed_is_right
-                ),
-                speed=0
-            ),
+            motor_driver,
+            motor,
             cart_rotary_encoder,
             pole_rotary_encoder,
             left_limit_switch,
