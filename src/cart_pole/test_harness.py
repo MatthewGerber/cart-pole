@@ -25,7 +25,7 @@ def main():
             stopbits=serial.STOPBITS_ONE,
             bytesize=serial.EIGHTBITS
         ),
-        throughput_step_size=0.1
+        throughput_step_size=0.05
     )
 
     # basic write/read
@@ -69,7 +69,7 @@ def main():
         serial=locking_serial,
         arduino_direction_pin=12,
         arduino_pwm_pin=9,
-        next_set_speed_promise_ms=500,
+        next_set_speed_promise_ms=250,
         reverse=False
     )
     motor = DcMotor(
@@ -157,14 +157,32 @@ def main():
             time.sleep(1.0)
 
     def test_motor():
+        print('Turning off failsafe.')
         gpio.output(CkPin.GPIO6, gpio.LOW)
         motor.start()
-        motor.set_speed(50)
-        time.sleep(1)
-        motor.set_speed(-50)
-        time.sleep(1)
+        for speed in range(0, 100):
+            motor.set_speed(speed)
+            time.sleep(0.05)
+
+        motor_driver.send_promise = True
+        for speed in range(100, -100, -1):
+            motor.set_speed(speed)
+            if speed == 50:
+                print(f'Simulating freeze...')
+                time.sleep(5.0)
+            else:
+                time.sleep(0.05)
+
+        for speed in range(-100, 0):
+            motor.set_speed(speed)
+            time.sleep(0.05)
+
         motor.set_speed(0)
         motor.stop()
+
+        print(
+            f'write/s:  {locking_serial.bytes_written_per_second}; read/s:  {locking_serial.bytes_read_per_second}'
+        )
 
     def test_limit_switches():
         left_limit_switch.events.clear()

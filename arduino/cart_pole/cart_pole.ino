@@ -24,6 +24,7 @@ floatbytes cart_acceleration_step_size;
 unsigned int cart_state_update_hz;
 unsigned long cart_state_update_interval_ms;
 unsigned long cart_rotary_state_time_ms;
+bool cart_rotary_inited = false;
 
 // pole rotary encoder
 const byte POLE_ROTARY_ENCODER_ID = 1;
@@ -42,13 +43,15 @@ floatbytes pole_acceleration_step_size;
 unsigned int pole_state_update_hz;
 unsigned long pole_state_update_interval_ms;
 unsigned long pole_rotary_state_time_ms;
+bool pole_rotary_inited = false;
 
 // motor
 const byte MOTOR_ID = 2;
 byte motor_dir_pin;
 byte motor_pwm_pin;
 int motor_current_speed;
-unsigned long motor_next_set_speed_promise_time_ms;  // epoch time by which the caller promises to set the speed again. the present code will stop the motor if the promise is not honored. a value of 0 indicates no promises.
+unsigned long motor_next_set_speed_promise_time_ms;
+bool motor_inited = false;
 
 // top-level command:  command id and component id
 const size_t CMD_BYTES_LEN = 2;
@@ -67,7 +70,7 @@ const byte CMD_STOP_ROTARY = 4;
 
 // set motor speed with optional promise for next set
 const byte CMD_SET_MOTOR_SPEED = 5;
-const size_t CMD_SET_MOTOR_SPEED_ARGS_LEN = 4;
+const size_t CMD_SET_MOTOR_SPEED_ARGS_LEN = 5;
  
 void setup() {
 
@@ -110,17 +113,10 @@ long bytes_to_long(byte bytes[]) {
   return value;
 }
 
-unsigned int bytes_to_unsigned_int(byte bytes[]) {
+unsigned int bytes_to_unsigned_int(byte bytes[], size_t start_idx) {
   unsigned int value = 0;
-  value += ((unsigned int)bytes[0]) << 8;
-  value += ((unsigned int)bytes[1]);
-  return value;
-}
-
-int bytes_to_int(byte bytes[]) {
-  int value = 0;
-  value += ((int)bytes[0]) << 8;
-  value += ((int)bytes[1]);
+  value += ((unsigned int)bytes[start_idx]) << 8;
+  value += ((unsigned int)bytes[start_idx + 1]);
   return value;
 }
 
@@ -155,55 +151,59 @@ void set_float_bytes(byte dest[], byte src[], size_t src_start_idx) {
 void loop() {
 
   // update cart rotary encoder state
-  unsigned long curr_time_ms = millis();
-  if (curr_time_ms <= cart_rotary_state_time_ms) {
-    cart_rotary_state_time_ms = curr_time_ms;
-  }
-  else {
-    unsigned long elapsed_ms = curr_time_ms - cart_rotary_state_time_ms;
-    if (elapsed_ms >= cart_state_update_interval_ms) {
-      noInterrupts();
-      long cart_rotary_index_value = cart_rotary_index;
-      interrupts();
-      float previous_net_degrees = cart_rotary_net_degrees.number;
-      cart_rotary_net_degrees.number = cart_rotary_index_value / cart_rotary_phase_changes_per_degree;
-      float elapsed_seconds = float(elapsed_ms) / 1000.0;
-      float previous_velocity = cart_velocity.number;
-      float current_velocity = (cart_rotary_net_degrees.number - previous_net_degrees) / elapsed_seconds;
-      cart_velocity.number = (1.0 - cart_velocity_step_size.number) * previous_velocity + cart_velocity_step_size.number * current_velocity;
-      float previous_acceleration = cart_acceleration.number;
-      float current_acceleration = (cart_velocity.number - previous_velocity) / elapsed_seconds;
-      cart_acceleration.number = (1.0 - cart_acceleration_step_size.number) * previous_acceleration + cart_acceleration_step_size.number * current_acceleration;
+  if (cart_rotary_inited) {
+    unsigned long curr_time_ms = millis();
+    if (curr_time_ms <= cart_rotary_state_time_ms) {
       cart_rotary_state_time_ms = curr_time_ms;
+    }
+    else {
+      unsigned long elapsed_ms = curr_time_ms - cart_rotary_state_time_ms;
+      if (elapsed_ms >= cart_state_update_interval_ms) {
+        noInterrupts();
+        long cart_rotary_index_value = cart_rotary_index;
+        interrupts();
+        float previous_net_degrees = cart_rotary_net_degrees.number;
+        cart_rotary_net_degrees.number = cart_rotary_index_value / cart_rotary_phase_changes_per_degree;
+        float elapsed_seconds = float(elapsed_ms) / 1000.0;
+        float previous_velocity = cart_velocity.number;
+        float current_velocity = (cart_rotary_net_degrees.number - previous_net_degrees) / elapsed_seconds;
+        cart_velocity.number = (1.0 - cart_velocity_step_size.number) * previous_velocity + cart_velocity_step_size.number * current_velocity;
+        float previous_acceleration = cart_acceleration.number;
+        float current_acceleration = (cart_velocity.number - previous_velocity) / elapsed_seconds;
+        cart_acceleration.number = (1.0 - cart_acceleration_step_size.number) * previous_acceleration + cart_acceleration_step_size.number * current_acceleration;
+        cart_rotary_state_time_ms = curr_time_ms;
+      }
     }
   }
 
   // update pole rotary encoder state
-  curr_time_ms = millis();
-  if (curr_time_ms <= pole_rotary_state_time_ms) {
-    pole_rotary_state_time_ms = curr_time_ms;
-  }
-  else {
-    unsigned long elapsed_ms = curr_time_ms - pole_rotary_state_time_ms;
-    if (elapsed_ms >= pole_state_update_interval_ms) {
-      noInterrupts();
-      long pole_rotary_index_value = pole_rotary_index;
-      interrupts();
-      float previous_net_degrees = pole_rotary_net_degrees.number;
-      pole_rotary_net_degrees.number = pole_rotary_index_value / pole_rotary_phase_changes_per_degree;
-      float elapsed_seconds = float(elapsed_ms) / 1000.0;
-      float previous_velocity = pole_velocity.number;
-      float current_velocity = (pole_rotary_net_degrees.number - previous_net_degrees) / elapsed_seconds;
-      pole_velocity.number = (1.0 - pole_velocity_step_size.number) * previous_velocity + pole_velocity_step_size.number * current_velocity;
-      float previous_acceleration = pole_acceleration.number;
-      float current_acceleration = (pole_velocity.number - previous_velocity) / elapsed_seconds;
-      pole_acceleration.number = (1.0 - pole_acceleration_step_size.number) * previous_acceleration + pole_acceleration_step_size.number * current_acceleration;
+  if (pole_rotary_inited) {
+    unsigned long curr_time_ms = millis();
+    if (curr_time_ms <= pole_rotary_state_time_ms) {
       pole_rotary_state_time_ms = curr_time_ms;
+    }
+    else {
+      unsigned long elapsed_ms = curr_time_ms - pole_rotary_state_time_ms;
+      if (elapsed_ms >= pole_state_update_interval_ms) {
+        noInterrupts();
+        long pole_rotary_index_value = pole_rotary_index;
+        interrupts();
+        float previous_net_degrees = pole_rotary_net_degrees.number;
+        pole_rotary_net_degrees.number = pole_rotary_index_value / pole_rotary_phase_changes_per_degree;
+        float elapsed_seconds = float(elapsed_ms) / 1000.0;
+        float previous_velocity = pole_velocity.number;
+        float current_velocity = (pole_rotary_net_degrees.number - previous_net_degrees) / elapsed_seconds;
+        pole_velocity.number = (1.0 - pole_velocity_step_size.number) * previous_velocity + pole_velocity_step_size.number * current_velocity;
+        float previous_acceleration = pole_acceleration.number;
+        float current_acceleration = (pole_velocity.number - previous_velocity) / elapsed_seconds;
+        pole_acceleration.number = (1.0 - pole_acceleration_step_size.number) * previous_acceleration + pole_acceleration_step_size.number * current_acceleration;
+        pole_rotary_state_time_ms = curr_time_ms;
+      }
     }
   }
 
   // check for a broken promise about setting the motor speed. stop motor if promise is broken.
-  if (motor_next_set_speed_promise_time_ms != 0 && millis() > motor_next_set_speed_promise_time_ms) {
+  if (motor_inited && motor_next_set_speed_promise_time_ms != 0 && millis() > motor_next_set_speed_promise_time_ms) {
     motor_current_speed = 0;
     analogWrite(motor_pwm_pin, motor_current_speed);
     motor_next_set_speed_promise_time_ms = 0;
@@ -251,6 +251,7 @@ void loop() {
         cart_acceleration.number = 0.0;
         cart_rotary_clockwise = false;
         cart_rotary_state_time_ms = millis();
+        cart_rotary_inited = true;
       }
       else if (component_id == POLE_ROTARY_ENCODER_ID) {
         byte args[CMD_INIT_ROTARY_ARGS_LEN];
@@ -283,6 +284,7 @@ void loop() {
         pole_acceleration.number = 0.0;
         pole_rotary_clockwise = false;
         pole_rotary_state_time_ms = millis();
+        pole_rotary_inited = true;
       }
       else if (component_id == MOTOR_ID) {
 
@@ -294,12 +296,14 @@ void loop() {
 
         motor_dir_pin = args[0];
         pinMode(motor_dir_pin, OUTPUT);
-        digitalWrite(motor_dir_pin, LOW);
+        digitalWrite(motor_dir_pin, HIGH);
 
         motor_pwm_pin = args[1];
         pinMode(motor_pwm_pin, OUTPUT);
         analogWrite(motor_pwm_pin, motor_current_speed);
   
+        motor_inited = true;
+
       }
     }
 
@@ -348,45 +352,57 @@ void loop() {
     }
 
     else if (command == CMD_STOP_ROTARY) {
-      detachInterrupt(digitalPinToInterrupt(cart_rotary_white_pin));
-      detachInterrupt(digitalPinToInterrupt(pole_rotary_white_pin));
+      if (component_id == CART_ROTARY_ENCODER_ID) {
+        detachInterrupt(digitalPinToInterrupt(cart_rotary_white_pin));
+        cart_rotary_inited = false;
+      }
+      else if (component_id == POLE_ROTARY_ENCODER_ID) {
+        detachInterrupt(digitalPinToInterrupt(pole_rotary_white_pin));
+        pole_rotary_inited = false;
+      }
     }
 
     else if (command == CMD_SET_MOTOR_SPEED) {
 
-      byte args[CMD_SET_MOTOR_SPEED_ARGS_LEN];
-      Serial.readBytes(args, CMD_SET_MOTOR_SPEED_ARGS_LEN);
+      if (component_id == MOTOR_ID) {
+                
+        byte args[CMD_SET_MOTOR_SPEED_ARGS_LEN];
+        Serial.readBytes(args, CMD_SET_MOTOR_SPEED_ARGS_LEN);
 
-      byte new_speed_bytes[2];
-      new_speed_bytes[0] = args[0];
-      new_speed_bytes[1] = args[1];
-      int new_speed = bytes_to_int(new_speed_bytes);
+        int new_speed = bytes_to_unsigned_int(args, 0);
 
-      // change the direction output if needed. first set pwm to 0 if we're changing direction.
-      if (bitRead(motor_current_speed, 15) != bitRead(new_speed, 15)) {
-        analogWrite(motor_pwm_pin, 0);
-        if (new_speed > 0) {
-          digitalWrite(motor_dir_pin, HIGH);
+        bool positive_speed = args[2];
+        if (!positive_speed) {
+          new_speed = -new_speed;
+        }
+
+        unsigned int next_set_promise_ms = bytes_to_unsigned_int(args, 3);
+
+        /* change the direction output if needed. first set pwm to 0 if we're changing direction
+         * so that the motor does not spin in the opposite direction once we set this. */
+        if (bitRead(motor_current_speed, 15) != bitRead(new_speed, 15)) {
+          analogWrite(motor_pwm_pin, 0);
+          if (new_speed > 0) {
+            digitalWrite(motor_dir_pin, HIGH);
+          }
+          else {
+            digitalWrite(motor_dir_pin, LOW);
+          }
+        }
+
+        // set the duty cycle corresponding to the new speed
+        analogWrite(motor_pwm_pin, byte(255.0 * abs(new_speed) / 100.0));
+
+        // set new promise if we have one
+        if (next_set_promise_ms == 0) {
+          motor_next_set_speed_promise_time_ms = 0;
         }
         else {
-          digitalWrite(motor_dir_pin, LOW);
+          motor_next_set_speed_promise_time_ms = millis() + next_set_promise_ms;
         }
-      }
 
-      // set the duty cycle
-      byte duty_cycle = (byte) 255.0 * 100.0 / abs(new_speed);
-      analogWrite(motor_pwm_pin, duty_cycle);
+        motor_current_speed = new_speed;
 
-      // set new promise if we have one
-      byte next_set_promise_bytes[2];
-      next_set_promise_bytes[0] = args[1];
-      next_set_promise_bytes[1] = args[2];
-      unsigned int next_set_promise_ms = bytes_to_unsigned_int(next_set_promise_bytes);
-      if (next_set_promise_ms == 0) {
-        motor_next_set_speed_promise_time_ms = 0;
-      }
-      else {
-        motor_next_set_speed_promise_time_ms = millis() + next_set_promise_ms;
       }
     }
   }
