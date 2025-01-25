@@ -69,7 +69,7 @@ def main():
         serial=locking_serial,
         arduino_direction_pin=12,
         arduino_pwm_pin=9,
-        next_set_speed_promise_ms=250,
+        next_set_speed_promise_ms=100,
         reverse=False
     )
     motor = DcMotor(
@@ -157,19 +157,26 @@ def main():
             time.sleep(1.0)
 
     def test_motor():
+
         print('Turning off failsafe.')
         gpio.output(CkPin.GPIO6, gpio.LOW)
+
         motor.start()
+
         for speed in range(0, 100):
             motor.set_speed(speed)
             time.sleep(0.05)
+
+        print('At maximum speed.')
+        time.sleep(10.0)
 
         motor_driver.send_promise = True
         for speed in range(100, -100, -1):
             motor.set_speed(speed)
             if speed == 50:
-                print(f'Simulating freeze...')
+                print(f'Simulating freeze...', end='')
                 time.sleep(5.0)
+                print(f'resuming.')
             else:
                 time.sleep(0.05)
 
@@ -236,13 +243,18 @@ def main():
 
     try:
         print('Running test...')
-        # test_set_net_total_degrees()
-        # test_range_finder()
-        # test_motor_failsafe()
-        # test_limit_switches()
-        test_motor()
+
         # test_led()
+        # test_range_finder()
+        # test_limit_switches()
+
+        # motor tests
+        test_motor()
+        # test_motor_failsafe()
+
+        # rotary encoder tests
         # test_rotary_encoder_state()
+        # test_set_net_total_degrees()
         # test_plot_rotary_encoder_state()
         # test_rotary_encoder_wait_for_stationarity()
 

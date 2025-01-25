@@ -974,7 +974,9 @@ class CartPole(ContinuousMdpEnvironment):
             serial=arduino_serial_connection,
             arduino_direction_pin=12,
             arduino_pwm_pin=9,
-            next_set_speed_promise_ms=int(10.0 * (1000.0 * 1.0 / self.timesteps_per_second)),
+            next_set_speed_promise_ms=int(
+                5.0 * (1000.0 * 1.0 / self.timesteps_per_second)  # stop if we miss 5 steps
+            ),
             reverse=self.motor_negative_speed_is_right
         )
 
@@ -1498,6 +1500,11 @@ class CartPole(ContinuousMdpEnvironment):
             # enable the failsafe pwm now that we've set the motor speed to zero and the cart has stopped
             self.enable_motor_pwm()
 
+        # discontinue sending next-set promises. we'll resume these if/when we reset for a new episode. we need to stop
+        # the promises because out-of-episode motor speeds changes for reasons (e.g., calibration) that aren't a concern
+        # for the whole next-set promise thing.
+        self.motor_driver.send_promise = False
+
     def disable_motor_pwm(
             self
     ):
@@ -1786,6 +1793,10 @@ class CartPole(ContinuousMdpEnvironment):
 
         self.state = self.get_state(t=None, terminal=False)
         self.previous_timestep_epoch = None
+
+        # we're about to enter the episode and begin sending speed-change commands to the arduino. begin sending
+        # next-set promises so that freezes in the present python program do not cause the motor to run away from us.
+        self.motor_driver.send_promise = True
 
         logging.info(f'State after reset:  {self.state}')
 
