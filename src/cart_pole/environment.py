@@ -16,12 +16,10 @@ from matplotlib import pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from numpy.random import RandomState
 from serial import Serial
-from smbus2 import SMBus
 
 from raspberry_py.gpio import CkPin, get_ck_pin, setup, cleanup
 from raspberry_py.gpio.communication import LockingSerial
 from raspberry_py.gpio.controls import LimitSwitch
-from raspberry_py.gpio.integrated_circuits import PulseWaveModulatorPCA9685PW
 from raspberry_py.gpio.lights import LED
 from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectArduino
 from raspberry_py.gpio.sensors import RotaryEncoder, UltrasonicRangeFinder
@@ -725,7 +723,6 @@ class CartPole(ContinuousMdpEnvironment):
 
         (
             self.state_lock,
-            self.pca9685pw,
             self.motor_driver,
             self.motor,
             self.cart_rotary_encoder,
@@ -822,7 +819,6 @@ class CartPole(ContinuousMdpEnvironment):
 
         (
             self.state_lock,
-            self.pca9685pw,
             self.motor_driver,
             self.motor,
             self.cart_rotary_encoder,
@@ -848,7 +844,6 @@ class CartPole(ContinuousMdpEnvironment):
             self
     ) -> Tuple[
         RLock,
-        PulseWaveModulatorPCA9685PW,
         DcMotorDriverIndirectArduino,
         DcMotor,
         CartRotaryEncoder,
@@ -877,12 +872,6 @@ class CartPole(ContinuousMdpEnvironment):
         """
 
         setup()
-
-        pca9685pw = PulseWaveModulatorPCA9685PW(
-            bus=SMBus('/dev/i2c-1'),
-            address=PulseWaveModulatorPCA9685PW.PCA9685PW_ADDRESS,
-            frequency_hz=500
-        )
 
         arduino_serial_connection = LockingSerial(
             connection=Serial(
@@ -987,7 +976,6 @@ class CartPole(ContinuousMdpEnvironment):
 
         return (
             RLock(),
-            pca9685pw,
             motor_driver,
             motor,
             cart_rotary_encoder,
@@ -1097,7 +1085,7 @@ class CartPole(ContinuousMdpEnvironment):
         logging.info('Moving cart to right limit to create space for deadzone identification.')
         self.set_motor_speed(30)
         self.right_limit_pressed.wait()
-        self.set_motor_speed(-20)
+        self.set_motor_speed(-30)
         time.sleep(3.0)
         self.set_motor_speed(0)
         logging.info('Deadzone space created.')
