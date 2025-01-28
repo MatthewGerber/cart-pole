@@ -70,7 +70,7 @@ def main():
         arduino_direction_pin=12,
         arduino_pwm_pin=9,
         next_set_speed_promise_ms=100,
-        reverse=False
+        reverse=True
     )
     motor = DcMotor(
         driver=motor_driver,

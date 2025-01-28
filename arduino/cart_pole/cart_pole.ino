@@ -48,6 +48,7 @@ bool pole_rotary_inited = false;
 // motor
 const byte MOTOR_ID = 2;
 byte motor_dir_pin;
+bool motor_dir_pin_value;
 byte motor_pwm_pin;
 int motor_current_speed;
 unsigned long motor_next_set_speed_promise_time_ms;
@@ -296,7 +297,8 @@ void loop() {
 
         motor_dir_pin = args[0];
         pinMode(motor_dir_pin, OUTPUT);
-        digitalWrite(motor_dir_pin, HIGH);
+        motor_dir_pin_value = HIGH;
+        digitalWrite(motor_dir_pin, motor_dir_pin_value);
 
         motor_pwm_pin = args[1];
         pinMode(motor_pwm_pin, OUTPUT);
@@ -378,16 +380,22 @@ void loop() {
 
         unsigned int next_set_promise_ms = bytes_to_unsigned_int(args, 3);
 
-        /* change the direction output if needed. first set pwm to 0 if we're changing direction
-         * so that the motor does not spin in the opposite direction once we set this. */
-        if (bitRead(motor_current_speed, 15) != bitRead(new_speed, 15)) {
+        // if we're changing direction, set speed to zero so that the direction change doesn't catch the current speed.
+        if (
+          ((motor_current_speed > 0) && (new_speed <= 0)) ||
+          ((motor_current_speed < 0) && (new_speed >= 0))
+        ) {
           analogWrite(motor_pwm_pin, 0);
-          if (new_speed > 0) {
-            digitalWrite(motor_dir_pin, HIGH);
-          }
-          else {
-            digitalWrite(motor_dir_pin, LOW);
-          }
+        }
+
+        // set direction if it has changed
+        bool new_motor_dir_pin_value = LOW;
+        if (new_speed > 0) {
+          new_motor_dir_pin_value = HIGH;
+        }
+        if (new_motor_dir_pin_value != motor_dir_pin_value) {
+          digitalWrite(motor_dir_pin, new_motor_dir_pin_value);
+          motor_dir_pin_value = new_motor_dir_pin_value;
         }
 
         // set the duty cycle corresponding to the new speed
