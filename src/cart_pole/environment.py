@@ -784,7 +784,7 @@ class CartPole(ContinuousMdpEnvironment):
         state = dict(self.__dict__)
 
         state['state_lock'] = None
-        state['pca9685pw'] = None
+        state['motor_driver'] = None
         state['motor'] = None
         state['cart_rotary_encoder'] = None
         state['pole_rotary_encoder'] = None
