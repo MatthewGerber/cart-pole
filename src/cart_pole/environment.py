@@ -1948,11 +1948,7 @@ class CartPole(ContinuousMdpEnvironment):
         if state.terminal:
             reward = -1.0
 
-        # penalize changes back to the swing-up phase
-        elif previous_state.episode_phase != EpisodePhase.SWING_UP and state.episode_phase == EpisodePhase.SWING_UP:
-            reward = -1.0
-
-        # reward according to pole and speed
+        # reward according to pole angle and pole angular speed
         else:
             reward = (
                 state.zero_to_one_pole_angle *
@@ -2075,7 +2071,7 @@ class CartPole(ContinuousMdpEnvironment):
                         'color': 'purple',
                         'linestyle': '--',
                         'linewidth': 0.5,
-                        'label': 'Lost upright'
+                        'label': f'Started lost-balance timer @ {t}'
                     }
                     logging.info(
                         f'Pole has lost its upright position. Angle {pole_angle_deg_from_upright:.2f} exceeds the maximum '

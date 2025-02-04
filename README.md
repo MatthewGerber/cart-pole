@@ -24,9 +24,9 @@ poetry install
 ```
 
 # To Do/Try
+* Add target tolerance to reinforce.
 * Rotary encoder losses.
 * Add time series database/dashboard.
-* Move motor speed control to Arduino, including next-set promise.
 * Add serial read/write throughput.
 * Add I2C and serial devices to CLI args.
 * Pass phase-change mode and phase-changes per rotation to Arduino rotary encoder.
