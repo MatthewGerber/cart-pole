@@ -708,8 +708,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.episode_phase = EpisodePhase.SWING_UP
         self.progressive_upright_pole_angle = 175.0
         self.achieved_progressive_upright = False
-        self.balance_pole_angle = 35.0
-        self.balance_angular_velocity = 7.0 * self.balance_pole_angle
+        self.balance_pole_angle = 20.0
         self.lost_balance_timestamp: Optional[float] = None
         self.lost_balance_timer_seconds = 30.0
         self.cart_rotary_encoder_angular_velocity_step_size = 0.5
@@ -1987,22 +1986,17 @@ class CartPole(ContinuousMdpEnvironment):
 
         pole_is_progressive_upright = abs(pole_angle_deg_from_upright) <= self.progressive_upright_pole_angle
         pole_is_balancing = abs(pole_angle_deg_from_upright) <= self.balance_pole_angle
-        pole_is_balancing_slowly = abs(pole_angular_velocity) <= self.balance_angular_velocity
 
         # swing up:  we're in the swing-up phase if we're not progressive upright (which implies also not balancing).
         if not pole_is_progressive_upright:
             episode_phase = EpisodePhase.SWING_UP
 
-        # progressive upright:  anything upright, including balancing but moving too quickly. the balance policy is only
-        # for balancing slowly.
-        elif (
-            (pole_is_progressive_upright and not pole_is_balancing) or
-            (pole_is_balancing and not pole_is_balancing_slowly)
-        ):
+        # progressive upright:  anything upright but not balancing
+        elif pole_is_progressive_upright and not pole_is_balancing:
             episode_phase = EpisodePhase.PROGRESSIVE_UPRIGHT
 
-        # balancing:  above the balance threshold and moving slowly.
-        elif pole_is_balancing and pole_is_balancing_slowly:
+        # balancing:  above the balance threshold
+        elif pole_is_balancing:
             episode_phase = EpisodePhase.BALANCE
 
         # must be in one of the above phases
