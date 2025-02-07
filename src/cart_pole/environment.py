@@ -708,7 +708,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.episode_phase = EpisodePhase.SWING_UP
         self.progressive_upright_pole_angle = 175.0
         self.achieved_progressive_upright = False
-        self.balance_pole_angle = 20.0
+        self.balance_pole_angle = 15.0
         self.lost_balance_timestamp: Optional[float] = None
         self.lost_balance_timer_seconds = 30.0
         self.cart_rotary_encoder_angular_velocity_step_size = 0.5
@@ -1973,37 +1973,28 @@ class CartPole(ContinuousMdpEnvironment):
 
     def get_episode_phase(
             self,
-            pole_angle_deg_from_upright: float,
-            pole_angular_velocity: float
+            pole_angle_deg_from_upright: float
     ) -> EpisodePhase:
         """
         Get the episode phase.
 
         :param pole_angle_deg_from_upright: Pole's angle in degrees from upright.
-        :param pole_angular_velocity: Pole's angular velocity.
         :return: Episode phase.
         """
 
-        pole_is_progressive_upright = abs(pole_angle_deg_from_upright) <= self.progressive_upright_pole_angle
-        pole_is_balancing = abs(pole_angle_deg_from_upright) <= self.balance_pole_angle
+        abs_pole_angle_deg_from_upright = abs(pole_angle_deg_from_upright)
 
-        # swing up:  we're in the swing-up phase if we're not progressive upright (which implies also not balancing).
-        if not pole_is_progressive_upright:
-            episode_phase = EpisodePhase.SWING_UP
-
-        # progressive upright:  anything upright but not balancing
-        elif pole_is_progressive_upright and not pole_is_balancing:
-            episode_phase = EpisodePhase.PROGRESSIVE_UPRIGHT
-
-        # balancing:  above the balance threshold
-        elif pole_is_balancing:
+        # balancing:  pole is above the balance threshold
+        if abs_pole_angle_deg_from_upright <= self.balance_pole_angle:
             episode_phase = EpisodePhase.BALANCE
 
-        # must be in one of the above phases
+        # progressive upright:  pole is above the progressively increasing threshold
+        elif abs_pole_angle_deg_from_upright <= self.progressive_upright_pole_angle:
+            episode_phase = EpisodePhase.PROGRESSIVE_UPRIGHT
+
+        # swing up:  pole is below the thresholds and is trying to swing up
         else:
-            raise ValueError(
-                f'Unknown episode phase:  {pole_angle_deg_from_upright} deg @ {pole_angular_velocity} deg/s'
-            )
+            episode_phase = EpisodePhase.SWING_UP
 
         return episode_phase
 
@@ -2050,7 +2041,7 @@ class CartPole(ContinuousMdpEnvironment):
             pole_angle_deg_from_upright = -np.sign(pole_angle_deg_from_bottom) * 180.0 + pole_angle_deg_from_bottom
 
         # check whether the episode phase has changed
-        episode_phase = self.get_episode_phase(pole_angle_deg_from_upright, pole_state.angular_velocity)
+        episode_phase = self.get_episode_phase(pole_angle_deg_from_upright)
         if self.episode_phase != episode_phase:
 
             self.episode_phase = episode_phase

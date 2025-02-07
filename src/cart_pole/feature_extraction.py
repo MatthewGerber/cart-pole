@@ -273,8 +273,7 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
             # appropriately in this position, so we use a separate policy for this phase.
             StateLambdaIndicator(
                 lambda observation: self.environment.get_episode_phase(
-                    observation[CartPoleState.Dimension.PoleAngle.value],
-                    observation[CartPoleState.Dimension.PoleVelocity.value]
+                    observation[CartPoleState.Dimension.PoleAngle.value]
                 ) == EpisodePhase.BALANCE,
                 [False, True]
             )

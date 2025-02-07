@@ -249,7 +249,7 @@ def main():
         # test_limit_switches()
 
         # motor tests
-        test_motor()
+        # test_motor()
         # test_motor_failsafe()
 
         # rotary encoder tests
