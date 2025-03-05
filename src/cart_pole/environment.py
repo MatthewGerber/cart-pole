@@ -11,6 +11,7 @@ from typing import List, Tuple, Any, Optional, Dict
 
 import RPi.GPIO as gpio
 import numpy as np
+import pandas as pd
 import serial
 from matplotlib import pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
@@ -700,7 +701,6 @@ class CartPole(ContinuousMdpEnvironment):
         self.previous_timestep_epoch: Optional[float] = None
         self.current_timesteps_per_second = IncrementalSampleAverager(initial_value=0.0, alpha=0.25)
         self.timestep_sleep_seconds = 1.0 / self.timesteps_per_second
-        self.min_seconds_for_full_motor_speed_range = 0.1
         self.original_agent_gamma: Optional[float] = None
         self.truncation_gamma: Optional[float] = None  # unused. unclear if this is effective.
         self.max_pole_angular_speed_deg_per_second = 1080.0
@@ -719,6 +719,9 @@ class CartPole(ContinuousMdpEnvironment):
         self.beta_shape_param_iter_coef = {}
         self.coef_plot_dir = os.path.expanduser('~/Desktop/cartpole-coefficients')
         os.makedirs(self.coef_plot_dir, exist_ok=True)
+        self.policy_get_item_calls_dir = os.path.expanduser('~/Desktop/cartpole-policy-get-item-calls')
+        os.makedirs(self.policy_get_item_calls_dir, exist_ok=True)
+        self.policy_get_item_calls = []
 
         (
             self.state_lock,
@@ -743,19 +746,13 @@ class CartPole(ContinuousMdpEnvironment):
             self.arduino_serial_connection
         ) = self.get_components()
 
-        # configure the continuous action with a single dimension ranging the maximum motor speed change
-        min_timesteps_for_full_motor_speed_range = max(
-            1.0,
-            self.timesteps_per_second * self.min_seconds_for_full_motor_speed_range
-        )
-        motor_speed_range = float(self.motor.max_speed - self.motor.min_speed)
-        max_motor_speed_change_per_step = motor_speed_range / min_timesteps_for_full_motor_speed_range
+        # configure the continuous action with a single dimension ranging the motor speed
         self.actions = [
             ContinuousMultiDimensionalAction(
                 value=None,
-                min_values=np.array([-max_motor_speed_change_per_step]),
-                max_values=np.array([max_motor_speed_change_per_step]),
-                name='motor-speed-change'
+                min_values=np.array([-100.0]),
+                max_values=np.array([100.0]),
+                name='motor-speed'
             )
         ]
 
@@ -1766,6 +1763,28 @@ class CartPole(ContinuousMdpEnvironment):
                 pdf.close()
                 logging.info('Done.')
 
+        # set the hook to receive the get-item calls
+        if self.policy.get_item_hook is None:
+            self.policy.get_item_hook = self.policy_get_item_hook
+
+        # dump get-item calls to csv for analysis
+        if len(self.policy_get_item_calls) > 0:
+            pd.DataFrame.from_records([
+                {
+                    't': t,
+                    'action-a': action_a[0],
+                    'action-b': action_b[0],
+                    'action': action.value[0]
+                }
+                for t, (
+                    state_feature_vector,
+                    action_a,
+                    action_b,
+                    action
+                ) in enumerate(self.policy_get_item_calls)
+            ]).to_csv(os.path.join(self.policy_get_item_calls_dir, f'{self.num_resets}-policy-get-items.csv'))
+            self.policy_get_item_calls.clear()
+
         self.motor.start()
 
         # calibrate if needed
@@ -1788,6 +1807,24 @@ class CartPole(ContinuousMdpEnvironment):
         logging.info(f'State after reset:  {self.state}')
 
         return self.state
+
+    def policy_get_item_hook(
+            self,
+            state_feature_vector,
+            action_a,
+            action_b,
+            action
+    ):
+        """
+        Record the results of a get-item call to the policy.
+
+        :param state_feature_vector: State-feature vector.
+        :param action_a: The a coefficient of the beta distribution.
+        :param action_b: The b coefficient of the beta distribution.
+        :param action: The resulting action value.
+        """
+
+        self.policy_get_item_calls.append((state_feature_vector, action_a, action_b, action))
 
     def cart_violates_soft_limit(
             self,
@@ -1857,34 +1894,7 @@ class CartPole(ContinuousMdpEnvironment):
                 # extract the desired speed change from the action
                 assert isinstance(a, ContinuousMultiDimensionalAction)
                 assert a.value.shape == (1,)
-                desired_speed_change = round(float(a.value[0]))
-
-                # constrain the speed change to the range of the motor
-                current_speed = self.motor.get_speed()
-                desired_speed = current_speed + desired_speed_change
-                constrained_speed = self.motor.constrain_speed(desired_speed)
-                if constrained_speed == desired_speed:
-                    speed_change = desired_speed_change
-                    next_speed = desired_speed
-                else:
-                    speed_change = constrained_speed - current_speed
-                    next_speed = constrained_speed
-
-                    # if we constrained the speed, then reflect this in the agent's action so that the learning
-                    # procedure correctly interprets the environment's feedback. this is like a feedback signal from the
-                    # environment that the desired action was not possible.
-                    a.value = np.array([speed_change])
-
-                # if the next speed falls into the motor's deadzone, bump it to the minimum speed based on the direction
-                # of speed change. this ensures linearity between the agent's action and the cart's response. we
-                # shouldn't reflect this modification in the agent's action value. from the agent's perspective, all
-                # actions (speed changes) are relative to the current speed, and the deadzone does not exist.
-                if self.motor_deadzone_speed_left < next_speed < self.motor_deadzone_speed_right:
-                    if speed_change < 0:
-                        next_speed = self.motor_deadzone_speed_left
-                    elif speed_change > 0:
-                        next_speed = self.motor_deadzone_speed_right
-
+                next_speed = round(float(a.value[0]))
                 self.set_motor_speed(next_speed)
 
             # adapt the sleep time to obtain the desired steps per second

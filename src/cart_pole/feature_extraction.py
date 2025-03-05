@@ -200,7 +200,9 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
             if isinstance(state, CartPoleState)
         ])
 
-        # invert back to 1.0 being most physically extreme
+        # invert back to 1.0 being most physically extreme. the zero-to-one values were calculated primarily for the
+        # purpose of rewards, such that 1.0 is most rewarding, which generally means least physically extreme (e.g.,
+        # stationary is 1.0, centered is 1.0, etc.). here we want 1.0 to be most physically extreme.
         ranged_state_matrix = state_sign_matrix * (1.0 - zero_to_one_state_matrix)
 
         # create the full matrix of multiplicative interaction terms between the ranged feature values
@@ -212,6 +214,7 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
             for ranged_feature_vector in ranged_state_matrix
         ])
 
+        # get the raw state matrix, with one row per observation. this is used for feature-space segmentation.
         state_matrix = np.array([
             state.observation
             for state in states
@@ -239,6 +242,7 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
             False
         )
 
+        # combine intercept columns with feature columns
         scaled_state_indicator_feature_matrix_with_intercepts = np.append(
             state_indicator_intercepts,
             scaled_state_indicator_feature_matrix,
