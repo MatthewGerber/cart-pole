@@ -710,7 +710,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.achieved_progressive_upright = False
         self.balance_pole_angle = 15.0
         self.lost_balance_timestamp: Optional[float] = None
-        self.lost_balance_timer_seconds = 30.0
+        self.lost_balance_timer_seconds = 0.0
         self.cart_rotary_encoder_angular_velocity_step_size = 0.5
         self.cart_rotary_encoder_angular_acceleration_step_size = 0.2
         self.pole_rotary_encoder_angular_velocity_step_size = 0.5
@@ -1983,19 +1983,25 @@ class CartPole(ContinuousMdpEnvironment):
 
     def get_episode_phase(
             self,
-            pole_angle_deg_from_upright: float
+            pole_angle_deg_from_upright: float,
+            pole_angular_velocity: float
     ) -> EpisodePhase:
         """
         Get the episode phase.
 
         :param pole_angle_deg_from_upright: Pole's angle in degrees from upright.
+        :param pole_angular_velocity: Pole's angular velocity.
         :return: Episode phase.
         """
 
         abs_pole_angle_deg_from_upright = abs(pole_angle_deg_from_upright)
+        abs_pole_angular_velocity = abs(pole_angular_velocity)
 
-        # balancing:  pole is above the balance threshold
-        if abs_pole_angle_deg_from_upright <= self.balance_pole_angle:
+        # balancing:  pole is above the balance threshold and moving slowly
+        if (
+            abs_pole_angle_deg_from_upright <= self.balance_pole_angle and
+            abs_pole_angular_velocity <= 2.0 * self.balance_pole_angle
+        ):
             episode_phase = EpisodePhase.BALANCE
 
         # progressive upright:  pole is above the progressively increasing threshold
@@ -2051,7 +2057,7 @@ class CartPole(ContinuousMdpEnvironment):
             pole_angle_deg_from_upright = -np.sign(pole_angle_deg_from_bottom) * 180.0 + pole_angle_deg_from_bottom
 
         # check whether the episode phase has changed
-        episode_phase = self.get_episode_phase(pole_angle_deg_from_upright)
+        episode_phase = self.get_episode_phase(pole_angle_deg_from_upright, pole_state.angular_velocity)
         if self.episode_phase != episode_phase:
 
             self.episode_phase = episode_phase
@@ -2069,9 +2075,9 @@ class CartPole(ContinuousMdpEnvironment):
                         'label': f'Started lost-balance timer @ {t}'
                     }
                     logging.info(
-                        f'Pole has lost its upright position. Angle {pole_angle_deg_from_upright:.2f} exceeds the maximum '
-                        f'allowable of {self.progressive_upright_pole_angle:.1f}. Starting lost-balance timer of '
-                        f'{self.lost_balance_timer_seconds} seconds.'
+                        f'Pole has lost its upright position. Angle {pole_angle_deg_from_upright:.2f} exceeds the '
+                        f'maximum allowable of {self.progressive_upright_pole_angle:.1f}. Starting lost-balance timer '
+                        f'of {self.lost_balance_timer_seconds} seconds.'
                     )
 
                 for led in [self.progressive_upright_led, self.balance_led]:
@@ -2109,7 +2115,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         truncated = False
 
-        # truncate due to timer
+        # truncate due to lost-balance timer
         if (
             self.lost_balance_timestamp is not None and
             (time.time() - self.lost_balance_timestamp) >= self.lost_balance_timer_seconds
