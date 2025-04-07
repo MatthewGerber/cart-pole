@@ -708,7 +708,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.episode_phase = EpisodePhase.SWING_UP
         self.progressive_upright_pole_angle = 175.0
         self.achieved_progressive_upright = False
-        self.balance_pole_angle = 15.0
+        self.balance_pole_angle = 30.0
         self.lost_balance_timestamp: Optional[float] = None
         self.lost_balance_timer_seconds = 0.0
         self.cart_rotary_encoder_angular_velocity_step_size = 0.5
@@ -2000,7 +2000,7 @@ class CartPole(ContinuousMdpEnvironment):
         # balancing:  pole is above the balance threshold and moving slowly
         if (
             abs_pole_angle_deg_from_upright <= self.balance_pole_angle and
-            abs_pole_angular_velocity <= 2.0 * self.balance_pole_angle
+            abs_pole_angular_velocity <= 6.0 * self.balance_pole_angle
         ):
             episode_phase = EpisodePhase.BALANCE
 
