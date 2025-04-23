@@ -1981,6 +1981,8 @@ class CartPole(ContinuousMdpEnvironment):
 
         self.stop_cart()
 
+        self.metric_value['Fraction Balancing'] = self.fraction_time_balancing.get_value()
+
     def get_episode_phase(
             self,
             pole_angle_deg_from_upright: float,
