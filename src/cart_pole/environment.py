@@ -959,9 +959,7 @@ class CartPole(ContinuousMdpEnvironment):
             serial=arduino_serial_connection,
             arduino_direction_pin=12,
             arduino_pwm_pin=9,
-            next_set_speed_promise_ms=int(
-                5.0 * (1000.0 * 1.0 / self.timesteps_per_second)  # stop if we miss 5 steps
-            ),
+            next_set_speed_promise_ms=500,
             reverse=self.motor_negative_speed_is_right
         )
 
