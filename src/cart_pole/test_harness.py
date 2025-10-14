@@ -58,7 +58,7 @@ def main():
         angular_acceleration_step_size=0.2,
         serial=locking_serial,
         identifier=0,
-        state_update_hz=50
+        state_update_hz=80
     )
     rotary_encoder = RotaryEncoder(
         interface=arduino_interface

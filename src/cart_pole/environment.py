@@ -708,7 +708,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.episode_phase = EpisodePhase.SWING_UP
         self.progressive_upright_pole_angle = 175.0
         self.achieved_progressive_upright = False
-        self.balance_pole_angle = 30.0
+        self.balance_pole_angle = 15.0
         self.lost_balance_timestamp: Optional[float] = None
         self.lost_balance_timer_seconds = 0.0
         self.cart_rotary_encoder_angular_velocity_step_size = 0.5
@@ -719,7 +719,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.beta_shape_param_iter_coef = {}
         self.coef_plot_dir = os.path.expanduser('~/Desktop/cartpole-coefficients')
         os.makedirs(self.coef_plot_dir, exist_ok=True)
-        self.policy_get_item_calls_dir = os.path.expanduser('~/Desktop/cartpole-policy-get-item-calls')
+        self.policy_get_item_calls_dir = os.path.expanduser('~/GoogleDrive/cartpole-policy-get-item-calls')
         os.makedirs(self.policy_get_item_calls_dir, exist_ok=True)
         self.policy_get_item_calls = []
 
@@ -1143,7 +1143,7 @@ class CartPole(ContinuousMdpEnvironment):
             logging.info(f'Saving calibration at {self.calibration_path}')
             try:
                 with open(self.calibration_path, 'wb') as f:
-                    pickle.dump(calibration, f)
+                    pickle.dump(calibration, f)  # type: ignore
             except ValueError as e:
                 logging.error(f'Error saving calibration:  {e}')
 
@@ -1769,6 +1769,7 @@ class CartPole(ContinuousMdpEnvironment):
         if len(self.policy_get_item_calls) > 0:
             pd.DataFrame.from_records([
                 {
+                    'episode': self.num_resets,
                     't': t,
                     'action-a': action_a[0],
                     'action-b': action_b[0],
@@ -1856,10 +1857,12 @@ class CartPole(ContinuousMdpEnvironment):
         with self.state_lock:
 
             previous_state = self.state
+            assert isinstance(previous_state, CartPoleState)
 
             # update the current state if we haven't yet terminated
             if not previous_state.terminal:
                 self.state = self.get_state(t=t, terminal=None)
+                assert isinstance(self.state, CartPoleState)
                 CartPole.set_led(self.falling_led, self.state.pole_is_falling)
                 CartPole.set_led(self.cart_moving_right_led, self.state.cart_velocity_mm_per_second > 0.0)
 
@@ -2084,7 +2087,6 @@ class CartPole(ContinuousMdpEnvironment):
                     CartPole.set_led(led, False)
 
             elif self.episode_phase == EpisodePhase.PROGRESSIVE_UPRIGHT:
-                self.episode_phase = EpisodePhase.PROGRESSIVE_UPRIGHT
                 self.achieved_progressive_upright = True
                 logging.info(f'Progressive upright @ {pole_angle_deg_from_upright:.1f} degrees.')
                 self.time_step_axv_lines[t] = {
