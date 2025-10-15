@@ -711,10 +711,10 @@ class CartPole(ContinuousMdpEnvironment):
         self.balance_pole_angle = 15.0
         self.lost_balance_timestamp: Optional[float] = None
         self.lost_balance_timer_seconds = 0.0
-        self.cart_rotary_encoder_angular_velocity_step_size = 0.5
-        self.cart_rotary_encoder_angular_acceleration_step_size = 0.2
-        self.pole_rotary_encoder_angular_velocity_step_size = 0.5
-        self.pole_rotary_encoder_angular_acceleration_step_size = 0.2
+        self.cart_rotary_encoder_angular_velocity_step_size = 0.25
+        self.cart_rotary_encoder_angular_acceleration_step_size = 0.1
+        self.pole_rotary_encoder_angular_velocity_step_size = 0.25
+        self.pole_rotary_encoder_angular_acceleration_step_size = 0.1
         self.fraction_time_balancing = IncrementalSampleAverager()
         self.beta_shape_param_iter_coef = {}
         self.coef_plot_dir = os.path.expanduser('~/Desktop/cartpole-coefficients')
