@@ -4,12 +4,14 @@ import RPi.GPIO as gpio
 import serial
 from matplotlib import pyplot as plt
 from serial import Serial
+from smbus2 import SMBus
 
 from raspberry_py.gpio import setup, cleanup, CkPin
 from raspberry_py.gpio.communication import LockingSerial
 from raspberry_py.gpio.controls import LimitSwitch
+from raspberry_py.gpio.integrated_circuits import PulseWaveModulatorPCA9685PW
 from raspberry_py.gpio.lights import LED
-from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectArduino
+from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectArduino, Servo, Sg90DriverPCA9685PW
 from raspberry_py.gpio.sensors import RotaryEncoder, UltrasonicRangeFinder
 
 
@@ -90,6 +92,24 @@ def main():
         trigger_pin=CkPin.GPIO23,
         echo_pin=CkPin.GPIO24,
         measurements_per_second=2
+    )
+
+    i2c_bus = SMBus('/dev/i2c-1')
+    pwm = PulseWaveModulatorPCA9685PW(
+        bus=i2c_bus,
+        address=PulseWaveModulatorPCA9685PW.PCA9685PW_ADDRESS,
+        frequency_hz=50
+    )
+    servo = Servo(
+        driver=Sg90DriverPCA9685PW(
+            pca9685pw=pwm,
+            servo_channel=0,
+            reverse=True,
+            correction_degrees=0.0
+        ),
+        degrees=0.0,
+        min_degree=0.0,
+        max_degree=180.0
     )
 
     def test_rotary_encoder_state():
@@ -241,6 +261,18 @@ def main():
         except KeyboardInterrupt:
             motor.stop()
 
+    def test_servo():
+        servo.start()
+        gpio.setup(CkPin.GPIO25, gpio.OUT)
+        gpio.output(CkPin.GPIO25, gpio.LOW)
+        servo.set_degrees(0.0)
+        time.sleep(1.0)
+        servo.set_degrees(45.0)
+        time.sleep(1.0)
+        servo.set_degrees(0.0)
+        time.sleep(1.0)
+        servo.stop()
+
     try:
         print('Running test...')
 
@@ -257,6 +289,7 @@ def main():
         # test_set_net_total_degrees()
         # test_plot_rotary_encoder_state()
         # test_rotary_encoder_wait_for_stationarity()
+        # test_servo()
 
     except KeyboardInterrupt:
         pass
