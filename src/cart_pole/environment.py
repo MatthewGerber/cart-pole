@@ -16,13 +16,12 @@ import serial
 from matplotlib import pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from numpy.random import RandomState
-from serial import Serial
-
 from raspberry_py.gpio import CkPin, get_ck_pin, setup, cleanup
 from raspberry_py.gpio.communication import LockingSerial
 from raspberry_py.gpio.controls import LimitSwitch
+from raspberry_py.gpio.integrated_circuits import PulseWaveModulatorPCA9685PW
 from raspberry_py.gpio.lights import LED
-from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectArduino
+from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectArduino, Servo, Sg90DriverPCA9685PW
 from raspberry_py.gpio.sensors import RotaryEncoder, UltrasonicRangeFinder
 from rlai.core import MdpState, Action, Agent, Reward, Environment, MdpAgent, ContinuousMultiDimensionalAction
 from rlai.core.environments.mdp import ContinuousMdpEnvironment
@@ -31,6 +30,8 @@ from rlai.policy_gradient.policies.continuous_action import ContinuousActionBeta
 from rlai.state_value.function_approximation import ApproximateStateValueEstimator
 from rlai.state_value.function_approximation.models.feature_extraction import StateFeatureExtractor
 from rlai.utils import parse_arguments, IncrementalSampleAverager
+from serial import Serial
+from smbus2 import SMBus
 
 
 class CartPoleAction(ContinuousMultiDimensionalAction):
@@ -543,6 +544,46 @@ class CartPole(ContinuousMdpEnvironment):
             )
         )
 
+        parser.add_argument(
+            '--coef-plot-dir',
+            type=str,
+            help=(
+                'Directory in which to plot coefficients over episodes.'
+            )
+        )
+
+        parser.add_argument(
+            '--policy-get-item-calls-dir',
+            type=str,
+            help=(
+                'Directory in which to store get-item calls for detailed episode instrumentation.'
+            )
+        )
+
+        parser.add_argument(
+            '--i2c-bus',
+            type=str,
+            help=(
+                'I2C bus (e.g., /dev/i2c-1)'
+            )
+        )
+
+        parser.add_argument(
+            '--brake-servo-pwm-channel',
+            type=int,
+            help=(
+                'PWM channel driving the brake servo.'
+            )
+        )
+
+        parser.add_argument(
+            '--serial-port',
+            type=str,
+            help=(
+                'Serial port (e.g., /dev/ttyAMA0).'
+            )
+        )
+
         return parser
 
     @classmethod
@@ -624,7 +665,12 @@ class CartPole(ContinuousMdpEnvironment):
             balance_gamma: float,
             failsafe_pwm_off_pin: CkPin,
             centering_range_finder_trigger_pin: CkPin,
-            centering_range_finder_echo_pin: CkPin
+            centering_range_finder_echo_pin: CkPin,
+            coef_plot_dir: str,
+            policy_get_item_calls_dir: str,
+            i2c_bus: str,
+            brake_servo_pwm_channel: int,
+            serial_port: str
     ):
         """
         Initialize the cart-pole environment.
@@ -659,6 +705,11 @@ class CartPole(ContinuousMdpEnvironment):
         :param failsafe_pwm_off_pin: Failsafe PWM off pin.
         :param centering_range_finder_trigger_pin: Trigger pin of the ultrasonic range finder at the center position.
         :param centering_range_finder_echo_pin: Echo pin of the ultrasonic range finder at the center position.
+        :param coef_plot_dir: Coefficient plotting directory.
+        :param policy_get_item_calls_dir: Get-item call directory.
+        :param i2c_bus: I2C bus (e.g., /dev/i2c-1).
+        :param brake_servo_pwm_channel: PWM channel driving the brake servo.
+        :param serial_port: Serial port.
         """
 
         super().__init__(
@@ -690,6 +741,13 @@ class CartPole(ContinuousMdpEnvironment):
         self.failsafe_pwm_off_pin = failsafe_pwm_off_pin
         self.centering_range_finder_trigger_pin = centering_range_finder_trigger_pin
         self.centering_range_finder_echo_pin = centering_range_finder_echo_pin
+        self.coef_plot_dir = os.path.expanduser(coef_plot_dir)
+        os.makedirs(self.coef_plot_dir, exist_ok=True)
+        self.policy_get_item_calls_dir = os.path.expanduser(policy_get_item_calls_dir)
+        os.makedirs(self.policy_get_item_calls_dir, exist_ok=True)
+        self.i2c_bus = i2c_bus
+        self.brake_servo_pwm_channel = brake_servo_pwm_channel
+        self.serial_port = serial_port
 
         # non-calibrated attributes
         self.midline_mm = self.limit_to_limit_mm / 2.0
@@ -717,11 +775,8 @@ class CartPole(ContinuousMdpEnvironment):
         self.pole_rotary_encoder_angular_acceleration_step_size = 0.1
         self.fraction_time_balancing = IncrementalSampleAverager()
         self.beta_shape_param_iter_coef = {}
-        self.coef_plot_dir = os.path.expanduser('~/Desktop/cartpole-coefficients')
-        os.makedirs(self.coef_plot_dir, exist_ok=True)
-        self.policy_get_item_calls_dir = os.path.expanduser('~/GoogleDrive/cartpole-policy-get-item-calls')
-        os.makedirs(self.policy_get_item_calls_dir, exist_ok=True)
         self.policy_get_item_calls = []
+        self.max_motor_acceleration_per_second = 200
 
         (
             self.state_lock,
@@ -743,7 +798,8 @@ class CartPole(ContinuousMdpEnvironment):
             self.calibrate_on_next_reset,
             self.centering_range_finder,
             self.leds,
-            self.arduino_serial_connection
+            self.arduino_serial_connection,
+            self.brake_servo
         ) = self.get_components()
 
         # configure the continuous action with a single dimension ranging the motor speed
@@ -798,6 +854,7 @@ class CartPole(ContinuousMdpEnvironment):
         state['centering_range_finder'] = None
         state['leds'] = None
         state['arduino_serial_connection'] = None
+        state['brake_servo'] = None
 
         return state
 
@@ -833,7 +890,8 @@ class CartPole(ContinuousMdpEnvironment):
             self.calibrate_on_next_reset,
             self.centering_range_finder,
             self.leds,
-            self.arduino_serial_connection
+            self.arduino_serial_connection,
+            self.brake_servo
         ) = self.get_components()
 
     def get_components(
@@ -858,7 +916,8 @@ class CartPole(ContinuousMdpEnvironment):
         bool,
         UltrasonicRangeFinder,
         List[Optional[LED]],
-        LockingSerial
+        LockingSerial,
+        Servo
     ]:
         """
         Get circuitry components and other attributes that cannot be pickled. This is primarily used to restore the 
@@ -871,7 +930,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         arduino_serial_connection = LockingSerial(
             connection=Serial(
-                port='/dev/ttyAMA0',
+                port=self.serial_port,
                 baudrate=115200,
                 parity=serial.PARITY_NONE,
                 stopbits=serial.STOPBITS_ONE,
@@ -968,6 +1027,24 @@ class CartPole(ContinuousMdpEnvironment):
             speed=0
         )
 
+        i2c_bus = SMBus(self.i2c_bus)
+        pwm = PulseWaveModulatorPCA9685PW(
+            bus=i2c_bus,
+            address=PulseWaveModulatorPCA9685PW.PCA9685PW_ADDRESS,
+            frequency_hz=50
+        )
+        brake_servo = Servo(
+            driver=Sg90DriverPCA9685PW(
+                pca9685pw=pwm,
+                servo_channel=self.brake_servo_pwm_channel,
+                reverse=True,
+                correction_degrees=0.0
+            ),
+            degrees=0.0,
+            min_degree=0.0,
+            max_degree=180.0
+        )
+
         return (
             RLock(),
             motor_driver,
@@ -992,7 +1069,8 @@ class CartPole(ContinuousMdpEnvironment):
                 measurements_per_second=4
             ),
             leds,
-            arduino_serial_connection
+            arduino_serial_connection,
+            brake_servo
         )
 
     def load_calibration(
@@ -1122,7 +1200,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.stop_cart()
 
         # set central phase change indices
-        self.pole_rotary_encoder.wait_for_stationarity()
+        self.stop_pole()
         self.pole_degrees_at_bottom = self.pole_rotary_encoder.get_degrees()
 
         calibration = {
@@ -1358,7 +1436,7 @@ class CartPole(ContinuousMdpEnvironment):
             logging.info('Cart centered.')
 
         logging.info('Waiting for stationary pole.')
-        self.pole_rotary_encoder.wait_for_stationarity()
+        self.stop_pole()
 
         if restore_center_state:
             logging.info(
@@ -1486,6 +1564,16 @@ class CartPole(ContinuousMdpEnvironment):
         # the promises because out-of-episode motor speeds changes for reasons (e.g., calibration) that aren't a concern
         # for the whole next-set promise thing.
         self.motor_driver.send_promise = False
+
+    def stop_pole(
+            self
+    ):
+        """
+        Stop the pole by applying the brake to it.
+        """
+
+        self.pole_rotary_encoder.wait_for_stationarity()
+
 
     def disable_motor_pwm(
             self
@@ -1892,11 +1980,20 @@ class CartPole(ContinuousMdpEnvironment):
             # since we're waiting for the learning procedure to exit the episode.
             if not self.state.terminal:
 
-                # extract the desired speed change from the action
+                # extract the desired speed from the action
                 assert isinstance(a, ContinuousMultiDimensionalAction)
                 assert a.value.shape == (1,)
                 next_speed = round(float(a.value[0]))
-                self.set_motor_speed(next_speed)
+                curr_speed = self.motor.get_speed()
+                acceleration_interval_seconds = abs(curr_speed - next_speed) / self.max_motor_acceleration_per_second
+                if acceleration_interval_seconds < 0.1:
+                    acceleration_interval = None
+                else:
+                    acceleration_interval = timedelta(seconds=acceleration_interval_seconds)
+                self.set_motor_speed(
+                    next_speed,
+                    acceleration_interval
+                )
 
             # adapt the sleep time to obtain the desired steps per second
             if self.previous_timestep_epoch is None:
