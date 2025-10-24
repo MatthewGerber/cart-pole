@@ -564,7 +564,7 @@ class CartPole(ContinuousMdpEnvironment):
             '--i2c-bus',
             type=str,
             help=(
-                'I2C bus (e.g., /dev/i2c-1)'
+                'I2C bus device (e.g., /dev/i2c-1)'
             )
         )
 
@@ -580,7 +580,7 @@ class CartPole(ContinuousMdpEnvironment):
             '--serial-port',
             type=str,
             help=(
-                'Serial port (e.g., /dev/ttyAMA0).'
+                'Serial port device (e.g., /dev/ttyAMA0).'
             )
         )
 
@@ -707,9 +707,9 @@ class CartPole(ContinuousMdpEnvironment):
         :param centering_range_finder_echo_pin: Echo pin of the ultrasonic range finder at the center position.
         :param coef_plot_dir: Coefficient plotting directory.
         :param policy_get_item_calls_dir: Get-item call directory.
-        :param i2c_bus: I2C bus (e.g., /dev/i2c-1).
+        :param i2c_bus: I2C bus device (e.g., /dev/i2c-1).
         :param brake_servo_pwm_channel: PWM channel driving the brake servo.
-        :param serial_port: Serial port.
+        :param serial_port: Serial port device (e.g., /dev/ttyAMA0).
         """
 
         super().__init__(
@@ -1569,11 +1569,36 @@ class CartPole(ContinuousMdpEnvironment):
             self
     ):
         """
-        Stop the pole by applying the brake to it.
+        Stop the pole by repeatedly applying the brake and waiting for stationarity.
         """
 
-        self.pole_rotary_encoder.wait_for_stationarity()
+        while True:
+            self.apply_pole_brake()
+            self.pole_rotary_encoder.wait_for_stationarity()
+            num_phase_changes_before_release = self.pole_rotary_encoder.interface.get_state().num_phase_changes
+            self.release_pole_brake()
+            time.sleep(0.5)
+            num_phase_changes_after_release = self.pole_rotary_encoder.interface.get_state().num_phase_changes
+            if num_phase_changes_after_release == num_phase_changes_before_release:
+                break
 
+    def release_pole_brake(
+            self
+    ):
+        """
+        Release the pole brake.
+        """
+
+        self.brake_servo.set_degrees(10.0)
+
+    def apply_pole_brake(
+            self
+    ):
+        """
+        Apply the pole brake.
+        """
+
+        self.brake_servo.set_degrees(0.0)
 
     def disable_motor_pwm(
             self
