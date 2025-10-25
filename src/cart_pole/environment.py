@@ -776,7 +776,18 @@ class CartPole(ContinuousMdpEnvironment):
         self.fraction_time_balancing = IncrementalSampleAverager()
         self.beta_shape_param_iter_coef = {}
         self.policy_get_item_calls = []
-        self.max_motor_acceleration_per_second = 200
+        self.max_motor_speed_change_per_second = 200
+        self.max_motor_speed_change_per_timestep = self.max_motor_speed_change_per_second / self.timesteps_per_second
+
+        # configure the continuous action with a single dimension for acceleration, range across the maximum.
+        self.actions = [
+            ContinuousMultiDimensionalAction(
+                value=None,
+                min_values=np.array([-self.max_motor_speed_change_per_timestep]),
+                max_values=np.array([self.max_motor_speed_change_per_timestep]),
+                name='motor-acc'
+            )
+        ]
 
         (
             self.state_lock,
@@ -801,16 +812,6 @@ class CartPole(ContinuousMdpEnvironment):
             self.arduino_serial_connection,
             self.brake_servo
         ) = self.get_components()
-
-        # configure the continuous action with a single dimension ranging the motor speed
-        self.actions = [
-            ContinuousMultiDimensionalAction(
-                value=None,
-                min_values=np.array([-100.0]),
-                max_values=np.array([100.0]),
-                name='motor-speed'
-            )
-        ]
 
         if self.calibrate_on_next_reset:
             self.motor_deadzone_speed_left: Optional[int] = None
@@ -2005,20 +2006,18 @@ class CartPole(ContinuousMdpEnvironment):
             # since we're waiting for the learning procedure to exit the episode.
             if not self.state.terminal:
 
-                # extract the desired speed from the action
+                # extract the desired acceleration from the action, add to current speed
                 assert isinstance(a, ContinuousMultiDimensionalAction)
                 assert a.value.shape == (1,)
-                next_speed = round(float(a.value[0]))
+                desired_acceleration = float(a.value[0])
                 curr_speed = self.motor.get_speed()
-                acceleration_interval_seconds = abs(curr_speed - next_speed) / self.max_motor_acceleration_per_second
-                if acceleration_interval_seconds < 0.1:
-                    acceleration_interval = None
-                else:
-                    acceleration_interval = timedelta(seconds=acceleration_interval_seconds)
-                self.set_motor_speed(
-                    next_speed,
-                    acceleration_interval
-                )
+                next_speed = round(curr_speed + desired_acceleration)
+                self.set_motor_speed(next_speed)
+
+                # set actual acceleration back into the action, so that the learning procedure has an accurate
+                # assessment of the action that was applied.
+                actual_acceleration = float(self.motor.get_speed() - curr_speed)
+                a.value[0] = actual_acceleration
 
             # adapt the sleep time to obtain the desired steps per second
             if self.previous_timestep_epoch is None:
