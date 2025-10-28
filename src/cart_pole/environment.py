@@ -787,7 +787,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.fraction_time_balancing = IncrementalSampleAverager()
         self.beta_shape_param_iter_coef = {}
         self.policy_get_item_calls = []
-        self.max_motor_speed_change_per_second = 100.0
+        self.max_motor_speed_change_per_second = 400.0
         self.max_motor_speed_change_per_timestep = self.max_motor_speed_change_per_second / self.timesteps_per_second
 
         # configure the continuous action with a single dimension for acceleration, range across the maximum.
@@ -963,7 +963,7 @@ class CartPole(ContinuousMdpEnvironment):
                 identifier=0,
 
                 # ensure updates are at least the environment's hz
-                state_update_hz=round(1.5 * int(self.timesteps_per_second))
+                state_update_hz=round(2.0 * int(self.timesteps_per_second))
             )
         )
         cart_rotary_encoder.start()
@@ -980,7 +980,7 @@ class CartPole(ContinuousMdpEnvironment):
                 identifier=1,
 
                 # ensure updates are at least the environment's hz
-                state_update_hz=round(1.5 * int(self.timesteps_per_second))
+                state_update_hz=round(2.0 * int(self.timesteps_per_second))
             )
         )
         pole_rotary_encoder.start()
@@ -1592,10 +1592,10 @@ class CartPole(ContinuousMdpEnvironment):
 
         while True:
             self.apply_pole_brake()
-            self.pole_rotary_encoder.wait_for_stationarity()
+            self.pole_rotary_encoder.wait_for_stationarity(0.1)
             num_phase_changes_before_release = self.pole_rotary_encoder.interface.get_state().num_phase_changes
             self.release_pole_brake()
-            time.sleep(0.5)
+            time.sleep(0.2)
             num_phase_changes_after_release = self.pole_rotary_encoder.interface.get_state().num_phase_changes
             if num_phase_changes_after_release == num_phase_changes_before_release:
                 break
