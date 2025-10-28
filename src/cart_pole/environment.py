@@ -776,7 +776,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.fraction_time_balancing = IncrementalSampleAverager()
         self.beta_shape_param_iter_coef = {}
         self.policy_get_item_calls = []
-        self.max_motor_speed_change_per_second = 200
+        self.max_motor_speed_change_per_second = 200.0
         self.max_motor_speed_change_per_timestep = self.max_motor_speed_change_per_second / self.timesteps_per_second
 
         # configure the continuous action with a single dimension for acceleration, range across the maximum.
@@ -950,7 +950,9 @@ class CartPole(ContinuousMdpEnvironment):
                 angular_acceleration_step_size=self.cart_rotary_encoder_angular_acceleration_step_size,
                 serial=arduino_serial_connection,
                 identifier=0,
-                state_update_hz=2 * int(self.timesteps_per_second)  # ensure updates are at least the environment's hz
+
+                # ensure updates are at least the environment's hz
+                state_update_hz=round(1.5 * int(self.timesteps_per_second))
             )
         )
         cart_rotary_encoder.start()
@@ -965,7 +967,9 @@ class CartPole(ContinuousMdpEnvironment):
                 angular_acceleration_step_size=self.pole_rotary_encoder_angular_acceleration_step_size,
                 serial=arduino_serial_connection,
                 identifier=1,
-                state_update_hz=2 * int(self.timesteps_per_second)  # ensure updates are at least the environment's hz
+
+                # ensure updates are at least the environment's hz
+                state_update_hz=round(1.5 * int(self.timesteps_per_second))
             )
         )
         pole_rotary_encoder.start()
@@ -1005,7 +1009,6 @@ class CartPole(ContinuousMdpEnvironment):
         cart_moving_right_led = None if self.cart_moving_right_led_pin is None else LED(self.cart_moving_right_led_pin)
         balance_led = None if self.balance_led_pin is None else LED(self.balance_led_pin)
         termination_led = None if self.termination_led_pin is None else LED(self.termination_led_pin)
-
         leds = [
             progressive_upright_led,
             falling_led,
@@ -1022,7 +1025,6 @@ class CartPole(ContinuousMdpEnvironment):
             next_set_speed_promise_ms=500,
             reverse=self.motor_negative_speed_is_right
         )
-
         motor = DcMotor(
             driver=motor_driver,
             speed=0
@@ -1120,7 +1122,7 @@ class CartPole(ContinuousMdpEnvironment):
             'cart-position',
             'cart-velocity',
             'pole-angle',
-            'pole-angular-velocity'
+            'pole-velocity'
         ]
 
     def get_action_space_dimensionality(
@@ -1143,7 +1145,7 @@ class CartPole(ContinuousMdpEnvironment):
         :return: List of names.
         """
 
-        return ['motor-speed-change']
+        return ['motor']
 
     def calibrate(
             self
@@ -1688,7 +1690,7 @@ class CartPole(ContinuousMdpEnvironment):
         for led in self.leds:
             CartPole.set_led(led, False)
 
-    def flash_leds(
+    def cycle_leds(
             self
     ):
         """
@@ -1696,8 +1698,7 @@ class CartPole(ContinuousMdpEnvironment):
         """
 
         self.turn_off_leds()
-
-        for _ in range(5):
+        for _ in range(2):
             for led in self.leds:
                 CartPole.set_led(led, True)
                 time.sleep(0.1)
@@ -1737,7 +1738,7 @@ class CartPole(ContinuousMdpEnvironment):
         super().reset_for_new_run(self.agent)
         self.agent = agent
 
-        self.flash_leds()
+        self.cycle_leds()
 
         plot_kwargs = {
             'marker': '.',
@@ -1761,12 +1762,12 @@ class CartPole(ContinuousMdpEnvironment):
             plot_kwargs
         )
 
-        self.plot_label_data_kwargs['Pole Angular Vel.'] = (
+        self.plot_label_data_kwargs['Pole Vel.'] = (
             dict(),
             plot_kwargs
         )
 
-        self.plot_label_data_kwargs['Pole Angular Acc.'] = (
+        self.plot_label_data_kwargs['Pole Acc.'] = (
             dict(),
             plot_kwargs
         )

@@ -262,6 +262,7 @@ def main():
             motor.stop()
 
     def test_servo():
+        braking_pressure_degrees = 1.0
         servo.start()
         gpio.setup(CkPin.GPIO25, gpio.OUT)
         gpio.output(CkPin.GPIO25, gpio.LOW)
@@ -269,9 +270,10 @@ def main():
         time.sleep(1.0)
         servo.set_degrees(45.0)
         time.sleep(1.0)
-        servo.set_degrees(0.0)
+        servo.set_degrees(braking_pressure_degrees)
         time.sleep(1.0)
         servo.stop()
+        print(f'Stopped servo at braking pressure degrees:  {braking_pressure_degrees}')
 
     try:
         print('Running test...')
@@ -289,7 +291,7 @@ def main():
         # test_set_net_total_degrees()
         # test_plot_rotary_encoder_state()
         # test_rotary_encoder_wait_for_stationarity()
-        # test_servo()
+        test_servo()
 
     except KeyboardInterrupt:
         pass
