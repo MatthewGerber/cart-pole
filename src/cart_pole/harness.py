@@ -103,6 +103,7 @@ def main():
     servo = Servo(
         driver=Sg90DriverPCA9685PW(
             pca9685pw=pwm,
+            output_disable_pin=CkPin.GPIO25,
             servo_channel=0,
             reverse=True,
             correction_degrees=0.0
@@ -262,18 +263,25 @@ def main():
             motor.stop()
 
     def test_servo():
-        braking_pressure_degrees = 1.0
+        release_degrees = 20.0
+        braking_degrees = 12.0
+        servo.disable()
         servo.start()
-        gpio.setup(CkPin.GPIO25, gpio.OUT)
-        gpio.output(CkPin.GPIO25, gpio.LOW)
-        servo.set_degrees(0.0)
+        servo.set_degrees(release_degrees)
+        servo.enable()
         time.sleep(1.0)
-        servo.set_degrees(45.0)
-        time.sleep(1.0)
-        servo.set_degrees(braking_pressure_degrees)
-        time.sleep(1.0)
+        for i in range(10):
+            if i == 5:
+                print('Disabling servo.')
+                servo.disable()
+            servo.set_degrees(braking_degrees)
+            time.sleep(0.5)
+            servo.set_degrees(release_degrees)
+            time.sleep(0.5)
+            if i == 5:
+                print('Enabling servo.')
+                servo.enable()
         servo.stop()
-        print(f'Stopped servo at braking pressure degrees:  {braking_pressure_degrees}')
 
     try:
         print('Running test...')
@@ -291,7 +299,7 @@ def main():
         # test_set_net_total_degrees()
         # test_plot_rotary_encoder_state()
         # test_rotary_encoder_wait_for_stationarity()
-        test_servo()
+        # test_servo()
 
     except KeyboardInterrupt:
         pass

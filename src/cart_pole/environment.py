@@ -577,6 +577,14 @@ class CartPole(ContinuousMdpEnvironment):
         )
 
         parser.add_argument(
+            '--brake-servo-disable-pin',
+            type=get_ck_pin,
+            help=(
+                'GPIO pin connected to the disable pin of the PWM that contols the pole brake.'
+            )
+        )
+
+        parser.add_argument(
             '--serial-port',
             type=str,
             help=(
@@ -670,6 +678,7 @@ class CartPole(ContinuousMdpEnvironment):
             policy_get_item_calls_dir: str,
             i2c_bus: str,
             brake_servo_pwm_channel: int,
+            brake_servo_disable_pin: CkPin,
             serial_port: str
     ):
         """
@@ -709,6 +718,7 @@ class CartPole(ContinuousMdpEnvironment):
         :param policy_get_item_calls_dir: Get-item call directory.
         :param i2c_bus: I2C bus device (e.g., /dev/i2c-1).
         :param brake_servo_pwm_channel: PWM channel driving the brake servo.
+        :param brake_servo_disable_pin: Servo disable pin.
         :param serial_port: Serial port device (e.g., /dev/ttyAMA0).
         """
 
@@ -747,6 +757,7 @@ class CartPole(ContinuousMdpEnvironment):
         os.makedirs(self.policy_get_item_calls_dir, exist_ok=True)
         self.i2c_bus = i2c_bus
         self.brake_servo_pwm_channel = brake_servo_pwm_channel
+        self.brake_servo_disable_pin = brake_servo_disable_pin
         self.serial_port = serial_port
 
         # non-calibrated attributes
@@ -776,7 +787,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.fraction_time_balancing = IncrementalSampleAverager()
         self.beta_shape_param_iter_coef = {}
         self.policy_get_item_calls = []
-        self.max_motor_speed_change_per_second = 200.0
+        self.max_motor_speed_change_per_second = 100.0
         self.max_motor_speed_change_per_timestep = self.max_motor_speed_change_per_second / self.timesteps_per_second
 
         # configure the continuous action with a single dimension for acceleration, range across the maximum.
@@ -1039,14 +1050,17 @@ class CartPole(ContinuousMdpEnvironment):
         brake_servo = Servo(
             driver=Sg90DriverPCA9685PW(
                 pca9685pw=pwm,
+                output_disable_pin=self.brake_servo_disable_pin,
                 servo_channel=self.brake_servo_pwm_channel,
                 reverse=True,
                 correction_degrees=0.0
             ),
-            degrees=0.0,
+            degrees=45.0,
             min_degree=0.0,
             max_degree=180.0
         )
+        brake_servo.enable()
+        brake_servo.start()
 
         return (
             RLock(),
@@ -1158,7 +1172,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         # create some space to do deadzone identification
         logging.info('Moving cart to right limit to create space for deadzone identification.')
-        self.set_motor_speed(30)
+        self.set_motor_speed(20)
         self.right_limit_pressed.wait()
         self.set_motor_speed(-30)
         time.sleep(3.0)
@@ -1240,6 +1254,7 @@ class CartPole(ContinuousMdpEnvironment):
         """
 
         self.stop_cart()
+        self.stop_pole()
 
         if direction == CartDirection.LEFT:
             increment = -1
@@ -1592,7 +1607,7 @@ class CartPole(ContinuousMdpEnvironment):
         Release the pole brake.
         """
 
-        self.brake_servo.set_degrees(10.0)
+        self.brake_servo.set_degrees(20.0)
 
     def apply_pole_brake(
             self
@@ -1601,7 +1616,7 @@ class CartPole(ContinuousMdpEnvironment):
         Apply the pole brake.
         """
 
-        self.brake_servo.set_degrees(0.0)
+        self.brake_servo.set_degrees(10.0)
 
     def disable_motor_pwm(
             self
@@ -2052,8 +2067,8 @@ class CartPole(ContinuousMdpEnvironment):
             self.plot_label_data_kwargs['Pole Angle'][0][t] = (
                 1000.0 * -np.sign(self.state.pole_angle_deg_from_upright) * self.state.zero_to_one_pole_angle
             )
-            self.plot_label_data_kwargs['Pole Angular Vel.'][0][t] = self.state.pole_angular_velocity_deg_per_sec
-            self.plot_label_data_kwargs['Pole Angular Acc.'][0][t] = (
+            self.plot_label_data_kwargs['Pole Vel.'][0][t] = self.state.pole_angular_velocity_deg_per_sec
+            self.plot_label_data_kwargs['Pole Acc.'][0][t] = (
                 self.state.pole_angular_acceleration_deg_per_sec_squared
             )
 
