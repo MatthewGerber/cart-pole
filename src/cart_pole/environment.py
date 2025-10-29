@@ -1600,6 +1600,8 @@ class CartPole(ContinuousMdpEnvironment):
             if num_phase_changes_after_release == num_phase_changes_before_release:
                 break
 
+        self.pole_rotary_encoder.wait_for_stationarity()
+
     def release_pole_brake(
             self
     ):
@@ -2029,11 +2031,6 @@ class CartPole(ContinuousMdpEnvironment):
                 curr_speed = self.motor.get_speed()
                 next_speed = round(curr_speed + desired_acceleration)
                 self.set_motor_speed(next_speed)
-
-                # set actual acceleration back into the action, so that the learning procedure has an accurate
-                # assessment of the action that was applied.
-                actual_acceleration = float(self.motor.get_speed() - curr_speed)
-                a.value[0] = actual_acceleration
 
             # adapt the sleep time to obtain the desired steps per second
             if self.previous_timestep_epoch is None:
