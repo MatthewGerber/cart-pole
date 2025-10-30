@@ -1563,6 +1563,10 @@ class CartPole(ContinuousMdpEnvironment):
         # noinspection PyBroadException
         try:
             self.set_motor_speed(0)
+
+            # a swinging pole can create movement at the cart rotary encoder. apply the pole brake to reduce this.
+            self.apply_pole_brake()
+
             self.cart_rotary_encoder.wait_for_stationarity()
         except Exception as e:
 
@@ -1578,6 +1582,9 @@ class CartPole(ContinuousMdpEnvironment):
 
             # enable the failsafe pwm now that we've set the motor speed to zero and the cart has stopped
             self.enable_motor_pwm()
+
+        finally:
+            self.release_pole_brake()
 
         # discontinue sending next-set promises. we'll resume these if/when we reset for a new episode. we need to stop
         # the promises because out-of-episode motor speeds changes for reasons (e.g., calibration) that aren't a concern
