@@ -1253,6 +1253,7 @@ class CartPole(ContinuousMdpEnvironment):
         :return: Motor speed that cause the cart to begin moving in the given direction.
         """
 
+        # stop cart and pole. need to stop pole so that it's momentum doesn't pull the cart when detecting deadzone.
         self.stop_cart()
         self.stop_pole()
 
@@ -2001,9 +2002,12 @@ class CartPole(ContinuousMdpEnvironment):
             new_termination = not previous_state.terminal and self.state.terminal
             new_truncation = not previous_state.truncated and self.state.truncated
 
+            # upon new termination, stop the cart and the pole. stopping the pole is important because it can continue
+            # swinging well into the next reset, where it might trigger the centering ultrasonic sensor.
             if new_termination:
                 CartPole.set_led(self.termination_led, True)
                 self.stop_cart()
+                self.stop_pole()
 
             if new_truncation:
 
@@ -2115,6 +2119,7 @@ class CartPole(ContinuousMdpEnvironment):
         """
 
         self.stop_cart()
+        self.stop_pole()
 
         self.metric_value['Fraction Balancing'] = self.fraction_time_balancing.get_value()
 
