@@ -787,7 +787,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.fraction_time_balancing = IncrementalSampleAverager()
         self.beta_shape_param_iter_coef = {}
         self.policy_get_item_calls = []
-        self.max_motor_speed_change_per_second = 400.0
+        self.max_motor_speed_change_per_second = 600.0
         self.max_motor_speed_change_per_timestep = self.max_motor_speed_change_per_second / self.timesteps_per_second
 
         # configure the continuous action with a single dimension for acceleration, range across the maximum.
