@@ -787,7 +787,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.fraction_time_balancing = IncrementalSampleAverager()
         self.beta_shape_param_iter_coef = {}
         self.policy_get_item_calls = []
-        self.max_motor_speed_change_per_second = 600.0
+        self.max_motor_speed_change_per_second = 900.0
         self.max_motor_speed_change_per_timestep = self.max_motor_speed_change_per_second / self.timesteps_per_second
 
         # configure the continuous action with a single dimension for acceleration, range across the maximum.
@@ -2244,19 +2244,27 @@ class CartPole(ContinuousMdpEnvironment):
                 CartPole.set_led(self.balance_led, False)
 
             elif self.episode_phase == EpisodePhase.BALANCE:
-                logging.info(
-                    f'Balancing @ {pole_angle_deg_from_upright:.1f} deg @ {pole_state.angular_velocity:.1f} deg/sec.'
-                )
-                self.time_step_axv_lines[t] = {
-                    'color': 'blue',
-                    'label': 'Balance',
-                    'linewidth': 0.5
-                }
-                CartPole.set_led(self.balance_led, True)
-                CartPole.set_led(self.progressive_upright_led, False)
-                if self.balance_gamma != self.agent.gamma:
-                    self.agent.gamma = self.balance_gamma
-                    logging.info(f'Set agent.gamma={self.agent.gamma}.')
+
+                # only transition to the balance phase once. after balance is lost, the episode is truncated and cannot
+                # thereafter return to balancing. this ensures a properly structured episode, which always ends when
+                # balance is lost. it also prevents the discount (agent.gamma) from returning to large values after it
+                # has been set to a lower post-truncation value for faster convergence.
+                if self.lost_balance_timestamp is None:
+                    logging.info(
+                        f'Balancing @ {pole_angle_deg_from_upright:.1f} deg @ {pole_state.angular_velocity:.1f} deg/sec.'
+                    )
+                    self.time_step_axv_lines[t] = {
+                        'color': 'blue',
+                        'label': 'Balance',
+                        'linewidth': 0.5
+                    }
+                    CartPole.set_led(self.balance_led, True)
+                    CartPole.set_led(self.progressive_upright_led, False)
+                    if self.balance_gamma != self.agent.gamma:
+                        self.agent.gamma = self.balance_gamma
+                        logging.info(f'Set agent.gamma={self.agent.gamma}.')
+                else:
+                    logging.info('Refusing to transition back to balancing after initial loss of balance.')
 
             else:
                 raise ValueError(f'Unknown episode phase:  {self.episode_phase}')
