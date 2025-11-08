@@ -1567,7 +1567,7 @@ class CartPole(ContinuousMdpEnvironment):
             # a swinging pole can create movement at the cart rotary encoder. apply the pole brake to reduce this.
             self.apply_pole_brake()
 
-            self.cart_rotary_encoder.wait_for_stationarity()
+            self.cart_rotary_encoder.wait_for_stationarity(0.1)
         except Exception as e:
 
             logging.critical(f'Failed to stop cart. Leaving the motor PWM disabled. Exception {e}')
