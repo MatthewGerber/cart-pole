@@ -1,10 +1,9 @@
 import itertools
 from argparse import ArgumentParser
 from copy import deepcopy
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict, Optional, cast
 
 import numpy as np
-
 from cart_pole.environment import CartPoleState, CartPole, EpisodePhase
 from rlai.core import MdpState
 from rlai.models.feature_extraction import FeatureExtractor
@@ -177,7 +176,7 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         # create the full matrix of multiplicative interaction terms
         state_feature_matrix = np.array([
             [
-                np.prod(state.observation[term_indices])
+                np.prod(cast(CartPoleState, state).observation[term_indices])
                 for term_indices in self.interaction_term_indices
             ]
             for state in states
@@ -185,7 +184,7 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
 
         # get the raw state matrix, with one row per observation. this is used for feature-space segmentation.
         state_matrix = np.array([
-            state.observation
+            cast(CartPoleState, state).observation
             for state in states
         ])
 
