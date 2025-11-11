@@ -174,60 +174,23 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
                 for term_indices_tuple in itertools.combinations(indices, term_order)
             ]
 
-        # range all features to be in a nominal range of approximately [-1.0, 1.0]. this is only approximate because
-        # the minimum and maximum values of some state dimensions (e.g., pole angular velocity) are unlimited in theory
-        # and uncalibrated in practice -- we provide rough estimates manually.
-        state_sign_matrix = np.array([
-            [
-                np.sign(state.cart_mm_from_center),
-                np.sign(state.cart_velocity_mm_per_second),
-                np.sign(state.pole_angle_deg_from_upright),
-                np.sign(state.pole_angular_velocity_deg_per_sec),
-                np.sign(state.pole_angular_acceleration_deg_per_sec_squared)
-            ]
-            for state in states
-            if isinstance(state, CartPoleState)
-        ])
-        zero_to_one_state_matrix = np.array([
-            [
-                state.zero_to_one_cart_distance_from_center,
-                state.zero_to_one_cart_speed,
-                state.zero_to_one_pole_angle,
-                state.zero_to_one_pole_angular_speed,
-                state.zero_to_one_pole_angular_acceleration
-            ]
-            for state in states
-            if isinstance(state, CartPoleState)
-        ])
-
-        # invert back to 1.0 being most physically extreme. the zero-to-one values were calculated primarily for the
-        # purpose of rewards, such that 1.0 is most rewarding, which generally means least physically extreme (e.g.,
-        # stationary is 1.0, centered is 1.0, etc.). here we want 1.0 to be most physically extreme.
-        ranged_state_matrix = state_sign_matrix * (1.0 - zero_to_one_state_matrix)
-
-        # create the full matrix of multiplicative interaction terms between the ranged feature values
+        # create the full matrix of multiplicative interaction terms
         state_feature_matrix = np.array([
             [
-                np.prod(ranged_feature_vector[term_indices])
+                np.prod(state.observation[term_indices])
                 for term_indices in self.interaction_term_indices
             ]
-            for ranged_feature_vector in ranged_state_matrix
+            for state in states
         ])
 
         # get the raw state matrix, with one row per observation. this is used for feature-space segmentation.
         state_matrix = np.array([
             state.observation
             for state in states
-            if isinstance(state, CartPoleState)
         ])
 
         # interact the feature matrix according to its state segment. this will scale the feature values within their
-        # segments along the way. why scaling? ranging the feature values to be in [-1.0, 1.0] according to their
-        # theoretical bounds doesn't mean that the distribution of observed values will be similar when running. for
-        # example, the observed cart and pole velocities might be quite small relative to their ranges and the observed
-        # values of cart and pole positions. these differences in observed distribution across features result in the
-        # usual issues pertaining to step sizes in the policy updates. standardize the ranged feature matrix so that a
-        # single step size will be suitable for learning.
+        # segments along the way.
         scaled_state_indicator_feature_matrix = self.state_category_feature_interacter.interact(
             state_matrix,
             state_feature_matrix,

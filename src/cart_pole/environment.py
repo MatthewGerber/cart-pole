@@ -175,9 +175,10 @@ class CartPoleState(MdpState):
 
         CartPosition = 0
         CartVelocity = 1
-        PoleAngle = 2
-        PoleVelocity = 3
-        PoleAcceleration = 4
+        CartAcceleration = 2
+        PoleAngle = 3
+        PoleVelocity = 4
+        PoleAcceleration = 5
 
     @staticmethod
     def zero_to_one_pole_angle_from_degrees(
@@ -198,6 +199,7 @@ class CartPoleState(MdpState):
             environment: 'CartPole',
             cart_mm_from_center: float,
             cart_velocity_mm_per_sec: float,
+            cart_acceleration_mm_per_sec_squared: float,
             pole_angle_deg_from_upright: float,
             pole_angular_velocity_deg_per_sec: float,
             pole_angular_acceleration_deg_per_sec_squared: float,
@@ -213,6 +215,7 @@ class CartPoleState(MdpState):
         :param environment: Environment.
         :param cart_mm_from_center: Cart position as mm left of (negative), right of (positive), or at (zero) center.
         :param cart_velocity_mm_per_sec: Cart velocity (mm/sec).
+        :param cart_acceleration_mm_per_sec_squared: Cart acceleration (mm/sec^2).
         :param pole_angle_deg_from_upright: Pole angle as degrees left of (negative), right of (positive), or at (zero)
         upright.
         :param pole_angular_velocity_deg_per_sec: Pole angular velocity (deg/sec).
@@ -230,6 +233,7 @@ class CartPoleState(MdpState):
 
         self.cart_mm_from_center = cart_mm_from_center
         self.cart_velocity_mm_per_second = cart_velocity_mm_per_sec
+        self.cart_acceleration_mm_per_sec_squared = cart_acceleration_mm_per_sec_squared
         self.pole_angle_deg_from_upright = pole_angle_deg_from_upright
         self.pole_angular_velocity_deg_per_sec = pole_angular_velocity_deg_per_sec
         self.pole_angular_acceleration_deg_per_sec_squared = pole_angular_acceleration_deg_per_sec_squared
@@ -239,6 +243,7 @@ class CartPoleState(MdpState):
         self.observation = np.array([
             self.cart_mm_from_center,
             self.cart_velocity_mm_per_second,
+            self.cart_acceleration_mm_per_sec_squared,
             self.pole_angle_deg_from_upright,
             self.pole_angular_velocity_deg_per_sec,
             self.pole_angular_acceleration_deg_per_sec_squared
@@ -249,38 +254,11 @@ class CartPoleState(MdpState):
             self.pole_angle_deg_from_upright
         )
 
-        # pole angular speed in [0.0, 1.0] where 0.0 is full speed, and 1.0 is stationary.
-        self.zero_to_one_pole_angular_speed = 1.0 - min(
-            1.0,
-            abs(self.pole_angular_velocity_deg_per_sec) / environment.max_pole_angular_speed_deg_per_second
-        )
-
-        # pole angular acceleration in [0.0, 1.0] where 0.0 is full acceleration, and 1.0 is no acceleration.
-        self.zero_to_one_pole_angular_acceleration = 1.0 - min(
-            1.0,
-            (
-                abs(self.pole_angular_acceleration_deg_per_sec_squared) /
-                environment.max_pole_angular_acceleration_deg_per_second_squared
-            )
-        )
-
         # evaluate the pole angle a small fraction of a second (0.00001) from the current time to determine whether it
         # is falling. if we look too far ahead, we'll go beyond the point where the pole is vertical and the calculation
         # will provide the wrong answer.
         self.pole_is_falling = self.zero_to_one_pole_angle > self.zero_to_one_pole_angle_from_degrees(
             self.pole_angle_deg_from_upright + (self.pole_angular_velocity_deg_per_sec * 0.00001)
-        )
-
-        # cart distance from center in [0.0, 1.0] where 0.0 is either side's soft limit, and 1.0 is centered.
-        self.zero_to_one_cart_distance_from_center = 1.0 - min(
-            1.0,
-            abs(self.cart_mm_from_center) / environment.soft_limit_mm_from_midline
-        )
-
-        # cart speed in [0.0, 1.0] where 0.0 is full speed, and 1.0 is stationary.
-        self.zero_to_one_cart_speed = 1.0 - min(
-            1.0,
-            abs(self.cart_velocity_mm_per_second) / environment.max_cart_speed_mm_per_second
         )
 
         super().__init__(
@@ -300,9 +278,8 @@ class CartPoleState(MdpState):
         """
 
         return (
-            f'cart pos={self.cart_mm_from_center:.1f} mm; 0-1 pos={self.zero_to_one_cart_distance_from_center:.2f}; '
-            f'vel={self.cart_velocity_mm_per_second:.1f} mm/s; ' 
-            f'pole pos={self.pole_angle_deg_from_upright:.1f} deg; 0-1 pos={self.zero_to_one_pole_angle:.2f}; '
+            f'cart pos={self.cart_mm_from_center:.1f} mm, vel={self.cart_velocity_mm_per_second:.1f} mm/s; '
+            f'pole pos={self.pole_angle_deg_from_upright:.1f} deg, 0-1 pos={self.zero_to_one_pole_angle:.2f}, '
             f'falling={self.pole_is_falling} @ {self.pole_angular_velocity_deg_per_sec:.1f} deg/s'
         )
 
@@ -772,8 +749,6 @@ class CartPole(ContinuousMdpEnvironment):
         self.timestep_sleep_seconds = 1.0 / self.timesteps_per_second
         self.original_agent_gamma: Optional[float] = None
         self.truncation_gamma: Optional[float] = None  # unused. unclear if this is effective.
-        self.max_pole_angular_speed_deg_per_second = 1080.0
-        self.max_pole_angular_acceleration_deg_per_second_squared = 8000.0
         self.episode_phase = EpisodePhase.SWING_UP
         self.progressive_upright_pole_angle = 175.0
         self.achieved_progressive_upright = False
@@ -2103,12 +2078,9 @@ class CartPole(ContinuousMdpEnvironment):
         if state.terminal:
             reward = -1.0
 
-        # reward according to pole angle and pole angular speed
+        # reward according to pole angle
         else:
-            reward = (
-                state.zero_to_one_pole_angle *
-                state.zero_to_one_pole_angular_speed
-            )
+            reward = state.zero_to_one_pole_angle
 
         return reward
 
@@ -2296,6 +2268,7 @@ class CartPole(ContinuousMdpEnvironment):
             environment=self,
             cart_mm_from_center=cart_mm_from_center,
             cart_velocity_mm_per_sec=cart_state.angular_velocity * self.cart_mm_per_degree,
+            cart_acceleration_mm_per_sec_squared=cart_state.angular_acceleration * self.cart_mm_per_degree,
             pole_angle_deg_from_upright=pole_angle_deg_from_upright,
             pole_angular_velocity_deg_per_sec=pole_state.angular_velocity,
             pole_angular_acceleration_deg_per_sec_squared=pole_state.angular_acceleration,
