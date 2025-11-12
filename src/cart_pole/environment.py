@@ -5,7 +5,7 @@ import pickle
 import time
 from argparse import ArgumentParser
 from datetime import timedelta
-from enum import Enum, auto
+from enum import Enum, auto, IntEnum
 from threading import Event, RLock
 from typing import List, Tuple, Any, Optional, Dict
 
@@ -168,7 +168,7 @@ class CartPoleState(MdpState):
     Cart-pole state.
     """
 
-    class Dimension(Enum):
+    class Dimension(IntEnum):
         """
         Dimensions.
         """
@@ -1747,30 +1747,24 @@ class CartPole(ContinuousMdpEnvironment):
             'alpha': 0.5
         }
 
-        self.plot_label_data_kwargs['Cart Position'] = (
-            dict(),
-            plot_kwargs
-        )
+        self.plot_title_label_data_kwargs['Cart'] = {
+            'Pos': (dict(), plot_kwargs),
+            'Vel': (dict(), plot_kwargs),
+            'Acc': (dict(), plot_kwargs)
+        }
 
-        self.plot_label_data_kwargs['Motor Speed'] = (
-            dict(),
-            plot_kwargs
-        )
+        self.plot_title_label_data_kwargs['Pole'] = {
+            'Pos': (dict(), plot_kwargs),
+            'Vel': (dict(), plot_kwargs),
+            'Acc': (dict(), plot_kwargs)
+        }
 
-        self.plot_label_data_kwargs['Pole Angle'] = (
-            dict(),
-            plot_kwargs
-        )
-
-        self.plot_label_data_kwargs['Pole Vel.'] = (
-            dict(),
-            plot_kwargs
-        )
-
-        self.plot_label_data_kwargs['Pole Acc.'] = (
-            dict(),
-            plot_kwargs
-        )
+        self.plot_title_label_data_kwargs['Motor'] = {
+            'Speed': (
+                dict(),
+                plot_kwargs
+            )
+        }
 
         self.fraction_time_balancing.reset()
 
@@ -2045,15 +2039,18 @@ class CartPole(ContinuousMdpEnvironment):
             logging.debug(f'State {t}:  {self.state}')
             logging.debug(f'Reward {t}:  {reward_value}')
 
-            self.plot_label_data_kwargs['Cart Position'][0][t] = self.state.cart_mm_from_center
-            self.plot_label_data_kwargs['Motor Speed'][0][t] = self.motor.get_speed()
-            self.plot_label_data_kwargs['Pole Angle'][0][t] = (
+            # add plotting data for cart, pole, and motor
+            self.plot_title_label_data_kwargs['Cart']['Pos'][0][t] = self.state.cart_mm_from_center
+            self.plot_title_label_data_kwargs['Cart']['Vel'][0][t] = self.state.cart_velocity_mm_per_second
+            self.plot_title_label_data_kwargs['Cart']['Acc'][0][t] = self.state.cart_acceleration_mm_per_sec_squared
+            self.plot_title_label_data_kwargs['Pole']['Pos'][0][t] = (
                 1000.0 * -np.sign(self.state.pole_angle_deg_from_upright) * self.state.zero_to_one_pole_angle
             )
-            self.plot_label_data_kwargs['Pole Vel.'][0][t] = self.state.pole_angular_velocity_deg_per_sec
-            self.plot_label_data_kwargs['Pole Acc.'][0][t] = (
+            self.plot_title_label_data_kwargs['Pole']['Vel'][0][t] = self.state.pole_angular_velocity_deg_per_sec
+            self.plot_title_label_data_kwargs['Pole']['Acc'][0][t] = (
                 self.state.pole_angular_acceleration_deg_per_sec_squared
             )
+            self.plot_title_label_data_kwargs['Motor']['Speed'][0][t] = self.motor.get_speed()
 
             self.fraction_time_balancing.update(float(self.episode_phase == EpisodePhase.BALANCE))
             if self.state.terminal:
@@ -2074,15 +2071,7 @@ class CartPole(ContinuousMdpEnvironment):
         :return: Reward.
         """
 
-        # penalize end of episode
-        if state.terminal:
-            reward = -1.0
-
-        # reward according to pole angle
-        else:
-            reward = state.zero_to_one_pole_angle
-
-        return reward
+        return state.zero_to_one_pole_angle
 
     def exiting_episode_without_termination(
             self

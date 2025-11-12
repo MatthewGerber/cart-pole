@@ -1,7 +1,6 @@
-import itertools
 from argparse import ArgumentParser
 from copy import deepcopy
-from typing import List, Tuple, Dict, Optional, cast
+from typing import List, Tuple, Dict, cast
 
 import numpy as np
 from cart_pole.environment import CartPoleState, CartPole, EpisodePhase
@@ -78,8 +77,6 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         super().__init__(True)
 
         self.environment = environment
-
-        self.interaction_term_indices: Optional[List[Tuple]] = None
 
         indicators = self.get_state_indicators()
 
@@ -160,31 +157,14 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         :return: State-feature matrix (#states, #features).
         """
 
-        # obtain the list of term indices that comprise the fully-interacted model. this includes all combinations of
-        # terms of each order (e.g., single terms, two-way interactions, three-way, etc.).
-        if self.interaction_term_indices is None:
-            sample_state = states[0]
-            assert isinstance(sample_state, CartPoleState)
-            num_state_dims = len(sample_state.observation)
-            indices = list(range(num_state_dims))
-            self.interaction_term_indices = [
-                list(term_indices_tuple)
-                for term_order in range(1, num_state_dims + 1)
-                for term_indices_tuple in itertools.combinations(indices, term_order)
-            ]
-
-        # create the full matrix of multiplicative interaction terms
-        state_feature_matrix = np.array([
-            [
-                np.prod(cast(CartPoleState, state).observation[term_indices])
-                for term_indices in self.interaction_term_indices
-            ]
-            for state in states
-        ])
-
         # get the raw state matrix, with one row per observation. this is used for feature-space segmentation.
         state_matrix = np.array([
-            cast(CartPoleState, state).observation
+            cast(CartPoleState, state).observation[[
+                CartPoleState.Dimension.CartPosition,
+                CartPoleState.Dimension.CartVelocity,
+                CartPoleState.Dimension.PoleAngle,
+                CartPoleState.Dimension.PoleVelocity
+            ]]
             for state in states
         ])
 
@@ -192,7 +172,7 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         # segments along the way.
         scaled_state_indicator_feature_matrix = self.state_category_feature_interacter.interact(
             state_matrix,
-            state_feature_matrix,
+            state_matrix,
             refit_scaler
         )
 
@@ -222,28 +202,21 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         :return: Indicators.
         """
 
-        indicators = [
+        indicators = StateDimensionSegment.get_segments({
+            CartPoleState.Dimension.CartPosition.value: [0.0],
+            CartPoleState.Dimension.CartVelocity.value: [0.0],
+            CartPoleState.Dimension.PoleAngle.value: [0.0],
+            CartPoleState.Dimension.PoleVelocity.value: [0.0]
+        })
 
-            # segment policy per pole on either side of vertical. we haven't yet found a feature that quantifies the
-            # correct policy response for pole angle. the feature would need to have similar values near either side
-            # of vertical downward and similar values near either side of vertical upward, with opposing values
-            # depending on whether the pole is on the left half or right half. this segmentation approach splits the
-            # policy on left/right half, such that the pole angle feature can reflect the appropriate policy response.
-            StateDimensionSegment(
-                CartPoleState.Dimension.PoleAngle.value,
-                None,
-                0.0
-            ),
-
-            # segment policy for when the pole is balancing. it is difficult for the swing-up policy to react
-            # appropriately in this position, so we use a separate policy for this phase.
-            StateLambdaIndicator(
-                lambda observation: self.environment.get_episode_phase(
-                    observation[CartPoleState.Dimension.PoleAngle.value],
-                    observation[CartPoleState.Dimension.PoleVelocity.value]
-                ) == EpisodePhase.BALANCE,
-                [False, True]
-            )
-        ]
+        # segment policy for when the pole is balancing. it is difficult for the swing-up policy to react
+        # appropriately in this position, so we use a separate policy for this phase.
+        indicators.append(StateLambdaIndicator(
+            lambda observation: self.environment.get_episode_phase(
+                observation[CartPoleState.Dimension.PoleAngle.value],
+                observation[CartPoleState.Dimension.PoleVelocity.value]
+            ) == EpisodePhase.BALANCE,
+            [False, True]
+        ))
 
         return indicators
