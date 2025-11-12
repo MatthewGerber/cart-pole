@@ -1,3 +1,4 @@
+import math
 from argparse import ArgumentParser
 from copy import deepcopy
 from typing import List, Tuple, Dict, cast
@@ -164,7 +165,7 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
                 CartPoleState.Dimension.CartVelocity,
                 CartPoleState.Dimension.PoleAngle,
                 CartPoleState.Dimension.PoleVelocity
-            ]]
+            ]] * [0.001, 0.001, math.pi / 180.0, math.pi / 180.0]
             for state in states
         ])
 
@@ -203,18 +204,18 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         """
 
         indicators = StateDimensionSegment.get_segments({
-            CartPoleState.Dimension.CartPosition.value: [0.0],
-            CartPoleState.Dimension.CartVelocity.value: [0.0],
-            CartPoleState.Dimension.PoleAngle.value: [0.0],
-            CartPoleState.Dimension.PoleVelocity.value: [0.0]
+            0: [0.0],
+            1: [0.0],
+            2: [0.0],
+            3: [0.0]
         })
 
         # segment policy for when the pole is balancing. it is difficult for the swing-up policy to react
         # appropriately in this position, so we use a separate policy for this phase.
         indicators.append(StateLambdaIndicator(
             lambda observation: self.environment.get_episode_phase(
-                observation[CartPoleState.Dimension.PoleAngle.value],
-                observation[CartPoleState.Dimension.PoleVelocity.value]
+                observation[2],
+                observation[3]
             ) == EpisodePhase.BALANCE,
             [False, True]
         ))

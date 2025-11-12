@@ -1766,6 +1766,13 @@ class CartPole(ContinuousMdpEnvironment):
             )
         }
 
+        self.plot_title_label_data_kwargs['Environment'] = {
+            'Steps/Sec': (
+                dict(),
+                plot_kwargs
+            )
+        }
+
         self.fraction_time_balancing.reset()
 
         if self.original_agent_gamma is None:
@@ -2039,7 +2046,7 @@ class CartPole(ContinuousMdpEnvironment):
             logging.debug(f'State {t}:  {self.state}')
             logging.debug(f'Reward {t}:  {reward_value}')
 
-            # add plotting data for cart, pole, and motor
+            # add plotting data
             self.plot_title_label_data_kwargs['Cart']['Pos'][0][t] = self.state.cart_mm_from_center
             self.plot_title_label_data_kwargs['Cart']['Vel'][0][t] = self.state.cart_velocity_mm_per_second
             self.plot_title_label_data_kwargs['Cart']['Acc'][0][t] = self.state.cart_acceleration_mm_per_sec_squared
@@ -2051,6 +2058,9 @@ class CartPole(ContinuousMdpEnvironment):
                 self.state.pole_angular_acceleration_deg_per_sec_squared
             )
             self.plot_title_label_data_kwargs['Motor']['Speed'][0][t] = self.motor.get_speed()
+            self.plot_title_label_data_kwargs['Environment']['Steps/Sec'][0][t] = (
+                self.current_timesteps_per_second.get_value()
+            )
 
             self.fraction_time_balancing.update(float(self.episode_phase == EpisodePhase.BALANCE))
             if self.state.terminal:
