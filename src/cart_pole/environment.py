@@ -2022,7 +2022,7 @@ class CartPole(ContinuousMdpEnvironment):
                 else:
                     next_speed = desired_next_speed
 
-                self.set_motor_speed(next_speed)
+                self.set_motor_speed(round(next_speed))
 
                 self.plot_title_label_data_kwargs['Motor']['Policy Acc'][0][t] = desired_acceleration
                 self.plot_title_label_data_kwargs['Motor']['Desired Speed'][0][t] = desired_next_speed
