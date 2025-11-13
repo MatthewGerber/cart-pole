@@ -14,6 +14,7 @@ byte cart_rotary_green_pin;
 volatile unsigned long cart_num_phase_changes;
 volatile long cart_rotary_index;
 volatile bool cart_rotary_clockwise;
+unsigned long cart_num_phase_changes_value;  // non-volatile global variable used to store the volatile one
 unsigned int cart_rotary_phase_changes_per_rotation;
 float cart_rotary_phase_changes_per_degree;
 floatbytes cart_rotary_net_degrees;
@@ -33,6 +34,7 @@ byte pole_rotary_green_pin;
 volatile unsigned long pole_num_phase_changes;
 volatile long pole_rotary_index;
 volatile bool pole_rotary_clockwise;
+unsigned long pole_num_phase_changes_value;  // non-volatile global variable used to store the volatile one
 unsigned int pole_rotary_phase_changes_per_rotation;
 float pole_rotary_phase_changes_per_degree;
 floatbytes pole_rotary_net_degrees;
@@ -162,6 +164,7 @@ void loop() {
       if (elapsed_ms >= cart_state_update_interval_ms) {
         noInterrupts();
         long cart_rotary_index_value = cart_rotary_index;
+        cart_num_phase_changes_value = cart_num_phase_changes;
         interrupts();
         float previous_net_degrees = cart_rotary_net_degrees.number;
         cart_rotary_net_degrees.number = cart_rotary_index_value / cart_rotary_phase_changes_per_degree;
@@ -188,6 +191,7 @@ void loop() {
       if (elapsed_ms >= pole_state_update_interval_ms) {
         noInterrupts();
         long pole_rotary_index_value = pole_rotary_index;
+        pole_num_phase_changes_value = pole_num_phase_changes;
         interrupts();
         float previous_net_degrees = pole_rotary_net_degrees.number;
         pole_rotary_net_degrees.number = pole_rotary_index_value / pole_rotary_phase_changes_per_degree;
@@ -246,6 +250,7 @@ void loop() {
         attachInterrupt(digitalPinToInterrupt(cart_rotary_white_pin), cart_white_changed, CHANGE);
         delay(1000);
         cart_num_phase_changes = 0;
+        cart_num_phase_changes_value = 0;
         cart_rotary_index = 0;
         cart_rotary_net_degrees.number = 0.0;
         cart_velocity.number = 0.0;
@@ -279,6 +284,7 @@ void loop() {
         attachInterrupt(digitalPinToInterrupt(pole_rotary_white_pin), pole_white_changed, CHANGE);
         delay(1000);
         pole_num_phase_changes = 0;
+        pole_num_phase_changes_value = 0;
         pole_rotary_index = 0;
         pole_rotary_net_degrees.number = 0.0;
         pole_velocity.number = 0.0;
@@ -311,20 +317,22 @@ void loop() {
 
     else if (command == CMD_GET_ROTARY_STATE) {
       if (component_id == CART_ROTARY_ENCODER_ID) {
-        write_long(cart_num_phase_changes);
+        write_long(cart_num_phase_changes_value);
         write_float(cart_rotary_net_degrees);
         write_float(cart_velocity);
         write_float(cart_acceleration);
         write_bool(cart_rotary_clockwise);
         write_long(cart_rotary_state_time_ms);
+        Serial.flush();
       }
       else if (component_id == POLE_ROTARY_ENCODER_ID) {
-        write_long(pole_num_phase_changes);
+        write_long(pole_num_phase_changes_value);
         write_float(pole_rotary_net_degrees);
         write_float(pole_velocity);
         write_float(pole_acceleration);
         write_bool(pole_rotary_clockwise);
         write_long(pole_rotary_state_time_ms);
+        Serial.flush();
       }
     }
 
@@ -380,7 +388,8 @@ void loop() {
 
         unsigned int next_set_promise_ms = bytes_to_unsigned_int(args, 3);
 
-        // if we're changing direction, set speed to zero so that the direction change doesn't catch the current speed.
+        // if we're changing direction, set speed to zero so that changing the direction next does not then output the 
+        // current speed in the opposite direction.
         if (
           ((motor_current_speed > 0) && (new_speed <= 0)) ||
           ((motor_current_speed < 0) && (new_speed >= 0))

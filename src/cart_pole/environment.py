@@ -762,7 +762,8 @@ class CartPole(ContinuousMdpEnvironment):
         self.fraction_time_balancing = IncrementalSampleAverager()
         self.beta_shape_param_iter_coef = {}
         self.policy_get_item_calls = []
-        self.max_motor_speed_change_per_second = 900.0
+        self.min_motor_speed_full_reverse_seconds = 0.5
+        self.max_motor_speed_change_per_second = 200.0 / self.min_motor_speed_full_reverse_seconds
         self.max_motor_speed_change_per_timestep = self.max_motor_speed_change_per_second / self.timesteps_per_second
 
         # configure the continuous action with a single dimension for acceleration, range across the maximum.
@@ -936,9 +937,7 @@ class CartPole(ContinuousMdpEnvironment):
                 angular_acceleration_step_size=self.cart_rotary_encoder_angular_acceleration_step_size,
                 serial=arduino_serial_connection,
                 identifier=0,
-
-                # ensure updates are at least the environment's hz
-                state_update_hz=round(2.0 * int(self.timesteps_per_second))
+                state_update_hz=round(2.0 * self.timesteps_per_second)
             )
         )
         cart_rotary_encoder.start()
@@ -953,9 +952,7 @@ class CartPole(ContinuousMdpEnvironment):
                 angular_acceleration_step_size=self.pole_rotary_encoder_angular_acceleration_step_size,
                 serial=arduino_serial_connection,
                 identifier=1,
-
-                # ensure updates are at least the environment's hz
-                state_update_hz=round(2.0 * int(self.timesteps_per_second))
+                state_update_hz=round(2.0 * self.timesteps_per_second)
             )
         )
         pole_rotary_encoder.start()
@@ -1760,17 +1757,14 @@ class CartPole(ContinuousMdpEnvironment):
         }
 
         self.plot_title_label_data_kwargs['Motor'] = {
-            'Speed': (
-                dict(),
-                plot_kwargs
-            )
+            'Policy Acc': (dict(), plot_kwargs),
+            'Desired Speed': (dict(), plot_kwargs),
+            'Actual Speed': (dict(), plot_kwargs)
         }
 
         self.plot_title_label_data_kwargs['Environment'] = {
-            'Steps/Sec': (
-                dict(),
-                plot_kwargs
-            )
+            'Steps/Sec': (dict(), plot_kwargs),
+            'Sleep MS/Step': (dict(), plot_kwargs)
         }
 
         self.fraction_time_balancing.reset()
@@ -2002,7 +1996,7 @@ class CartPole(ContinuousMdpEnvironment):
                 }
 
                 # post-truncation convergence to zero takes too long with gammas close to 1.0 and a slow physical
-                # system. allow decreased gamma to obtain faster convergence to zero.
+                # system. allow alternative gamma to obtain faster convergence to zero.
                 if self.truncation_gamma is not None and self.truncation_gamma != self.agent.gamma:
                     self.agent.gamma = self.truncation_gamma
                     logging.info(f'Set agent.gamma to {self.agent.gamma} to obtain faster convergence to zero.')
@@ -2016,8 +2010,23 @@ class CartPole(ContinuousMdpEnvironment):
                 assert a.value.shape == (1,)
                 desired_acceleration = float(a.value[0])
                 curr_speed = self.motor.get_speed()
-                next_speed = round(curr_speed + desired_acceleration)
+                desired_next_speed = curr_speed + desired_acceleration
+                if self.motor_deadzone_speed_left < desired_next_speed < self.motor_deadzone_speed_right:
+                    if (
+                        abs(self.motor_deadzone_speed_left - desired_next_speed) <
+                        abs(self.motor_deadzone_speed_right - desired_next_speed)
+                    ):
+                        next_speed = self.motor_deadzone_speed_left
+                    else:
+                        next_speed = self.motor_deadzone_speed_right
+                else:
+                    next_speed = desired_next_speed
+
                 self.set_motor_speed(next_speed)
+
+                self.plot_title_label_data_kwargs['Motor']['Policy Acc'][0][t] = desired_acceleration
+                self.plot_title_label_data_kwargs['Motor']['Desired Speed'][0][t] = desired_next_speed
+                self.plot_title_label_data_kwargs['Motor']['Actual Speed'][0][t] = self.motor.get_speed()
 
             # adapt the sleep time to obtain the desired steps per second
             if self.previous_timestep_epoch is None:
@@ -2057,9 +2066,11 @@ class CartPole(ContinuousMdpEnvironment):
             self.plot_title_label_data_kwargs['Pole']['Acc'][0][t] = (
                 self.state.pole_angular_acceleration_deg_per_sec_squared
             )
-            self.plot_title_label_data_kwargs['Motor']['Speed'][0][t] = self.motor.get_speed()
             self.plot_title_label_data_kwargs['Environment']['Steps/Sec'][0][t] = (
                 self.current_timesteps_per_second.get_value()
+            )
+            self.plot_title_label_data_kwargs['Environment']['Sleep MS/Step'][0][t] = (
+                self.timestep_sleep_seconds * 1000.0
             )
 
             self.fraction_time_balancing.update(float(self.episode_phase == EpisodePhase.BALANCE))
@@ -2143,7 +2154,7 @@ class CartPole(ContinuousMdpEnvironment):
         Get the current state.
 
         :param t: Time step to consider for episode truncation, or None if not in an episode.
-        :param terminal: Whether to force a terminal state, or None for natural assessment.
+        :param terminal: Whether to force a specific terminal state, or None for natural assessment.
         :return: State.
         """
 
