@@ -1,7 +1,8 @@
+import itertools
 import math
 from argparse import ArgumentParser
 from copy import deepcopy
-from typing import List, Tuple, Dict, cast
+from typing import List, Tuple, Dict, cast, Optional
 
 import numpy as np
 from cart_pole.environment import CartPoleState, CartPole, EpisodePhase
@@ -10,7 +11,6 @@ from rlai.models.feature_extraction import FeatureExtractor
 from rlai.state_value.function_approximation.models.feature_extraction import (
     StateFeatureExtractor,
     OneHotStateIndicatorFeatureInteracter,
-    StateDimensionSegment,
     StateLambdaIndicator,
     StateIndicator
 )
@@ -79,13 +79,15 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
 
         self.environment = environment
 
+        self.interaction_term_indices: Optional[List[Tuple]] = None
+
         indicators = self.get_state_indicators()
 
         # it's important to scale features independently within each state segment, since we'll make many observations
         # in certain segments early in the learning before ever getting to the other segments (e.g., for balancing). we
         # don't want the early zero-valued features for unobserved segments (due to one-hot segment encoding) to pollute
         # the scalers used for segments observed later in learning.
-        self.state_category_feature_interacter = OneHotStateIndicatorFeatureInteracter(indicators, True)
+        self.state_category_feature_interacter = OneHotStateIndicatorFeatureInteracter(indicators, False)
 
         # do not scale intercepts when encoding them
         self.state_category_intercept_interacter = OneHotStateIndicatorFeatureInteracter(indicators, False)
@@ -158,22 +160,56 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         :return: State-feature matrix (#states, #features).
         """
 
-        # get the raw state matrix, with one row per observation. this is used for feature-space segmentation.
+        # obtain the list of term indices that comprise the fully-interacted model. this includes all combinations of
+        # terms of each order (e.g., single terms, two-way interactions, three-way, etc.). use the four primary state
+        # dimensions (cart pos/vel and pole pos/vel), plus sin/cos of pole angle.
+        if self.interaction_term_indices is None:
+            num_state_dims = 6
+            indices = list(range(num_state_dims))
+            self.interaction_term_indices = [
+                list(term_indices_tuple)
+                for term_order in range(1, num_state_dims + 1)
+                for term_indices_tuple in itertools.combinations(indices, term_order)
+            ]
+
+        # get the raw state matrix, with one row per observation. this is used for feature-space segmentation. scale
+        # the cart pos/vel (pos ranges [-400,400]) to be similar in magnitude to pole radians (-pi,+pi).
         state_matrix = np.array([
             cast(CartPoleState, state).observation[[
                 CartPoleState.Dimension.CartPosition,
                 CartPoleState.Dimension.CartVelocity,
                 CartPoleState.Dimension.PoleAngle,
-                CartPoleState.Dimension.PoleVelocity
-            ]] * [0.001, 0.001, math.pi / 180.0, math.pi / 180.0]
+                CartPoleState.Dimension.PoleVelocity,
+            ]] * [0.01, 0.01, math.pi / 180.0, math.pi / 180.0]
             for state in states
+        ])
+
+        # create the full feature matrix of multiplicative interaction terms
+        state_feature_matrix = np.array([
+            [
+                np.prod(
+                    np.concatenate([
+
+                        state_row,
+
+                        # add sin/cos for x/y positions (we're working with 0 degrees as vertical, so it's swapped from
+                        # traditional).
+                        [
+                            math.sin(state_row[2]),
+                            math.cos(state_row[2])
+                        ]
+                    ])[term_indices]
+                )
+                for term_indices in self.interaction_term_indices
+            ]
+            for state_row in state_matrix
         ])
 
         # interact the feature matrix according to its state segment. this will scale the feature values within their
         # segments along the way.
         scaled_state_indicator_feature_matrix = self.state_category_feature_interacter.interact(
             state_matrix,
-            state_matrix,
+            state_feature_matrix,
             refit_scaler
         )
 
@@ -203,21 +239,17 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         :return: Indicators.
         """
 
-        indicators = StateDimensionSegment.get_segments({
-            0: [0.0],
-            1: [0.0],
-            2: [0.0],
-            3: [0.0]
-        })
+        indicators = [
 
-        # segment policy for when the pole is balancing. it is difficult for the swing-up policy to react
-        # appropriately in this position, so we use a separate policy for this phase.
-        indicators.append(StateLambdaIndicator(
-            lambda observation: self.environment.get_episode_phase(
-                observation[2],
-                observation[3]
-            ) == EpisodePhase.BALANCE,
-            [False, True]
-        ))
+            # segment policy for when the pole is balancing. it is difficult for the swing-up policy to react
+            # appropriately in this position, so we use a separate policy for this phase.
+            StateLambdaIndicator(
+                lambda observation: self.environment.get_episode_phase(
+                    math.degrees(observation[2]),
+                    math.degrees(observation[3])
+                ) == EpisodePhase.BALANCE,
+                [False, True]
+            )
+        ]
 
         return indicators
