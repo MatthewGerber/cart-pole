@@ -248,7 +248,7 @@ class CartPoleState(MdpState):
             self.pole_angular_velocity_deg_per_sec,
             self.pole_angular_acceleration_deg_per_sec_squared
         ])
-        assert len(self.observation) == max(CartPoleState.Dimension).value
+        assert len(self.observation) - 1 == max(CartPoleState.Dimension).value
 
         # pole angle in [0.0, 1.0] where 0.0 is straight down, and 1.0 is straight up.
         self.zero_to_one_pole_angle = CartPoleState.zero_to_one_pole_angle_from_degrees(
