@@ -161,15 +161,14 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         """
 
         # obtain the list of term indices that comprise the fully-interacted model. this includes all combinations of
-        # terms of each order (e.g., single terms, two-way interactions, three-way, etc.). use the four primary state
-        # dimensions (cart pos/vel and pole pos/vel), plus sin/cos of pole angle.
+        # terms of each order (e.g., single terms, two-way interactions, three-way, etc.).
         if self.interaction_term_indices is None:
-            num_state_dims = 6
-            indices = list(range(num_state_dims))
+            num_state_dims = 4
+            term_indices = list(range(num_state_dims))
             self.interaction_term_indices = [
                 list(term_indices_tuple)
                 for term_order in range(1, num_state_dims + 1)
-                for term_indices_tuple in itertools.combinations(indices, term_order)
+                for term_indices_tuple in itertools.combinations(term_indices, term_order)
             ]
 
         # get the raw state matrix, with one row per observation. this is used for feature-space segmentation. scale
@@ -187,33 +186,21 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         # create the full feature matrix of multiplicative interaction terms
         state_feature_matrix = np.array([
             [
-                np.prod(
-                    np.concatenate([
-
-                        state_row,
-
-                        # add sin/cos for x/y positions (we're working with 0 degrees as vertical, so it's swapped from
-                        # traditional).
-                        [
-                            math.sin(state_row[2]),
-                            math.cos(state_row[2])
-                        ]
-                    ])[term_indices]
-                )
+                np.prod(state_row[term_indices])
                 for term_indices in self.interaction_term_indices
             ]
             for state_row in state_matrix
         ])
 
-        # interact the feature matrix according to its state segment. this will scale the feature values within their
-        # segments along the way.
+        # interact the feature matrix according to its state segment. this will scale features if enabled on the
+        # interacter.
         scaled_state_indicator_feature_matrix = self.state_category_feature_interacter.interact(
             state_matrix,
             state_feature_matrix,
             refit_scaler
         )
 
-        # prepend a vector of intercept terms to each row according to the state segment. we do this here, after
+        # obtain a vector of intercept terms for each row according to the state segment. we do this here, after
         # scaling, so that the constant intercept terms are not scaled to zero.
         state_indicator_intercepts = self.state_category_intercept_interacter.interact(
             state_matrix,
@@ -244,9 +231,9 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
             # segment policy for when the pole is balancing. it is difficult for the swing-up policy to react
             # appropriately in this position, so we use a separate policy for this phase.
             StateLambdaIndicator(
-                lambda observation: self.environment.get_episode_phase(
-                    math.degrees(observation[2]),
-                    math.degrees(observation[3])
+                lambda feature_vector: self.environment.get_episode_phase(
+                    math.degrees(feature_vector[2]),
+                    math.degrees(feature_vector[3])
                 ) == EpisodePhase.BALANCE,
                 [False, True]
             )

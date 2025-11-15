@@ -248,6 +248,7 @@ class CartPoleState(MdpState):
             self.pole_angular_velocity_deg_per_sec,
             self.pole_angular_acceleration_deg_per_sec_squared
         ])
+        assert len(self.observation) == max(CartPoleState.Dimension).value
 
         # pole angle in [0.0, 1.0] where 0.0 is straight down, and 1.0 is straight up.
         self.zero_to_one_pole_angle = CartPoleState.zero_to_one_pole_angle_from_degrees(
@@ -1131,7 +1132,7 @@ class CartPole(ContinuousMdpEnvironment):
         :return: List of names.
         """
 
-        return ['motor']
+        return ['motor-acceleration']
 
     def calibrate(
             self
@@ -2005,7 +2006,8 @@ class CartPole(ContinuousMdpEnvironment):
             # since we're waiting for the learning procedure to exit the episode.
             if not self.state.terminal:
 
-                # extract the desired acceleration from the action, add to current speed
+                # extract the desired acceleration from the action, add to current speed, and ensure we avoid the
+                # deadzone by snapping to the closest boundary.
                 assert isinstance(a, ContinuousMultiDimensionalAction)
                 assert a.value.shape == (1,)
                 desired_acceleration = float(a.value[0])
@@ -2047,7 +2049,9 @@ class CartPole(ContinuousMdpEnvironment):
 
                 logging.debug(f'Running at {self.current_timesteps_per_second:.1f} steps/sec')
 
-            time.sleep(self.timestep_sleep_seconds)
+            # only sleep if it's for more than a millisecond
+            if self.timestep_sleep_seconds > 0.001:
+                time.sleep(self.timestep_sleep_seconds)
 
             # calculate reward
             reward_value = self.get_reward(self.state, previous_state)
