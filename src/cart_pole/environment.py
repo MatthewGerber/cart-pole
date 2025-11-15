@@ -2096,7 +2096,15 @@ class CartPole(ContinuousMdpEnvironment):
         :return: Reward.
         """
 
-        return state.zero_to_one_pole_angle
+        # penalize end of episode
+        if state.terminal:
+            reward = -10.0
+
+        # reward according to pole angle
+        else:
+            reward = state.zero_to_one_pole_angle
+
+        return reward
 
     def exiting_episode_without_termination(
             self
