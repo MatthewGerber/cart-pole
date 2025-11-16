@@ -804,6 +804,9 @@ class CartPole(ContinuousMdpEnvironment):
         if self.calibrate_on_next_reset:
             self.motor_deadzone_speed_left: Optional[int] = None
             self.motor_deadzone_speed_right: Optional[int] = None
+            self.motor_deadzone_speed_width: Optional[int] = None
+            self.motor_slowest_speed_left: Optional[int] = None
+            self.motor_slowest_speed_right: Optional[int] = None
             self.left_limit_degrees: Optional[float] = None
             self.right_limit_degrees: Optional[float] = None
             self.limit_to_limit_degrees: Optional[float] = None
@@ -1156,9 +1159,10 @@ class CartPole(ContinuousMdpEnvironment):
         # middle that depends on the logic of the motor circuitry, mass and friction of the assembly, etc. this
         # nonlinearity of motor speed and cart velocity will confuse the controller.
         self.motor_deadzone_speed_left = self.identify_motor_speed_deadzone_limit(CartDirection.LEFT)
-        logging.info(f'Deadzone boundary speed to the {CartDirection.LEFT.name}:  {self.motor_deadzone_speed_left}')
         self.motor_deadzone_speed_right = self.identify_motor_speed_deadzone_limit(CartDirection.RIGHT)
-        logging.info(f'Deadzone boundary speed to the {CartDirection.RIGHT.name}:  {self.motor_deadzone_speed_right}')
+        self.motor_deadzone_speed_width = self.motor_deadzone_speed_right - self.motor_deadzone_speed_left
+        self.motor_slowest_speed_left = self.motor_deadzone_speed_left - 1
+        self.motor_slowest_speed_right = self.motor_deadzone_speed_right + 1
 
         # mark degrees at left and right limits
         self.move_cart_to_left_limit()
@@ -1196,6 +1200,9 @@ class CartPole(ContinuousMdpEnvironment):
         calibration = {
             'motor_deadzone_speed_left': self.motor_deadzone_speed_left,
             'motor_deadzone_speed_right': self.motor_deadzone_speed_right,
+            'motor_deadzone_speed_width': self.motor_deadzone_speed_width,
+            'motor_slowest_speed_left': self.motor_slowest_speed_left,
+            'motor_slowest_speed_right': self.motor_slowest_speed_right,
             'left_limit_degrees': self.left_limit_degrees,
             'right_limit_degrees': self.right_limit_degrees,
             'limit_to_limit_degrees': self.limit_to_limit_degrees,
@@ -1243,22 +1250,35 @@ class CartPole(ContinuousMdpEnvironment):
         moving_ticks_remaining = moving_ticks_required
         speed = self.motor.get_speed()
         self.cart_rotary_encoder.update_state()
+
+        # if we get the required moving ticks, then it wasn't a momentary lurch, and we're really moving.
         while moving_ticks_remaining > 0:
+
+            # wait a bit to see if the cart is moving
             time.sleep(0.5)
+
+            # should never hit a limit switch
             if limit_switch.is_pressed():
                 raise ValueError(f'Hit limit switch in the {direction.name} direction. Failure.')
+
+            # if we're not moving, then reset the required ticks and increase speed. this will avoid ending the
+            # procedure after a momentary lurch.
             elif abs(self.cart_rotary_encoder.get_angular_velocity()) < 50.0:
                 moving_ticks_remaining = moving_ticks_required
                 speed += increment
                 self.set_motor_speed(speed)
+
+            # we're moving, so decrement ticks.
             else:
                 moving_ticks_remaining -= 1
 
         self.stop_cart()
 
-        logging.info(f'Deadzone ends at speed {speed} in the {direction} direction.')
+        deadzone_speed = speed - increment
 
-        return speed
+        logging.info(f'Deadzone speed in the {direction.name} direction:  {deadzone_speed}.')
+
+        return deadzone_speed
 
     def move_cart_to_left_limit(
             self
@@ -1269,11 +1289,11 @@ class CartPole(ContinuousMdpEnvironment):
 
         if not self.left_limit_pressed.is_set():
             logging.info('Moving cart to the left and waiting for limit switch.')
-            self.set_motor_speed(2 * self.motor_deadzone_speed_left)
+            self.set_motor_speed(2 * self.motor_slowest_speed_left)
             self.left_limit_pressed.wait()
 
         logging.info('Moving cart away from left limit switch.')
-        self.set_motor_speed(self.motor_deadzone_speed_right)
+        self.set_motor_speed(self.motor_slowest_speed_right)
         self.left_limit_released.wait()
         self.stop_cart()
 
@@ -1303,11 +1323,11 @@ class CartPole(ContinuousMdpEnvironment):
 
         if not self.right_limit_pressed.is_set():
             logging.info('Moving cart to the right and waiting for limit switch.')
-            self.set_motor_speed(2 * self.motor_deadzone_speed_right)
+            self.set_motor_speed(2 * self.motor_slowest_speed_right)
             self.right_limit_pressed.wait()
 
         logging.info('Moving cart away from right limit switch.')
-        self.set_motor_speed(self.motor_deadzone_speed_left)
+        self.set_motor_speed(self.motor_slowest_speed_left)
         self.right_limit_released.wait()
         self.stop_cart()
 
@@ -1477,9 +1497,9 @@ class CartPole(ContinuousMdpEnvironment):
             return original_position
 
         if original_position == CartPosition.LEFT_OF_CENTER:
-            centering_speed = self.motor_deadzone_speed_right
+            centering_speed = self.motor_slowest_speed_right
         else:
-            centering_speed = self.motor_deadzone_speed_left
+            centering_speed = self.motor_slowest_speed_left
 
         if fast:
             centering_speed *= 3
@@ -2006,21 +2026,17 @@ class CartPole(ContinuousMdpEnvironment):
             # since we're waiting for the learning procedure to exit the episode.
             if not self.state.terminal:
 
-                # extract the desired acceleration from the action, add to current speed, and ensure we avoid the
-                # deadzone by snapping to the closest boundary.
+                # extract the desired acceleration from the action, add to current speed, and ensure we skip over the
+                # deadzone by counting it as a single conceptual speed of 0 (stationary).
                 assert isinstance(a, ContinuousMultiDimensionalAction)
                 assert a.value.shape == (1,)
-                desired_acceleration = float(a.value[0])
+                desired_acceleration = round(float(a.value[0]))
                 curr_speed = self.motor.get_speed()
                 desired_next_speed = curr_speed + desired_acceleration
-                if self.motor_deadzone_speed_left < desired_next_speed < self.motor_deadzone_speed_right:
-                    if (
-                        abs(self.motor_deadzone_speed_left - desired_next_speed) <
-                        abs(self.motor_deadzone_speed_right - desired_next_speed)
-                    ):
-                        next_speed = self.motor_deadzone_speed_left
-                    else:
-                        next_speed = self.motor_deadzone_speed_right
+                if curr_speed <= self.motor_deadzone_speed_left < desired_next_speed:
+                    next_speed = desired_next_speed + self.motor_deadzone_speed_width
+                elif desired_next_speed < self.motor_deadzone_speed_right <= curr_speed:
+                    next_speed = desired_next_speed - self.motor_deadzone_speed_width
                 else:
                     next_speed = desired_next_speed
 
@@ -2098,7 +2114,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         # penalize end of episode
         if state.terminal:
-            reward = -10.0
+            reward = -1.0
 
         # reward according to pole angle
         else:
