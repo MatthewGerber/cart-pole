@@ -756,16 +756,20 @@ class CartPole(ContinuousMdpEnvironment):
         self.balance_pole_angle = 15.0
         self.lost_balance_timestamp: Optional[float] = None
         self.lost_balance_timer_seconds = 0.0
-        self.cart_rotary_encoder_angular_velocity_step_size = 0.1
-        self.cart_rotary_encoder_angular_acceleration_step_size = 0.05
-        self.pole_rotary_encoder_angular_velocity_step_size = 0.1
-        self.pole_rotary_encoder_angular_acceleration_step_size = 0.05
+        self.cart_rotary_encoder_angle_step_size = 0.5
+        self.cart_rotary_encoder_angular_velocity_step_size = 0.5
+        self.cart_rotary_encoder_angular_acceleration_step_size = 0.5
+        self.pole_rotary_encoder_angle_step_size = 0.5
+        self.pole_rotary_encoder_angular_velocity_step_size = 0.5
+        self.pole_rotary_encoder_angular_acceleration_step_size = 0.5
         self.fraction_time_balancing = IncrementalSampleAverager()
         self.beta_shape_param_iter_coef = {}
         self.policy_get_item_calls = []
         self.min_motor_speed_full_reverse_seconds = 0.5
         self.max_motor_speed_change_per_second = 200.0 / self.min_motor_speed_full_reverse_seconds
         self.max_motor_speed_change_per_timestep = self.max_motor_speed_change_per_second / self.timesteps_per_second
+        self.motor_acceleration = 0.0
+        self.motor_acceleration_step_size = 0.5
 
         # configure the continuous action with a single dimension for acceleration, range across the maximum.
         self.actions = [
@@ -937,6 +941,7 @@ class CartPole(ContinuousMdpEnvironment):
                 phase_b_pin=self.cart_rotary_encoder_phase_b_pin,
                 phase_changes_per_rotation=1200,
                 phase_change_mode=RotaryEncoder.PhaseChangeMode.ONE_SIGNAL_TWO_EDGE,
+                angle_step_size=self.cart_rotary_encoder_angle_step_size,
                 angular_velocity_step_size=self.cart_rotary_encoder_angular_velocity_step_size,
                 angular_acceleration_step_size=self.cart_rotary_encoder_angular_acceleration_step_size,
                 serial=arduino_serial_connection,
@@ -952,6 +957,7 @@ class CartPole(ContinuousMdpEnvironment):
                 phase_b_pin=self.pole_rotary_encoder_phase_b_pin,
                 phase_changes_per_rotation=1200,
                 phase_change_mode=RotaryEncoder.PhaseChangeMode.ONE_SIGNAL_TWO_EDGE,
+                angle_step_size=self.pole_rotary_encoder_angle_step_size,
                 angular_velocity_step_size=self.pole_rotary_encoder_angular_velocity_step_size,
                 angular_acceleration_step_size=self.pole_rotary_encoder_angular_acceleration_step_size,
                 serial=arduino_serial_connection,
@@ -1933,6 +1939,7 @@ class CartPole(ContinuousMdpEnvironment):
         # we're about to enter the episode and begin sending speed-change commands to the arduino. begin sending
         # next-set promises so that freezes in the present python program do not cause the motor to run away from us.
         self.motor_driver.send_promise = True
+        self.motor_acceleration = 0.0
 
         logging.info(f'State after reset:  {self.state}')
 
@@ -2031,8 +2038,12 @@ class CartPole(ContinuousMdpEnvironment):
                 assert isinstance(a, ContinuousMultiDimensionalAction)
                 assert a.value.shape == (1,)
                 desired_acceleration = round(float(a.value[0]))
+                self.motor_acceleration = (
+                    (1.0 - self.motor_acceleration_step_size) * self.motor_acceleration +
+                    self.motor_acceleration_step_size * desired_acceleration
+                )
                 curr_speed = self.motor.get_speed()
-                desired_next_speed = curr_speed + desired_acceleration
+                desired_next_speed = curr_speed + self.motor_acceleration
                 if curr_speed <= self.motor_deadzone_speed_left < desired_next_speed:
                     next_speed = desired_next_speed + self.motor_deadzone_speed_width
                 elif desired_next_speed < self.motor_deadzone_speed_right <= curr_speed:
@@ -2043,7 +2054,7 @@ class CartPole(ContinuousMdpEnvironment):
                 self.set_motor_speed(round(next_speed))
 
                 self.plot_title_label_data_kwargs['Motor']['Policy Acc'][0][t] = desired_acceleration
-                self.plot_title_label_data_kwargs['Motor']['Desired Speed'][0][t] = desired_next_speed
+                self.plot_title_label_data_kwargs['Motor']['Desired Speed'][0][t] = curr_speed + desired_acceleration
                 self.plot_title_label_data_kwargs['Motor']['Actual Speed'][0][t] = self.motor.get_speed()
 
             # adapt the sleep time to obtain the desired steps per second
