@@ -170,7 +170,7 @@ class CartPoleState(MdpState):
 
     class Dimension(IntEnum):
         """
-        Dimensions.
+        Dimensions within the observation.
         """
 
         CartPosition = 0
@@ -255,11 +255,38 @@ class CartPoleState(MdpState):
             self.pole_angle_deg_from_upright
         )
 
+        # pole angular speed in [0.0, 1.0] where 0.0 is full speed, and 1.0 is stationary.
+        self.zero_to_one_pole_angular_speed = 1.0 - min(
+            1.0,
+            abs(self.pole_angular_velocity_deg_per_sec) / environment.max_pole_angular_speed_deg_per_second
+        )
+
+        # pole angular acceleration in [0.0, 1.0] where 0.0 is full acceleration, and 1.0 is no acceleration.
+        self.zero_to_one_pole_angular_acceleration = 1.0 - min(
+            1.0,
+            (
+                abs(self.pole_angular_acceleration_deg_per_sec_squared) /
+                environment.max_pole_angular_acceleration_deg_per_second_squared
+            )
+        )
+
         # evaluate the pole angle a small fraction of a second (0.00001) from the current time to determine whether it
         # is falling. if we look too far ahead, we'll go beyond the point where the pole is vertical and the calculation
         # will provide the wrong answer.
         self.pole_is_falling = self.zero_to_one_pole_angle > self.zero_to_one_pole_angle_from_degrees(
             self.pole_angle_deg_from_upright + (self.pole_angular_velocity_deg_per_sec * 0.00001)
+        )
+
+        # cart distance from center in [0.0, 1.0] where 0.0 is either side's soft limit, and 1.0 is centered.
+        self.zero_to_one_cart_distance_from_center = 1.0 - min(
+            1.0,
+            abs(self.cart_mm_from_center) / environment.soft_limit_mm_from_midline
+        )
+
+        # cart speed in [0.0, 1.0] where 0.0 is full speed, and 1.0 is stationary.
+        self.zero_to_one_cart_speed = 1.0 - min(
+            1.0,
+            abs(self.cart_velocity_mm_per_second) / environment.max_cart_speed_mm_per_second
         )
 
         super().__init__(
@@ -758,10 +785,10 @@ class CartPole(ContinuousMdpEnvironment):
         self.lost_balance_timer_seconds = 0.0
         self.cart_rotary_encoder_angle_step_size = 0.5
         self.cart_rotary_encoder_angular_velocity_step_size = 0.5
-        self.cart_rotary_encoder_angular_acceleration_step_size = 0.5
+        self.cart_rotary_encoder_angular_acceleration_step_size = 0.1
         self.pole_rotary_encoder_angle_step_size = 0.5
         self.pole_rotary_encoder_angular_velocity_step_size = 0.5
-        self.pole_rotary_encoder_angular_acceleration_step_size = 0.5
+        self.pole_rotary_encoder_angular_acceleration_step_size = 0.1
         self.fraction_time_balancing = IncrementalSampleAverager()
         self.beta_shape_param_iter_coef = {}
         self.policy_get_item_calls = []
@@ -770,6 +797,8 @@ class CartPole(ContinuousMdpEnvironment):
         self.max_motor_speed_change_per_timestep = self.max_motor_speed_change_per_second / self.timesteps_per_second
         self.motor_acceleration = 0.0
         self.motor_acceleration_step_size = 0.5
+        self.max_pole_angular_speed_deg_per_second = 1080.0
+        self.max_pole_angular_acceleration_deg_per_second_squared = 8000.0
 
         # configure the continuous action with a single dimension for acceleration, range across the maximum.
         self.actions = [

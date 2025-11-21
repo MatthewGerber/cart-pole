@@ -12,7 +12,8 @@ from rlai.state_value.function_approximation.models.feature_extraction import (
     StateFeatureExtractor,
     OneHotStateIndicatorFeatureInteracter,
     StateLambdaIndicator,
-    StateIndicator, StateDimensionSegment
+    StateIndicator,
+    StateDimensionSegment
 )
 from rlai.utils import parse_arguments
 
@@ -79,7 +80,7 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
 
         self.environment = environment
 
-        self.interaction_term_indices: Optional[List[Tuple]] = None
+        self.interaction_term_indices: Optional[List[List]] = None
 
         indicators = self.get_state_indicators()
 
@@ -252,3 +253,110 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         ]
 
         return indicators
+
+
+class CartPoleStateValueFeatureExtractor(CartPolePolicyFeatureExtractor):
+    """
+    Add the 0-1 pole position for better state-value estimation.
+    """
+
+    def extract(
+            self,
+            states: List[MdpState],
+            refit_scaler: bool
+    ) -> np.ndarray:
+        """
+        Extract state features.
+
+        :param states: States.
+        :param refit_scaler: Whether to refit the feature scaler before scaling the extracted features. This is
+        only appropriate in settings where nonstationarity is desired (e.g., during training). During evaluation, the
+        scaler should remain fixed, which means this should be False.
+        :return: State-feature matrix (#states, #features).
+        """
+
+        # obtain the list of term indices that comprise the fully-interacted model. this includes all combinations of
+        # terms of each order (e.g., single terms, two-way interactions, three-way, etc.).
+        if self.interaction_term_indices is None:
+            num_state_dims = 5
+            term_indices = list(range(num_state_dims))
+            self.interaction_term_indices = [
+                list(term_indices_tuple)
+                for term_order in range(1, num_state_dims + 1)
+                for term_indices_tuple in itertools.combinations(term_indices, term_order)
+            ]
+
+        # range all features to be in a nominal range of approximately [-1.0, 1.0]. this is only approximate because
+        # the minimum and maximum values of some state dimensions (e.g., pole angular velocity) are unlimited in theory
+        # and uncalibrated in practice -- we provide rough estimates manually.
+        state_sign_matrix = np.array([
+            [
+                np.sign(state.cart_mm_from_center),
+                np.sign(state.cart_velocity_mm_per_second),
+                np.sign(state.pole_angle_deg_from_upright),
+                np.sign(state.pole_angular_velocity_deg_per_sec),
+                np.sign(state.pole_angular_acceleration_deg_per_sec_squared)
+            ]
+            for state in states
+            if isinstance(state, CartPoleState)
+        ])
+        zero_to_one_state_matrix = np.array([
+            [
+                state.zero_to_one_cart_distance_from_center,
+                state.zero_to_one_cart_speed,
+                state.zero_to_one_pole_angle,
+                state.zero_to_one_pole_angular_speed,
+                state.zero_to_one_pole_angular_acceleration
+            ]
+            for state in states
+            if isinstance(state, CartPoleState)
+        ])
+
+        # invert back to 1.0 being most physically extreme. the zero-to-one values were calculated primarily for the
+        # purpose of rewards, such that 1.0 is most rewarding, which generally means least physically extreme (e.g.,
+        # stationary is 1.0, centered is 1.0, etc.). here we want 1.0 to be most physically extreme.
+        ranged_state_matrix = state_sign_matrix * (1.0 - zero_to_one_state_matrix)
+
+        # create the full feature matrix of multiplicative interaction terms
+        state_feature_matrix = np.array([
+            [
+                np.prod(state_row[term_indices])
+                for term_indices in self.interaction_term_indices
+            ]
+            for state_row in ranged_state_matrix
+        ])
+
+        state_matrix = np.array([
+            cast(CartPoleState, state).observation[[
+                CartPoleState.Dimension.CartPosition,
+                CartPoleState.Dimension.CartVelocity,
+                CartPoleState.Dimension.PoleAngle,
+                CartPoleState.Dimension.PoleVelocity,
+            ]]
+            for state in states
+        ])
+
+        # interact the feature matrix according to its state segment. this will scale features if enabled on the
+        # interacter.
+        scaled_state_indicator_feature_matrix = self.state_category_feature_interacter.interact(
+            state_matrix,
+            state_feature_matrix,
+            refit_scaler
+        )
+
+        # obtain a vector of intercept terms for each row according to the state segment. we do this here, after
+        # scaling, so that the constant intercept terms are not scaled to zero.
+        state_indicator_intercepts = self.state_category_intercept_interacter.interact(
+            state_matrix,
+            np.ones((scaled_state_indicator_feature_matrix.shape[0], 1)),
+            False
+        )
+
+        # combine intercept columns with feature columns
+        scaled_state_indicator_feature_matrix_with_intercepts = np.append(
+            state_indicator_intercepts,
+            scaled_state_indicator_feature_matrix,
+            axis=1
+        )
+
+        return scaled_state_indicator_feature_matrix_with_intercepts
