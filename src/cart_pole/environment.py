@@ -1862,9 +1862,10 @@ class CartPole(ContinuousMdpEnvironment):
         self.policy_feature_extractor = self.agent.pi.feature_extractor
 
         # ensure that the agent's baseline feature extractor references the current environment
-        assert isinstance(self.agent.v_S, ApproximateStateValueEstimator)
-        assert self.agent.v_S.feature_extractor.environment == self  # type: ignore
-        self.baseline_feature_extractor = self.agent.v_S.feature_extractor
+        if self.agent.v_S is not None:
+            assert isinstance(self.agent.v_S, ApproximateStateValueEstimator)
+            assert self.agent.v_S.feature_extractor.environment == self  # type: ignore
+            self.baseline_feature_extractor = self.agent.v_S.feature_extractor
 
         # track policy coefficients over episodes
         if self.policy.action_theta_a is not None and self.policy.action_theta_b is not None:
@@ -2158,7 +2159,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         # reward according to pole angle
         else:
-            reward = state.zero_to_one_pole_angle
+            reward = state.zero_to_one_pole_angle * (-1.0 if state.pole_is_falling else 1.0)
 
         return reward
 
