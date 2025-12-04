@@ -792,11 +792,9 @@ class CartPole(ContinuousMdpEnvironment):
         self.fraction_time_balancing = IncrementalSampleAverager()
         self.beta_shape_param_iter_coef = {}
         self.policy_get_item_calls = []
-        self.min_motor_speed_full_reverse_seconds = 0.5
+        self.min_motor_speed_full_reverse_seconds = 0.25
         self.max_motor_speed_change_per_second = 200.0 / self.min_motor_speed_full_reverse_seconds
         self.max_motor_speed_change_per_timestep = self.max_motor_speed_change_per_second / self.timesteps_per_second
-        self.motor_acceleration = 0.0
-        self.motor_acceleration_step_size = 0.5
         self.max_pole_angular_speed_deg_per_second = 1080.0
         self.max_pole_angular_acceleration_deg_per_second_squared = 8000.0
 
@@ -1183,7 +1181,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         # create some space to do deadzone identification
         logging.info('Moving cart to right limit to create space for deadzone identification.')
-        self.set_motor_speed(20)
+        self.set_motor_speed(30)
         self.right_limit_pressed.wait()
         self.set_motor_speed(-30)
         time.sleep(3.0)
@@ -1281,7 +1279,7 @@ class CartPole(ContinuousMdpEnvironment):
         else:
             raise ValueError(f'Unknown direction:  {direction}')
 
-        moving_ticks_required = 5
+        moving_ticks_required = 10
         moving_ticks_remaining = moving_ticks_required
         speed = self.motor.get_speed()
         self.cart_rotary_encoder.update_state()
@@ -1290,7 +1288,7 @@ class CartPole(ContinuousMdpEnvironment):
         while moving_ticks_remaining > 0:
 
             # wait a bit to see if the cart is moving
-            time.sleep(0.5)
+            time.sleep(0.25)
 
             # should never hit a limit switch
             if limit_switch.is_pressed():
@@ -1298,7 +1296,7 @@ class CartPole(ContinuousMdpEnvironment):
 
             # if we're not moving, then reset the required ticks and increase speed. this will avoid ending the
             # procedure after a momentary lurch.
-            elif abs(self.cart_rotary_encoder.get_angular_velocity()) < 50.0:
+            elif abs(self.cart_rotary_encoder.get_angular_velocity()) < 45.0:
                 moving_ticks_remaining = moving_ticks_required
                 speed += increment
                 self.set_motor_speed(speed)
@@ -1476,7 +1474,7 @@ class CartPole(ContinuousMdpEnvironment):
             self.cart_rotary_encoder.update_state()
 
         while original_position != CartPosition.CENTERED:
-            original_position = self.center_cart_at_speed(True, original_position)
+            original_position = self.center_cart_from_position(original_position)
             if original_position != CartPosition.CENTERED:
                 logging.info('Failed to center cart. Trying again.')
         else:
@@ -1511,33 +1509,31 @@ class CartPole(ContinuousMdpEnvironment):
             f'{self.pole_rotary_encoder.get_net_total_degrees():.1f}'
         )
 
-    def center_cart_at_speed(
+    def center_cart_from_position(
             self,
-            fast: bool,
-            original_position: CartPosition
+            position: CartPosition
     ) -> CartPosition:
         """
         Center the cart.
 
-        :param fast: Center cart quickly (True) but with lower accuracy or slowly (False) and with higher accuracy.
-        :param original_position: Original cart position.
-        :return: Final position.
+        :param position: Current cart position.
+        :return: Resulting position.
         """
 
         assert self.left_limit_degrees is not None, 'Must calibrate before centering.'
         assert self.cart_mm_per_degree is not None, 'Must calibrate before centering.'
 
-        if original_position == CartPosition.CENTERED:
+        if position == CartPosition.CENTERED:
             logging.info('Cart already centered.')
-            return original_position
+            return position
 
-        if original_position == CartPosition.LEFT_OF_CENTER:
+        if position == CartPosition.LEFT_OF_CENTER:
             centering_speed = self.motor_slowest_speed_right
         else:
             centering_speed = self.motor_slowest_speed_left
 
-        if fast:
-            centering_speed *= 3
+        # bump speed up to ensure we don't get stuck in a lurch
+        centering_speed = int(2.0 * centering_speed)
 
         # move toward the center, wait for the center to be reached, and stop the cart.
         logging.info(f'Centering cart at speed:  {centering_speed}')
@@ -1969,7 +1965,6 @@ class CartPole(ContinuousMdpEnvironment):
         # we're about to enter the episode and begin sending speed-change commands to the arduino. begin sending
         # next-set promises so that freezes in the present python program do not cause the motor to run away from us.
         self.motor_driver.send_promise = True
-        self.motor_acceleration = 0.0
 
         logging.info(f'State after reset:  {self.state}')
 
@@ -2067,48 +2062,19 @@ class CartPole(ContinuousMdpEnvironment):
                 # deadzone by counting it as a single conceptual speed of 0 (stationary).
                 assert isinstance(a, ContinuousMultiDimensionalAction)
                 assert a.value.shape == (1,)
-                desired_acceleration = round(float(a.value[0]))
-                self.motor_acceleration = (
-                    (1.0 - self.motor_acceleration_step_size) * self.motor_acceleration +
-                    self.motor_acceleration_step_size * desired_acceleration
-                )
+                acceleration = float(a.value[0])
                 curr_speed = self.motor.get_speed()
-                desired_next_speed = curr_speed + self.motor_acceleration
-                if curr_speed <= self.motor_deadzone_speed_left < desired_next_speed:
-                    next_speed = desired_next_speed + self.motor_deadzone_speed_width
-                elif desired_next_speed < self.motor_deadzone_speed_right <= curr_speed:
-                    next_speed = desired_next_speed - self.motor_deadzone_speed_width
-                else:
-                    next_speed = desired_next_speed
+                desired_next_speed = requested_next_speed = curr_speed + acceleration
+                if curr_speed <= self.motor_deadzone_speed_left < requested_next_speed:
+                    requested_next_speed = requested_next_speed + self.motor_deadzone_speed_width
+                elif requested_next_speed < self.motor_deadzone_speed_right <= curr_speed:
+                    requested_next_speed = requested_next_speed - self.motor_deadzone_speed_width
 
-                self.set_motor_speed(round(next_speed))
+                self.set_motor_speed(round(requested_next_speed))
 
-                self.plot_title_label_data_kwargs['Motor']['Policy Acc'][0][t] = desired_acceleration
-                self.plot_title_label_data_kwargs['Motor']['Desired Speed'][0][t] = curr_speed + desired_acceleration
-                self.plot_title_label_data_kwargs['Motor']['Actual Speed'][0][t] = self.motor.get_speed()
-
-            # adapt the sleep time to obtain the desired steps per second
-            if self.previous_timestep_epoch is None:
-                self.previous_timestep_epoch = time.time()
-            else:
-
-                # update current timesteps per second
-                current_timestep_epoch = time.time()
-                self.current_timesteps_per_second.update(1.0 / (current_timestep_epoch - self.previous_timestep_epoch))
-                self.previous_timestep_epoch = current_timestep_epoch
-
-                # adapt the timestep sleep duration to achieve the target steps per second, given the overhead involved
-                # in executing each call to advance.
-                if self.current_timesteps_per_second > self.timesteps_per_second:
-                    self.timestep_sleep_seconds *= 1.01
-                elif self.current_timesteps_per_second < self.timesteps_per_second:
-                    self.timestep_sleep_seconds *= 0.99
-
-                logging.debug(f'Running at {self.current_timesteps_per_second:.1f} steps/sec')
-
-            # only sleep if it's for more than a millisecond
-            if self.timestep_sleep_seconds > 0.001:
-                time.sleep(self.timestep_sleep_seconds)
+                self.plot_title_label_data_kwargs['Motor']['Policy Acc'][0][t] = acceleration
+                self.plot_title_label_data_kwargs['Motor']['Desired Speed'][0][t] = desired_next_speed
+                self.plot_title_label_data_kwargs['Motor']['Actual Speed'][0][t] = float(self.motor.get_speed())
 
             # calculate reward
             reward_value = self.get_reward(self.state, previous_state)
@@ -2137,6 +2103,29 @@ class CartPole(ContinuousMdpEnvironment):
             self.fraction_time_balancing.update(float(self.episode_phase == EpisodePhase.BALANCE))
             if self.state.terminal:
                 self.metric_value['Fraction Balancing'] = self.fraction_time_balancing.get_value()
+
+            # adapt the sleep time to obtain the desired steps per second
+            if self.previous_timestep_epoch is None:
+                self.previous_timestep_epoch = time.time()
+            else:
+
+                # update current timesteps per second
+                current_timestep_epoch = time.time()
+                self.current_timesteps_per_second.update(1.0 / (current_timestep_epoch - self.previous_timestep_epoch))
+                self.previous_timestep_epoch = current_timestep_epoch
+
+                # adapt the timestep sleep duration to achieve the target steps per second, given the overhead involved
+                # in executing each call to advance.
+                if self.current_timesteps_per_second > self.timesteps_per_second:
+                    self.timestep_sleep_seconds += 0.001
+                elif self.current_timesteps_per_second < self.timesteps_per_second:
+                    self.timestep_sleep_seconds -= 0.001
+
+                logging.debug(f'Running at {self.current_timesteps_per_second:.1f} steps/sec')
+
+            # only sleep if it's for more than a millisecond
+            if self.timestep_sleep_seconds > 0.001:
+                time.sleep(self.timestep_sleep_seconds)
 
             return self.state, Reward(None, reward_value)
 
