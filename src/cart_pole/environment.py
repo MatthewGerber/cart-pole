@@ -783,10 +783,10 @@ class CartPole(ContinuousMdpEnvironment):
         self.balance_pole_angle = 15.0
         self.lost_balance_timestamp: Optional[float] = None
         self.lost_balance_timer_seconds = 0.0
-        self.cart_rotary_encoder_angle_step_size = 0.5
+        self.cart_rotary_encoder_angle_step_size = 0.9
         self.cart_rotary_encoder_angular_velocity_step_size = 0.5
         self.cart_rotary_encoder_angular_acceleration_step_size = 0.1
-        self.pole_rotary_encoder_angle_step_size = 0.5
+        self.pole_rotary_encoder_angle_step_size = 0.9
         self.pole_rotary_encoder_angular_velocity_step_size = 0.5
         self.pole_rotary_encoder_angular_acceleration_step_size = 0.1
         self.fraction_time_balancing = IncrementalSampleAverager()
@@ -893,6 +893,9 @@ class CartPole(ContinuousMdpEnvironment):
 
         self.__dict__ = state
 
+        # self.soft_limit_standoff_mm = 100.0
+        # self.soft_limit_mm_from_midline = self.midline_mm - self.soft_limit_standoff_mm - self.cart_width_mm / 2.0
+
         (
             self.state_lock,
             self.motor_driver,
@@ -959,7 +962,8 @@ class CartPole(ContinuousMdpEnvironment):
                 stopbits=serial.STOPBITS_ONE,
                 bytesize=serial.EIGHTBITS
             ),
-            throughput_step_size=0.1
+            throughput_step_size=0.1,
+            manual_buffer=False
         )
 
         cart_rotary_encoder = CartRotaryEncoder(
@@ -2148,7 +2152,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         # reward according to pole angle
         else:
-            reward = state.zero_to_one_pole_angle * (-1.0 if state.pole_is_falling else 1.0)
+            reward = state.zero_to_one_pole_angle
 
         return reward
 
