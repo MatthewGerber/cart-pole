@@ -781,10 +781,10 @@ class CartPole(ContinuousMdpEnvironment):
         self.balance_pole_angle = 15.0
         self.lost_balance_timestamp: Optional[float] = None
         self.lost_balance_timer_seconds = 0.0
-        self.cart_rotary_encoder_angle_step_size = 0.9
+        self.cart_rotary_encoder_angle_step_size = 1.0  # smoothing the angle causes run-to-run drift
         self.cart_rotary_encoder_angular_velocity_step_size = 0.5
         self.cart_rotary_encoder_angular_acceleration_step_size = 0.1
-        self.pole_rotary_encoder_angle_step_size = 0.9
+        self.pole_rotary_encoder_angle_step_size = 1.0  # smoothing the angle causes run-to-run drift
         self.pole_rotary_encoder_angular_velocity_step_size = 0.5
         self.pole_rotary_encoder_angular_acceleration_step_size = 0.1
         self.fraction_time_balancing = IncrementalSampleAverager()
@@ -1470,11 +1470,11 @@ class CartPole(ContinuousMdpEnvironment):
             original_position = self.center_cart_from_position(
                 position=original_position,
                 speed=2 * (
-                    self.motor_slowest_speed_right if original_position.LEFT_OF_CENTER
+                    self.motor_slowest_speed_right if original_position == CartPosition.LEFT_OF_CENTER
                     else self.motor_slowest_speed_left
                 ),
                 acceleration_interval=None,
-                check_delay_seconds=0.1,
+                check_delay_seconds=0.01,
                 stop_at_center=True
             )
             if original_position != CartPosition.CENTERED:
@@ -1537,9 +1537,9 @@ class CartPole(ContinuousMdpEnvironment):
             logging.info('Cart already centered.')
             return position
         elif position == CartPosition.LEFT_OF_CENTER and speed < 0:
-            raise ValueError('Centering speed must be positive when left of center.')
+            raise ValueError(f'Centering speed must be positive when left of center; got:  {speed}')
         elif position == CartPosition.RIGHT_OF_CENTER and speed > 0:
-            raise ValueError('Centering speed must be negative when right of center.')
+            raise ValueError(f'Centering speed must be negative when right of center; got:  {speed}')
 
         self.set_motor_speed(
             speed=speed,
@@ -2173,7 +2173,7 @@ class CartPole(ContinuousMdpEnvironment):
                 if self.current_timesteps_per_second > self.timesteps_per_second:
                     self.timestep_sleep_seconds += 0.001
                 elif self.current_timesteps_per_second < self.timesteps_per_second:
-                    self.timestep_sleep_seconds -= 0.001
+                    self.timestep_sleep_seconds = max(0.0, self.timestep_sleep_seconds - 0.001)
 
                 logging.debug(f'Running at {self.current_timesteps_per_second:.1f} steps/sec')
 

@@ -470,6 +470,7 @@ void loop() {
     }
     else if (command == CMD_DISABLE_CART_SOFT_LIMITS) {
       cart_soft_limits_enabled = false;
+      cart_violates_soft_limits = false;
     }
   }
 }

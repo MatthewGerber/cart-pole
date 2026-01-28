@@ -64,7 +64,7 @@ def main():
         angular_velocity_step_size=0.5,
         angular_acceleration_step_size=0.2,
         serial=locking_serial,
-        identifier=1,
+        identifier=0,
         state_update_hz=80
     )
     cart_rotary_encoder = RotaryEncoder(
@@ -81,7 +81,7 @@ def main():
         angular_velocity_step_size=0.5,
         angular_acceleration_step_size=0.2,
         serial=locking_serial,
-        identifier=0,
+        identifier=1,
         state_update_hz=80
     )
     pole_rotary_encoder = RotaryEncoder(
@@ -136,7 +136,7 @@ def main():
         max_degree=180.0
     )
 
-    def test_rotary_encoder_state():
+    def test_pole_rotary_encoder_state():
         while True:
             time.sleep(1.0 / pole_rotary_interface.state_update_hz)
             pole_rotary_encoder.update_state()
@@ -150,7 +150,7 @@ def main():
                 f'Acceleration:  {state.angular_acceleration} deg/s^2\n'
             )
 
-    def test_plot_rotary_encoder_state():
+    def test_plot_pole_rotary_encoder_state():
         print('Will begin recording state in 5 seconds...', end='')
         time.sleep(5)
         print('recording.')
@@ -180,7 +180,7 @@ def main():
         plt.tight_layout()
         plt.show()
 
-    def test_rotary_encoder_wait_for_stationarity():
+    def test_pole_rotary_encoder_wait_for_stationarity():
         while True:
             time.sleep(1.0 / pole_rotary_interface.state_update_hz)
             pole_rotary_encoder.update_state()
@@ -207,14 +207,16 @@ def main():
 
         motor.start()
 
+        time.sleep(3)
+
         print('Accelerating from 0 to 100...', end='')
         for speed in range(0, 100):
             motor.set_speed(speed)
             time.sleep(0.05)
             print('.', end='')
 
-        print('at maximum speed for 10 seconds.')
-        time.sleep(10.0)
+        print('at maximum speed for 5 seconds.')
+        time.sleep(5.0)
 
         print('Decelerating from 100 to 0 then -100 with a freeze in the middle....')
         motor_driver.send_promise = True
@@ -247,7 +249,7 @@ def main():
         print('Press left or right limit switches...')
         time.sleep(30.0)
 
-    def test_set_net_total_degrees():
+    def test_pole_set_net_total_degrees():
         while True:
             print('Will set net total degrees to 0.0 in 5 seconds.')
             time.sleep(5.0)
@@ -312,28 +314,67 @@ def main():
 
     def test_arduino_soft_limits():
 
+        time.sleep(3.0)
+
+        gpio.output(CkPin.GPIO6, gpio.LOW)
+        motor.start()
+
         print('Setting degrees to 0 and limiting...', end='')
-        cart_rotary_encoder.set_net_total_degrees(0)
+        cart_rotary_encoder.set_net_total_degrees(0.0)
         locking_serial.write_then_read(
             ArduinoCommand.ENABLE_CART_SOFT_LIMITS.to_bytes(1) +
             (0).to_bytes(1) +  # ignored
             get_bytes(-360.0) +
-            get_bytes(360),
+            get_bytes(360.0),
             True,
             0,
             False
         )
         print('done.')
 
-        print('Setting motor speed to 20 for 5 seconds...', end='')
+        print('Setting motor speed to 20 for 10 seconds...', end='')
         motor.set_speed(20)
         time.sleep(10.0)
         print('done. It should have turned once.')
 
-        print('Setting motor speed to -20 for 5 seconds...', end='')
+        # disabling soft limits
+        print('Disabling soft limits...', end='')
+        locking_serial.write_then_read(
+            ArduinoCommand.DISABLE_CART_SOFT_LIMITS.to_bytes(1) +
+            (0).to_bytes(1),  # ignored
+            True,
+            0,
+            False
+        )
+        cart_rotary_encoder.set_net_total_degrees(0.0)
+        print('done.')
+
+        print('Re-enabling soft limits...', end='')
+        locking_serial.write_then_read(
+            ArduinoCommand.ENABLE_CART_SOFT_LIMITS.to_bytes(1) +
+            (0).to_bytes(1) +  # ignored
+            get_bytes(-360.0) +
+            get_bytes(360.0),
+            True,
+            0,
+            False
+        )
+        print('done.')
+
+        print('Setting motor speed to -20 for 10 seconds...', end='')
         motor.set_speed(-20)
         time.sleep(10.0)
         print('done. It should have turned once.')
+
+        locking_serial.write_then_read(
+            ArduinoCommand.DISABLE_CART_SOFT_LIMITS.to_bytes(1) +
+            (0).to_bytes(1),  # ignored
+            True,
+            0,
+            False
+        )
+
+        motor.stop()
 
     try:
         print('Running test...')
@@ -343,16 +384,16 @@ def main():
         # test_limit_switches()
 
         # motor tests
-        test_motor()
+        # test_motor()
         # test_motor_failsafe()
 
         # rotary encoder tests
-        # test_rotary_encoder_state()
-        # test_set_net_total_degrees()
-        # test_plot_rotary_encoder_state()
-        # test_rotary_encoder_wait_for_stationarity()
+        # test_pole_rotary_encoder_state()
+        # test_pole_set_net_total_degrees()
+        # test_plot_pole_rotary_encoder_state()
+        # test_pole_rotary_encoder_wait_for_stationarity()
         # test_servo()
-        # test_arduino_soft_limits()
+        test_arduino_soft_limits()
 
     except KeyboardInterrupt:
         pass
