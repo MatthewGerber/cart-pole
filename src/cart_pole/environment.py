@@ -7,7 +7,7 @@ from argparse import ArgumentParser
 from datetime import timedelta
 from enum import Enum, auto, IntEnum
 from threading import Event, RLock
-from typing import List, Tuple, Any, Optional, Dict
+from typing import List, Tuple, Any, Optional, Dict, Callable
 
 import RPi.GPIO as gpio
 import numpy as np
@@ -22,7 +22,8 @@ from raspberry_py.gpio.controls import LimitSwitch
 from raspberry_py.gpio.integrated_circuits import PulseWaveModulatorPCA9685PW
 from raspberry_py.gpio.lights import LED
 from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectArduino, Servo, Sg90DriverPCA9685PW
-from raspberry_py.gpio.sensors import RotaryEncoder, UltrasonicRangeFinder
+from raspberry_py.gpio.sensors import RotaryEncoder
+from raspberry_py.utils import get_bytes
 from rlai.core import MdpState, Action, Agent, Reward, Environment, MdpAgent, ContinuousMultiDimensionalAction
 from rlai.core.environments.mdp import ContinuousMdpEnvironment
 from rlai.policy_gradient import ParameterizedMdpAgent
@@ -32,6 +33,15 @@ from rlai.state_value.function_approximation.models.feature_extraction import St
 from rlai.utils import parse_arguments, IncrementalSampleAverager
 from serial import Serial
 from smbus2 import SMBus
+
+
+class ArduinoCommand(IntEnum):
+    """
+    Arduino commands.
+    """
+
+    ENABLE_CART_SOFT_LIMITS = 6
+    DISABLE_CART_SOFT_LIMITS = 7
 
 
 class CartPoleAction(ContinuousMultiDimensionalAction):
@@ -142,8 +152,9 @@ class CartRotaryEncoder(RotaryEncoder):
             left_limit_degrees: float,
             cart_mm_per_degree: float,
             midline_mm: float,
-            check_delay_seconds: float
-    ):
+            check_delay_seconds: float,
+            limit_pressed: Callable[[], bool]
+    ) -> bool:
         """
         Wait for cart to cross the center.
 
@@ -152,7 +163,11 @@ class CartRotaryEncoder(RotaryEncoder):
         :param cart_mm_per_degree: Cart mm/degree.
         :param midline_mm: Midline mm.
         :param check_delay_seconds: Check delay seconds.
+        :param limit_pressed: Function that returns True if limit switch is pressed and False otherwise.
+        :return: True if cart crossed center without hitting a limit switch and False otherwise.
         """
+
+        crossed_center = False
 
         while CartPole.get_cart_position(
             cart_net_total_degrees=self.get_net_total_degrees(),
@@ -160,7 +175,16 @@ class CartRotaryEncoder(RotaryEncoder):
             cart_mm_per_degree=cart_mm_per_degree,
             midline_mm=midline_mm
         ) == original_position:
+
+            if limit_pressed():
+                break
+
             time.sleep(check_delay_seconds)
+
+        else:
+            crossed_center = True
+
+        return crossed_center
 
 
 class CartPoleState(MdpState):
@@ -530,26 +554,6 @@ class CartPole(ContinuousMdpEnvironment):
         )
 
         parser.add_argument(
-            '--centering-range-finder-trigger-pin',
-            type=get_ck_pin,
-            help=(
-                'GPIO pin connected to the trigger pin of the centering ultrasonic range finder. This can be an '
-                'enumerated type and name from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
-                'raspberry_py.gpio.CkPin class (e.g., CkPin.GPIO5).'
-            )
-        )
-
-        parser.add_argument(
-            '--centering-range-finder-echo-pin',
-            type=get_ck_pin,
-            help=(
-                'GPIO pin connected to the echo pin of the centering ultrasonic range finder. This can be an '
-                'enumerated type and name from either the raspberry_py.gpio.Pin class (e.g., Pin.GPIO_5) or the '
-                'raspberry_py.gpio.CkPin class (e.g., CkPin.GPIO5).'
-            )
-        )
-
-        parser.add_argument(
             '--coef-plot-dir',
             type=str,
             help=(
@@ -585,7 +589,7 @@ class CartPole(ContinuousMdpEnvironment):
             '--brake-servo-disable-pin',
             type=get_ck_pin,
             help=(
-                'GPIO pin connected to the disable pin of the PWM that contols the pole brake.'
+                'GPIO pin connected to the disable pin of the PWM that controls the pole brake.'
             )
         )
 
@@ -677,8 +681,6 @@ class CartPole(ContinuousMdpEnvironment):
             termination_led_pin: Optional[CkPin],
             balance_gamma: float,
             failsafe_pwm_off_pin: CkPin,
-            centering_range_finder_trigger_pin: CkPin,
-            centering_range_finder_echo_pin: CkPin,
             coef_plot_dir: str,
             policy_get_item_calls_dir: str,
             i2c_bus: str,
@@ -717,8 +719,6 @@ class CartPole(ContinuousMdpEnvironment):
         ignore.
         :param balance_gamma: Gamma (discount) to use during the balancing.
         :param failsafe_pwm_off_pin: Failsafe PWM off pin.
-        :param centering_range_finder_trigger_pin: Trigger pin of the ultrasonic range finder at the center position.
-        :param centering_range_finder_echo_pin: Echo pin of the ultrasonic range finder at the center position.
         :param coef_plot_dir: Coefficient plotting directory.
         :param policy_get_item_calls_dir: Get-item call directory.
         :param i2c_bus: I2C bus device (e.g., /dev/i2c-1).
@@ -754,8 +754,6 @@ class CartPole(ContinuousMdpEnvironment):
         self.termination_led_pin = termination_led_pin
         self.balance_gamma = balance_gamma
         self.failsafe_pwm_off_pin = failsafe_pwm_off_pin
-        self.centering_range_finder_trigger_pin = centering_range_finder_trigger_pin
-        self.centering_range_finder_echo_pin = centering_range_finder_echo_pin
         self.coef_plot_dir = os.path.expanduser(coef_plot_dir)
         os.makedirs(self.coef_plot_dir, exist_ok=True)
         self.policy_get_item_calls_dir = os.path.expanduser(policy_get_item_calls_dir)
@@ -826,7 +824,6 @@ class CartPole(ContinuousMdpEnvironment):
             self.balance_led,
             self.termination_led,
             self.calibrate_on_next_reset,
-            self.centering_range_finder,
             self.leds,
             self.arduino_serial_connection,
             self.brake_servo
@@ -846,6 +843,8 @@ class CartPole(ContinuousMdpEnvironment):
             self.max_cart_speed_mm_per_second: Optional[float] = None
             self.pole_degrees_at_bottom: Optional[float] = None
             self.calibrate_on_next_reset = True
+
+        self.restore_limit_state = True
 
     def __getstate__(
             self
@@ -874,7 +873,6 @@ class CartPole(ContinuousMdpEnvironment):
         state['cart_moving_right_led'] = None
         state['balance_led'] = None
         state['termination_led'] = None
-        state['centering_range_finder'] = None
         state['leds'] = None
         state['arduino_serial_connection'] = None
         state['brake_servo'] = None
@@ -892,9 +890,6 @@ class CartPole(ContinuousMdpEnvironment):
         """
 
         self.__dict__ = state
-
-        # self.soft_limit_standoff_mm = 100.0
-        # self.soft_limit_mm_from_midline = self.midline_mm - self.soft_limit_standoff_mm - self.cart_width_mm / 2.0
 
         (
             self.state_lock,
@@ -914,11 +909,12 @@ class CartPole(ContinuousMdpEnvironment):
             self.balance_led,
             self.termination_led,
             self.calibrate_on_next_reset,
-            self.centering_range_finder,
             self.leds,
             self.arduino_serial_connection,
             self.brake_servo
         ) = self.get_components()
+
+        self.restore_limit_state = True
 
     def get_components(
             self
@@ -940,7 +936,6 @@ class CartPole(ContinuousMdpEnvironment):
         Optional[LED],
         Optional[LED],
         bool,
-        UltrasonicRangeFinder,
         List[Optional[LED]],
         LockingSerial,
         Servo
@@ -1093,11 +1088,6 @@ class CartPole(ContinuousMdpEnvironment):
             balance_led,
             termination_led,
             not self.load_calibration(),
-            UltrasonicRangeFinder(
-                trigger_pin=self.centering_range_finder_trigger_pin,
-                echo_pin=self.centering_range_finder_echo_pin,
-                measurements_per_second=4
-            ),
             leds,
             arduino_serial_connection,
             brake_servo
@@ -1195,8 +1185,12 @@ class CartPole(ContinuousMdpEnvironment):
         # identify the minimum motor speeds that will get the cart to move left and right. there's a deadzone in the
         # middle that depends on the logic of the motor circuitry, mass and friction of the assembly, etc. this
         # nonlinearity of motor speed and cart velocity will confuse the controller.
-        self.motor_deadzone_speed_left = self.identify_motor_speed_deadzone_limit(CartDirection.LEFT)
-        self.motor_deadzone_speed_right = self.identify_motor_speed_deadzone_limit(CartDirection.RIGHT)
+        deadzone_speed = max(
+            abs(self.identify_motor_speed_deadzone_limit(CartDirection.LEFT)),
+            abs(self.identify_motor_speed_deadzone_limit(CartDirection.RIGHT))
+        )
+        self.motor_deadzone_speed_left = -deadzone_speed
+        self.motor_deadzone_speed_right = deadzone_speed
         self.motor_deadzone_speed_width = self.motor_deadzone_speed_right - self.motor_deadzone_speed_left
         self.motor_slowest_speed_left = self.motor_deadzone_speed_left - 1
         self.motor_slowest_speed_right = self.motor_deadzone_speed_right + 1
@@ -1215,16 +1209,12 @@ class CartPole(ContinuousMdpEnvironment):
 
         # identify maximum cart speed
         logging.info('Identifying maximum cart speed.')
-        self.set_motor_speed(
-            speed=-100 if cart_position == CartPosition.RIGHT_OF_CENTER else 100,
-            acceleration_interval=timedelta(seconds=0.5)
-        )
-        self.cart_rotary_encoder.wait_for_cart_to_cross_center(
-            original_position=cart_position,
-            left_limit_degrees=self.left_limit_degrees,
-            cart_mm_per_degree=self.cart_mm_per_degree,
-            midline_mm=self.midline_mm,
-            check_delay_seconds=0.1
+        self.center_cart_from_position(
+            cart_position,
+            -100,
+            timedelta(seconds=0.5),
+            0.1,
+            False
         )
         cart_state: RotaryEncoder.State = self.cart_rotary_encoder.state
         self.max_cart_speed_mm_per_second = abs(cart_state.angular_velocity * self.cart_mm_per_degree)
@@ -1410,12 +1400,11 @@ class CartPole(ContinuousMdpEnvironment):
                 # it's important to stop the cart any time the limit switch is pressed
                 self.stop_cart()
 
-                # hitting a limit switch in the middle of an episode means that we've lost calibration. the soft limits
-                # should have prevented this, but this failed. end the episode and calibrate upon the next episode
-                # reset.
+                # the soft limits should prevent hitting the center, but they failed, likely due to missed rotary
+                # signals. end the episode and restore the limit state when centering.
                 if self.state is not None and not self.state.terminal:
                     self.state = self.get_state(t=None, terminal=True)
-                    self.calibrate_on_next_reset = True
+                    self.restore_limit_state = True
 
             # another thread may attempt to wait for the switch to be released immediately upon the pressed event being
             # set. prevent a race condition by first clearing the released event before setting the pressed event.
@@ -1478,7 +1467,16 @@ class CartPole(ContinuousMdpEnvironment):
             self.cart_rotary_encoder.update_state()
 
         while original_position != CartPosition.CENTERED:
-            original_position = self.center_cart_from_position(original_position)
+            original_position = self.center_cart_from_position(
+                position=original_position,
+                speed=2 * (
+                    self.motor_slowest_speed_right if original_position.LEFT_OF_CENTER
+                    else self.motor_slowest_speed_left
+                ),
+                acceleration_interval=None,
+                check_delay_seconds=0.1,
+                stop_at_center=True
+            )
             if original_position != CartPosition.CENTERED:
                 logging.info('Failed to center cart. Trying again.')
         else:
@@ -1515,12 +1513,20 @@ class CartPole(ContinuousMdpEnvironment):
 
     def center_cart_from_position(
             self,
-            position: CartPosition
+            position: CartPosition,
+            speed: int,
+            acceleration_interval: Optional[timedelta],
+            check_delay_seconds: float,
+            stop_at_center: bool
     ) -> CartPosition:
         """
         Center the cart.
 
         :param position: Current cart position.
+        :param speed: Speed.
+        :param acceleration_interval: Acceleration interval, or None for immediate.
+        :param check_delay_seconds: Check delay (seconds).
+        :param stop_at_center: Whether to stop the cart at the center.
         :return: Resulting position.
         """
 
@@ -1530,43 +1536,40 @@ class CartPole(ContinuousMdpEnvironment):
         if position == CartPosition.CENTERED:
             logging.info('Cart already centered.')
             return position
+        elif position == CartPosition.LEFT_OF_CENTER and speed < 0:
+            raise ValueError('Centering speed must be positive when left of center.')
+        elif position == CartPosition.RIGHT_OF_CENTER and speed > 0:
+            raise ValueError('Centering speed must be negative when right of center.')
 
-        if position == CartPosition.LEFT_OF_CENTER:
-            centering_speed = self.motor_slowest_speed_right
-        else:
-            centering_speed = self.motor_slowest_speed_left
+        self.set_motor_speed(
+            speed=speed,
+            acceleration_interval=acceleration_interval
+        )
 
-        # bump speed up to ensure we don't get stuck in a lurch
-        centering_speed = int(2.0 * centering_speed)
+        centered = self.cart_rotary_encoder.wait_for_cart_to_cross_center(
+            original_position=position,
+            left_limit_degrees=self.left_limit_degrees,
+            cart_mm_per_degree=self.cart_mm_per_degree,
+            midline_mm=self.midline_mm,
+            check_delay_seconds=check_delay_seconds,
+            limit_pressed=lambda: self.left_limit_pressed.is_set() or self.right_limit_pressed.is_set()
+        )
 
-        # move toward the center, wait for the center to be reached, and stop the cart.
-        logging.info(f'Centering cart at speed:  {centering_speed}')
-        self.set_motor_speed(centering_speed)
-        while (
-            (
-                (distance := self.centering_range_finder.measure_distance_once()) is None or
-                distance > 5.0
-            ) and
-            not self.left_limit_pressed.is_set() and
-            not self.right_limit_pressed.is_set()
-        ):
-            if distance is not None:
-                logging.debug(f'Centering distance:  {distance:.1f} cm')
+        if not centered:
+            logging.info('Hit limit switch while centering. Failure.')
 
-            time.sleep(0.2)
+        if stop_at_center:
+            self.stop_cart()
 
-        self.stop_cart()
-
-        if distance is None:
-            logging.info('No centering distance. Must have hit a limit switch.')
-        else:
-            logging.info(f'Centered with distance:  {distance:.1f} cm')
-
+        # if we hit a limit switch, then we must not know where we are. move away from the limit switch and restore the
+        # limit state.
         if self.left_limit_pressed.is_set():
             self.move_cart_to_left_limit()
+            self.cart_rotary_encoder.set_net_total_degrees(self.left_limit_degrees)
             centered_position = CartPosition.LEFT_OF_CENTER
         elif self.right_limit_pressed.is_set():
             self.move_cart_to_right_limit()
+            self.cart_rotary_encoder.set_net_total_degrees(self.right_limit_degrees)
             centered_position = CartPosition.RIGHT_OF_CENTER
         else:
             centered_position = CartPosition.CENTERED
@@ -1732,6 +1735,49 @@ class CartPole(ContinuousMdpEnvironment):
 
                 if per_speed_sleep_seconds is not None:
                     time.sleep(per_speed_sleep_seconds)
+
+    def enable_arduino_cart_soft_limits(
+            self
+    ):
+        """
+        Enable the Arduino's cart soft limits.
+        """
+
+        logging.info('Enabling Arduino cart soft limits.')
+
+        # allow arduino to run wider than python, as the former is faster.
+        standoff_degrees = (self.soft_limit_standoff_mm - 10.0) / self.cart_mm_per_degree
+
+        self.arduino_serial_connection.write_then_read(
+            ArduinoCommand.ENABLE_CART_SOFT_LIMITS.to_bytes(1) +
+            (0).to_bytes(1) +  # ignored
+            get_bytes(self.left_limit_degrees + standoff_degrees) +
+            get_bytes(self.right_limit_degrees - standoff_degrees),
+            True,
+            0,
+            False
+        )
+
+        logging.info('Enabled.')
+
+    def disable_arduino_cart_soft_limits(
+            self
+    ):
+        """
+        Disable the Arduino's cart soft limits.
+        """
+
+        logging.info('Disabling Arduino cart soft limits.')
+
+        self.arduino_serial_connection.write_then_read(
+            ArduinoCommand.DISABLE_CART_SOFT_LIMITS.to_bytes(1) +
+            (0).to_bytes(1),
+            True,
+            0,
+            False
+        )
+
+        logging.info('Disabled.')
 
     def turn_off_leds(
             self
@@ -1953,15 +1999,16 @@ class CartPole(ContinuousMdpEnvironment):
 
         self.motor.start()
 
+        # the arduino needs to ignore its soft limits while we calibrate and center
+        self.disable_arduino_cart_soft_limits()
+
         # calibrate if needed
         if self.calibrate_on_next_reset:
             self.calibrate()
             self.calibrate_on_next_reset = False
 
-        # center the cart with the current calibration and reset the rotary encoders to their calibration-initial
-        # conditions at center. don't bother to restore the limit state, as this significantly slows down the centering.
-        # just defer any errors until we hit a hard side limit, at which time we'll recalibrate.
-        self.center_cart(False, True)
+        self.center_cart(self.restore_limit_state, True)
+        self.restore_limit_state = False
 
         self.state = self.get_state(t=None, terminal=False)
         self.previous_timestep_epoch = None
@@ -1969,6 +2016,9 @@ class CartPole(ContinuousMdpEnvironment):
         # we're about to enter the episode and begin sending speed-change commands to the arduino. begin sending
         # next-set promises so that freezes in the present python program do not cause the motor to run away from us.
         self.motor_driver.send_promise = True
+
+        # enable soft limits in the arduino, as we measure them more quickly/accurately there
+        self.enable_arduino_cart_soft_limits()
 
         logging.info(f'State after reset:  {self.state}')
 

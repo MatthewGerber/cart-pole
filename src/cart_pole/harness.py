@@ -3,6 +3,7 @@ import time
 import RPi.GPIO as gpio
 import serial
 from matplotlib import pyplot as plt
+from raspberry_py.utils import get_bytes
 from serial import Serial
 from smbus2 import SMBus
 
@@ -13,6 +14,8 @@ from raspberry_py.gpio.integrated_circuits import PulseWaveModulatorPCA9685PW
 from raspberry_py.gpio.lights import LED
 from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectArduino, Servo, Sg90DriverPCA9685PW
 from raspberry_py.gpio.sensors import RotaryEncoder, UltrasonicRangeFinder
+
+from src.cart_pole.environment import ArduinoCommand
 
 
 def main():
@@ -27,7 +30,8 @@ def main():
             stopbits=serial.STOPBITS_ONE,
             bytesize=serial.EIGHTBITS
         ),
-        throughput_step_size=0.05
+        throughput_step_size=0.05,
+        manual_buffer=False
     )
 
     # basic write/read
@@ -51,21 +55,40 @@ def main():
     # }
     # return;
 
-    arduino_interface = RotaryEncoder.Arduino(
+    cart_rotary_interface = RotaryEncoder.Arduino(
+        phase_a_pin=2,
+        phase_b_pin=4,
+        phase_changes_per_rotation=1200,
+        phase_change_mode=RotaryEncoder.PhaseChangeMode.ONE_SIGNAL_TWO_EDGE,
+        angle_step_size=0.9,
+        angular_velocity_step_size=0.5,
+        angular_acceleration_step_size=0.2,
+        serial=locking_serial,
+        identifier=1,
+        state_update_hz=80
+    )
+    cart_rotary_encoder = RotaryEncoder(
+        interface=cart_rotary_interface
+    )
+    cart_rotary_encoder.start()
+
+    pole_rotary_interface = RotaryEncoder.Arduino(
         phase_a_pin=3,
         phase_b_pin=5,
         phase_changes_per_rotation=1200,
         phase_change_mode=RotaryEncoder.PhaseChangeMode.ONE_SIGNAL_TWO_EDGE,
+        angle_step_size=0.9,
         angular_velocity_step_size=0.5,
         angular_acceleration_step_size=0.2,
         serial=locking_serial,
         identifier=0,
         state_update_hz=80
     )
-    rotary_encoder = RotaryEncoder(
-        interface=arduino_interface
+    pole_rotary_encoder = RotaryEncoder(
+        interface=pole_rotary_interface
     )
-    rotary_encoder.start()
+    pole_rotary_encoder.start()
+
     motor_driver = DcMotorDriverIndirectArduino(
         identifier=2,
         serial=locking_serial,
@@ -115,9 +138,9 @@ def main():
 
     def test_rotary_encoder_state():
         while True:
-            time.sleep(1.0 / arduino_interface.state_update_hz)
-            rotary_encoder.update_state()
-            state: RotaryEncoder.State = rotary_encoder.get_state()
+            time.sleep(1.0 / pole_rotary_interface.state_update_hz)
+            pole_rotary_encoder.update_state()
+            state: RotaryEncoder.State = pole_rotary_encoder.get_state()
             print(
                 f'Num phase changes:  {state.num_phase_changes}\n'
                 f'Net total degrees:  {state.net_total_degrees}\n'
@@ -139,8 +162,8 @@ def main():
         accelerations = []
         while time.time() - test_start < 10.0:
             time.sleep(1.0 / 25.0)
-            rotary_encoder.update_state()
-            state: RotaryEncoder.State = rotary_encoder.get_state()
+            pole_rotary_encoder.update_state()
+            state: RotaryEncoder.State = pole_rotary_encoder.get_state()
             times.append(state.epoch_ms)
             net_total_degrees.append(state.net_total_degrees)
             degrees.append(state.degrees)
@@ -159,12 +182,12 @@ def main():
 
     def test_rotary_encoder_wait_for_stationarity():
         while True:
-            time.sleep(1.0 / arduino_interface.state_update_hz)
-            rotary_encoder.update_state()
-            state: RotaryEncoder.State = rotary_encoder.get_state()
+            time.sleep(1.0 / pole_rotary_interface.state_update_hz)
+            pole_rotary_encoder.update_state()
+            state: RotaryEncoder.State = pole_rotary_encoder.get_state()
             if state.angular_velocity > 0.0:
                 print(f'Angular velocity is {state.angular_velocity}. Waiting for stationarity...')
-                rotary_encoder.wait_for_stationarity()
+                pole_rotary_encoder.wait_for_stationarity()
             else:
                 print('Rotary encoder is stationary.')
                 time.sleep(1.0)
@@ -184,13 +207,16 @@ def main():
 
         motor.start()
 
+        print('Accelerating from 0 to 100...', end='')
         for speed in range(0, 100):
             motor.set_speed(speed)
             time.sleep(0.05)
+            print('.', end='')
 
-        print('At maximum speed.')
+        print('at maximum speed for 10 seconds.')
         time.sleep(10.0)
 
+        print('Decelerating from 100 to 0 then -100 with a freeze in the middle....')
         motor_driver.send_promise = True
         for speed in range(100, -100, -1):
             motor.set_speed(speed)
@@ -201,6 +227,7 @@ def main():
             else:
                 time.sleep(0.05)
 
+        print(f'Decelerating from -100 to 0.')
         for speed in range(-100, 0):
             motor.set_speed(speed)
             time.sleep(0.05)
@@ -224,11 +251,11 @@ def main():
         while True:
             print('Will set net total degrees to 0.0 in 5 seconds.')
             time.sleep(5.0)
-            rotary_encoder.set_net_total_degrees(0.0)
+            pole_rotary_encoder.set_net_total_degrees(0.0)
             print('Set to 0.0.')
             for _ in range(20):
-                rotary_encoder.update_state()
-                state: RotaryEncoder.State = rotary_encoder.get_state()
+                pole_rotary_encoder.update_state()
+                state: RotaryEncoder.State = pole_rotary_encoder.get_state()
                 print(
                     f'Num phase changes:  {state.num_phase_changes}\n'
                     f'Net total degrees:  {state.net_total_degrees}\n'
@@ -283,6 +310,31 @@ def main():
                 servo.enable()
         servo.stop()
 
+    def test_arduino_soft_limits():
+
+        print('Setting degrees to 0 and limiting...', end='')
+        cart_rotary_encoder.set_net_total_degrees(0)
+        locking_serial.write_then_read(
+            ArduinoCommand.ENABLE_CART_SOFT_LIMITS.to_bytes(1) +
+            (0).to_bytes(1) +  # ignored
+            get_bytes(-360.0) +
+            get_bytes(360),
+            True,
+            0,
+            False
+        )
+        print('done.')
+
+        print('Setting motor speed to 20 for 5 seconds...', end='')
+        motor.set_speed(20)
+        time.sleep(10.0)
+        print('done. It should have turned once.')
+
+        print('Setting motor speed to -20 for 5 seconds...', end='')
+        motor.set_speed(-20)
+        time.sleep(10.0)
+        print('done. It should have turned once.')
+
     try:
         print('Running test...')
 
@@ -291,7 +343,7 @@ def main():
         # test_limit_switches()
 
         # motor tests
-        # test_motor()
+        test_motor()
         # test_motor_failsafe()
 
         # rotary encoder tests
@@ -300,11 +352,13 @@ def main():
         # test_plot_rotary_encoder_state()
         # test_rotary_encoder_wait_for_stationarity()
         # test_servo()
+        # test_arduino_soft_limits()
 
     except KeyboardInterrupt:
         pass
 
-    rotary_encoder.cleanup()
+    cart_rotary_encoder.cleanup()
+    pole_rotary_encoder.cleanup()
     locking_serial.connection.close()
     cleanup()
 
