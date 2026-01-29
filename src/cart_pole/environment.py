@@ -844,7 +844,7 @@ class CartPole(ContinuousMdpEnvironment):
             self.pole_degrees_at_bottom: Optional[float] = None
             self.calibrate_on_next_reset = True
 
-        self.restore_limit_state = True
+        self.restore_cart_limit_state = True
 
     def __getstate__(
             self
@@ -914,7 +914,7 @@ class CartPole(ContinuousMdpEnvironment):
             self.brake_servo
         ) = self.get_components()
 
-        self.restore_limit_state = True
+        self.restore_cart_limit_state = True
 
     def get_components(
             self
@@ -1404,7 +1404,7 @@ class CartPole(ContinuousMdpEnvironment):
                 # signals. end the episode and restore the limit state when centering.
                 if self.state is not None and not self.state.terminal:
                     self.state = self.get_state(t=None, terminal=True)
-                    self.restore_limit_state = True
+                    self.restore_cart_limit_state = True
 
             # another thread may attempt to wait for the switch to be released immediately upon the pressed event being
             # set. prevent a race condition by first clearing the released event before setting the pressed event.
@@ -1422,42 +1422,45 @@ class CartPole(ContinuousMdpEnvironment):
 
     def center_cart(
             self,
-            restore_limit_state: bool,
-            restore_center_state: bool
+            restore_cart_rotary_state_at_limit: bool,
+            restore_cart_rotary_state_at_center: bool,
+            restore_pole_rotary_state_at_center: bool
     ):
         """
         Center the cart.
 
-        :param restore_limit_state: Whether to restore the limit state before centering the cart. Doing this ensures
-        that the centering calculation will be accurate and that any out-of-calibration issues will be mitigated. This
-        is somewhat expensive, since it involves physically moving the cart to a limit switch before moving the cart to
-        the center.
-        :param restore_center_state: Whether to restore the center state after centering. This ensures that the initial
-        movements away from the center will be equivalent to previous such movements at that position.
+        :param restore_cart_rotary_state_at_limit: Whether to restore the cart's state at a limit before centering the
+        cart. Doing this ensures that the centering calculation will be accurate and that any out-of-calibration issues
+        will be mitigated. This is somewhat expensive, since it involves physically moving the cart to a limit switch
+        before restoring state and then moving the cart to the center.
+        :param restore_cart_rotary_state_at_center: Whether to restore the cart's state at the center. This ensures that
+        the initial movements away from the center will be equivalent to previous such movements at that position;
+        however, it also creates risk of run-to-run drift if there is no centering sensor that is independent of the
+        rotary encoder.
+        :param restore_pole_rotary_state_at_center: Whether to restore the pole's state at the center. This ensures that
+        the initial movements away from the center will be equivalent to previous such movements at that position.
         """
 
         assert self.left_limit_degrees is not None, 'Must calibrate before centering.'
         assert self.cart_mm_per_degree is not None, 'Must calibrate before centering.'
 
-        original_position = CartPole.get_cart_position(
+        cart_position = CartPole.get_cart_position(
             self.cart_rotary_encoder.get_net_total_degrees(),
             self.left_limit_degrees,
             self.cart_mm_per_degree,
             self.midline_mm
         )
 
-        if original_position == CartPosition.CENTERED:
+        if cart_position == CartPosition.CENTERED:
             logging.info('Cart already centered.')
             return
-
-        logging.info('Centering cart.')
 
         # restore the limit state by physically positioning the cart at the limit and restoring the state to what it
         # was when we calibrated. this corrects any loss of calibration that occurred while moving the cart. do this in
         # whatever order is the most efficient given the cart's current position.
-        if restore_limit_state:
-            logging.info('Restoring limit state.')
-            if original_position == CartPosition.LEFT_OF_CENTER:
+        if restore_cart_rotary_state_at_limit:
+            logging.info('Restoring cart rotary state at limit state before centering.')
+            if cart_position == CartPosition.LEFT_OF_CENTER:
                 self.move_cart_to_left_limit()
                 self.cart_rotary_encoder.set_net_total_degrees(self.left_limit_degrees)
             else:
@@ -1466,26 +1469,40 @@ class CartPole(ContinuousMdpEnvironment):
 
             self.cart_rotary_encoder.update_state()
 
-        while original_position != CartPosition.CENTERED:
-            original_position = self.center_cart_from_position(
-                position=original_position,
-                speed=2 * (
-                    self.motor_slowest_speed_right if original_position == CartPosition.LEFT_OF_CENTER
-                    else self.motor_slowest_speed_left
-                ),
-                acceleration_interval=None,
-                check_delay_seconds=0.01,
-                stop_at_center=True
+        # repeatedly center cart at successively slower speeds
+        for centering_speed_factors in [3.0, 2.0, 1.0]:
+
+            while cart_position != CartPosition.CENTERED:
+
+                # center the cart at the current speed factor
+                cart_position = self.center_cart_from_position(
+                    position=cart_position,
+                    speed=round(centering_speed_factors * (
+                        self.motor_slowest_speed_right if cart_position == CartPosition.LEFT_OF_CENTER
+                        else self.motor_slowest_speed_left
+                    )),
+                    acceleration_interval=None,
+                    check_delay_seconds=0.1,
+                    stop_at_center=True
+                )
+
+                # might have had the wrong initial position
+                if cart_position != CartPosition.CENTERED:
+                    logging.info('Failed to center cart (hit limit).')
+
+            else:
+                logging.info(f'Cart centered at speed:  {centering_speed_factors}')
+
+            # the cart will be centered, but there will be overrun error because we're monitoring state on the python
+            # side. recalculate the cart position for the next centering at a slower speed.
+            cart_position = CartPole.get_cart_position(
+                self.cart_rotary_encoder.get_net_total_degrees(),
+                self.left_limit_degrees,
+                self.cart_mm_per_degree,
+                self.midline_mm
             )
-            if original_position != CartPosition.CENTERED:
-                logging.info('Failed to center cart. Trying again.')
-        else:
-            logging.info('Cart centered.')
 
-        logging.info('Waiting for stationary pole.')
-        self.stop_pole()
-
-        if restore_center_state:
+        if restore_cart_rotary_state_at_center:
             logging.info(
                 f'Pre-restoration cart degrees at center={self.cart_rotary_encoder.get_net_total_degrees():.1f}; '
                 f'nominal degrees at center={self.midline_degrees:.1f}.'
@@ -1496,6 +1513,9 @@ class CartPole(ContinuousMdpEnvironment):
                 f'Post-restoration cart degrees at center={self.cart_rotary_encoder.get_net_total_degrees():.1f}.'
             )
 
+        logging.info('Waiting for stationary pole.')
+        self.stop_pole()
+        if restore_pole_rotary_state_at_center:
             logging.info(
                 f'Pre-restoration pole degrees at bottom={self.pole_rotary_encoder.get_net_total_degrees():.1f}; '
                 f'nominal degrees at bottom={self.pole_degrees_at_bottom:.1f}.'
@@ -1505,11 +1525,6 @@ class CartPole(ContinuousMdpEnvironment):
             logging.info(
                 f'Post-restoration pole degrees at bottom={self.pole_rotary_encoder.get_net_total_degrees():.1f}.'
             )
-
-        logging.info(
-            f'Pole is stationary at degrees:  '
-            f'{self.pole_rotary_encoder.get_net_total_degrees():.1f}'
-        )
 
     def center_cart_from_position(
             self,
@@ -1540,13 +1555,15 @@ class CartPole(ContinuousMdpEnvironment):
             raise ValueError(f'Centering speed must be positive when left of center; got:  {speed}')
         elif position == CartPosition.RIGHT_OF_CENTER and speed > 0:
             raise ValueError(f'Centering speed must be negative when right of center; got:  {speed}')
+        else:
+            logging.info(f'Centering cart from {position.name} at speed {speed}.')
 
         self.set_motor_speed(
             speed=speed,
             acceleration_interval=acceleration_interval
         )
 
-        centered = self.cart_rotary_encoder.wait_for_cart_to_cross_center(
+        crossed_center = self.cart_rotary_encoder.wait_for_cart_to_cross_center(
             original_position=position,
             left_limit_degrees=self.left_limit_degrees,
             cart_mm_per_degree=self.cart_mm_per_degree,
@@ -1555,7 +1572,7 @@ class CartPole(ContinuousMdpEnvironment):
             limit_pressed=lambda: self.left_limit_pressed.is_set() or self.right_limit_pressed.is_set()
         )
 
-        if not centered:
+        if not crossed_center:
             logging.info('Hit limit switch while centering. Failure.')
 
         if stop_at_center:
@@ -1640,6 +1657,8 @@ class CartPole(ContinuousMdpEnvironment):
                 break
 
         self.pole_rotary_encoder.wait_for_stationarity()
+
+        logging.info(f'Pole is stationary at degrees:  {self.pole_rotary_encoder.get_net_total_degrees():.1f}')
 
     def release_pole_brake(
             self
@@ -2007,8 +2026,13 @@ class CartPole(ContinuousMdpEnvironment):
             self.calibrate()
             self.calibrate_on_next_reset = False
 
-        self.center_cart(self.restore_limit_state, True)
-        self.restore_limit_state = False
+        # don't restore cart state at center, to avoid run-to-run drift.
+        self.center_cart(
+            self.restore_cart_limit_state,
+            False,
+            True
+        )
+        self.restore_cart_limit_state = False
 
         self.state = self.get_state(t=None, terminal=False)
         self.previous_timestep_epoch = None

@@ -102,6 +102,7 @@ def main():
         speed=0
     )
     gpio.setup(CkPin.GPIO6, gpio.OUT)
+
     left_limit_switch = LimitSwitch(
         input_pin=CkPin.GPIO20,
         bounce_time_ms=5
@@ -110,7 +111,9 @@ def main():
         input_pin=CkPin.GPIO16,
         bounce_time_ms=5
     )
+
     led = LED(CkPin.GPIO19)
+
     range_finder = UltrasonicRangeFinder(
         trigger_pin=CkPin.GPIO23,
         echo_pin=CkPin.GPIO24,
@@ -314,66 +317,52 @@ def main():
 
     def test_arduino_soft_limits():
 
+        def enable_cart_soft_limits():
+            print('Setting degrees to 0 and limiting...', end='')
+            cart_rotary_encoder.set_net_total_degrees(0.0)
+            locking_serial.write_then_read(
+                ArduinoCommand.ENABLE_CART_SOFT_LIMITS.to_bytes(1) +
+                (0).to_bytes(1) +  # ignored
+                get_bytes(-360.0) +
+                get_bytes(360.0),
+                True,
+                0,
+                False
+            )
+            print('done.')
+
+        def disable_cart_soft_limits():
+            print('Disabling soft limits...', end='')
+            locking_serial.write_then_read(
+                ArduinoCommand.DISABLE_CART_SOFT_LIMITS.to_bytes(1) +
+                (0).to_bytes(1),  # ignored
+                True,
+                0,
+                False
+            )
+            cart_rotary_encoder.set_net_total_degrees(0.0)
+            print('done.')
+
         time.sleep(3.0)
 
         gpio.output(CkPin.GPIO6, gpio.LOW)
         motor.start()
-
-        print('Setting degrees to 0 and limiting...', end='')
-        cart_rotary_encoder.set_net_total_degrees(0.0)
-        locking_serial.write_then_read(
-            ArduinoCommand.ENABLE_CART_SOFT_LIMITS.to_bytes(1) +
-            (0).to_bytes(1) +  # ignored
-            get_bytes(-360.0) +
-            get_bytes(360.0),
-            True,
-            0,
-            False
-        )
-        print('done.')
+        enable_cart_soft_limits()
 
         print('Setting motor speed to 20 for 10 seconds...', end='')
         motor.set_speed(20)
         time.sleep(10.0)
         print('done. It should have turned once.')
 
-        # disabling soft limits
-        print('Disabling soft limits...', end='')
-        locking_serial.write_then_read(
-            ArduinoCommand.DISABLE_CART_SOFT_LIMITS.to_bytes(1) +
-            (0).to_bytes(1),  # ignored
-            True,
-            0,
-            False
-        )
-        cart_rotary_encoder.set_net_total_degrees(0.0)
-        print('done.')
-
-        print('Re-enabling soft limits...', end='')
-        locking_serial.write_then_read(
-            ArduinoCommand.ENABLE_CART_SOFT_LIMITS.to_bytes(1) +
-            (0).to_bytes(1) +  # ignored
-            get_bytes(-360.0) +
-            get_bytes(360.0),
-            True,
-            0,
-            False
-        )
-        print('done.')
+        disable_cart_soft_limits()
+        enable_cart_soft_limits()
 
         print('Setting motor speed to -20 for 10 seconds...', end='')
         motor.set_speed(-20)
         time.sleep(10.0)
         print('done. It should have turned once.')
 
-        locking_serial.write_then_read(
-            ArduinoCommand.DISABLE_CART_SOFT_LIMITS.to_bytes(1) +
-            (0).to_bytes(1),  # ignored
-            True,
-            0,
-            False
-        )
-
+        disable_cart_soft_limits()
         motor.stop()
 
     try:
@@ -393,7 +382,7 @@ def main():
         # test_plot_pole_rotary_encoder_state()
         # test_pole_rotary_encoder_wait_for_stationarity()
         # test_servo()
-        test_arduino_soft_limits()
+        # test_arduino_soft_limits()
 
     except KeyboardInterrupt:
         pass

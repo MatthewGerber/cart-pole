@@ -16,12 +16,13 @@ const byte CMD_SET_ROTARY_NET_TOTAL_DEGREES = 3;
 const byte CMD_STOP_ROTARY = 4;
 const byte CMD_SET_MOTOR_SPEED = 5;
 const byte CMD_ENABLE_CART_SOFT_LIMITS = 6;
+const size_t CMD_ENABLE_CART_SOFT_LIMITS_ARGS_LEN = FLOAT_BYTES_LEN * 2;
 const byte CMD_DISABLE_CART_SOFT_LIMITS = 7;
+
+const size_t CMD_INIT_ROTARY_ARGS_LEN = 18;
 
 // cart rotary encoder
 const byte CART_ROTARY_ENCODER_ID = 0;
-const size_t CMD_INIT_ROTARY_ARGS_LEN = 18;
-const size_t CMD_ENABLE_CART_SOFT_LIMITS_ARGS_LEN = FLOAT_BYTES_LEN * 2;
 byte cart_rotary_white_pin;
 byte cart_rotary_green_pin;
 volatile unsigned long cart_num_phase_changes;
@@ -109,21 +110,21 @@ void setup() {
 
 long bytes_to_long(byte bytes[], size_t start_idx) {
   uint32_t value = ((uint32_t)bytes[start_idx]) << 24;
-  value |= bytes[start_idx + 1] << 16;
-  value |= bytes[start_idx + 2] << 8;
-  value |= bytes[start_idx + 3];
+  value |= ((uint32_t)bytes[start_idx + 1]) << 16;
+  value |= ((uint32_t)bytes[start_idx + 2]) << 8;
+  value |= ((uint32_t)bytes[start_idx + 3]);
   return (int32_t)value;
 }
 
 int bytes_to_int(byte bytes[], size_t start_idx) {
   uint16_t value = ((uint16_t)bytes[start_idx]) << 8;
-  value |= bytes[start_idx + 1];
+  value |= ((uint16_t)bytes[start_idx + 1]);
   return (int16_t)value;
 }
 
 unsigned int bytes_to_unsigned_int(byte bytes[], size_t start_idx) {
   uint16_t value = ((uint16_t)bytes[start_idx]) << 8;
-  value |= bytes[start_idx + 1];
+  value |= ((uint16_t)bytes[start_idx + 1]);
   return value;
 }
 
