@@ -1,3 +1,4 @@
+import logging
 import time
 
 import RPi.GPIO as gpio
@@ -15,10 +16,12 @@ from raspberry_py.gpio.lights import LED
 from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectArduino, Servo, Sg90DriverPCA9685PW
 from raspberry_py.gpio.sensors import RotaryEncoder, UltrasonicRangeFinder
 
-from src.cart_pole.environment import ArduinoCommand
+from cart_pole.environment import ArduinoCommand
 
 
 def main():
+
+    logging.getLogger().setLevel(logging.DEBUG)
 
     setup()
 
@@ -60,7 +63,7 @@ def main():
         phase_b_pin=4,
         phase_changes_per_rotation=1200,
         phase_change_mode=RotaryEncoder.PhaseChangeMode.ONE_SIGNAL_TWO_EDGE,
-        angle_step_size=0.9,
+        angle_step_size=1.0,
         angular_velocity_step_size=0.5,
         angular_acceleration_step_size=0.2,
         serial=locking_serial,
@@ -77,7 +80,7 @@ def main():
         phase_b_pin=5,
         phase_changes_per_rotation=1200,
         phase_change_mode=RotaryEncoder.PhaseChangeMode.ONE_SIGNAL_TWO_EDGE,
-        angle_step_size=0.9,
+        angle_step_size=1.0,
         angular_velocity_step_size=0.5,
         angular_acceleration_step_size=0.2,
         serial=locking_serial,
@@ -140,6 +143,8 @@ def main():
     )
 
     def test_pole_rotary_encoder_state():
+        previous_num_phase_changes = None
+        previous_net_total_degrees = None
         while True:
             time.sleep(1.0 / pole_rotary_interface.state_update_hz)
             pole_rotary_encoder.update_state()
@@ -152,6 +157,15 @@ def main():
                 f'Velocity:  {state.angular_velocity} deg/s\n'
                 f'Acceleration:  {state.angular_acceleration} deg/s^2\n'
             )
+
+            phase_changes_changed = state.num_phase_changes != previous_num_phase_changes
+            net_degrees_changed = state.net_total_degrees != previous_net_total_degrees
+
+            if net_degrees_changed and not phase_changes_changed:
+                raise ValueError('Degrees changed, but phase changes did not. How is this possible?')
+
+            previous_num_phase_changes = state.num_phase_changes
+            previous_net_total_degrees = state.net_total_degrees
 
     def test_plot_pole_rotary_encoder_state():
         print('Will begin recording state in 5 seconds...', end='')
@@ -210,16 +224,14 @@ def main():
 
         motor.start()
 
-        time.sleep(3)
-
         print('Accelerating from 0 to 100...', end='')
         for speed in range(0, 100):
             motor.set_speed(speed)
             time.sleep(0.05)
             print('.', end='')
 
-        print('at maximum speed for 5 seconds.')
-        time.sleep(5.0)
+        print('at maximum speed for 2 seconds.')
+        time.sleep(2.0)
 
         print('Decelerating from 100 to 0 then -100 with a freeze in the middle....')
         motor_driver.send_promise = True
@@ -227,15 +239,15 @@ def main():
             motor.set_speed(speed)
             if speed == 50:
                 print(f'Simulating freeze...', end='')
-                time.sleep(5.0)
+                time.sleep(2.0)
                 print(f'resuming.')
             else:
-                time.sleep(0.05)
+                time.sleep(0.01)
 
         print(f'Decelerating from -100 to 0.')
         for speed in range(-100, 0):
             motor.set_speed(speed)
-            time.sleep(0.05)
+            time.sleep(0.01)
 
         motor.set_speed(0)
         motor.stop()

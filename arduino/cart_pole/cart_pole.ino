@@ -282,7 +282,7 @@ void loop() {
         cart_state_update_interval_ms = (unsigned long) (1000.0 / float(cart_state_update_hz));
 
         attachInterrupt(digitalPinToInterrupt(cart_rotary_white_pin), cart_white_changed, CHANGE);
-        delay(1000);
+        delay(1000);  // i forget why this delay is needed...something about letting the interrupt get configured.
         cart_num_phase_changes = 0;
         cart_num_phase_changes_value = 0;
         cart_rotary_index = 0;
@@ -292,6 +292,12 @@ void loop() {
         cart_rotary_clockwise = false;
         cart_rotary_state_time_ms = millis();
         cart_rotary_is_inited = true;
+
+        // there's some timing issue with using delay above, such that if the sender writes data 
+        // while in the delay then commands from the new data can be lost. use a synchronous 
+        // return value here to prevent further writes during the delay.
+        write_bool(true);
+        Serial.flush();
       }
       else if (component_id == POLE_ROTARY_ENCODER_ID) {
         byte args[CMD_INIT_ROTARY_ARGS_LEN];
@@ -315,7 +321,7 @@ void loop() {
         pole_state_update_interval_ms = (unsigned long) (1000.0 / float(pole_state_update_hz));
 
         attachInterrupt(digitalPinToInterrupt(pole_rotary_white_pin), pole_white_changed, CHANGE);
-        delay(1000);
+        delay(1000);  // i forget why this delay is needed...something about letting the interrupt get configured.
         pole_num_phase_changes = 0;
         pole_num_phase_changes_value = 0;
         pole_rotary_index = 0;
@@ -325,6 +331,12 @@ void loop() {
         pole_rotary_clockwise = false;
         pole_rotary_state_time_ms = millis();
         pole_rotary_is_inited = true;
+
+        // there's some timing issue with using delay above, such that if the sender writes data 
+        // while in the delay then commands from the new data can be lost. use a synchronous 
+        // return value here to prevent further writes during the delay.
+        write_bool(true);
+        Serial.flush();
       }
       else if (component_id == MOTOR_ID) {
 
