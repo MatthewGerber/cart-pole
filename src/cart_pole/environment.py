@@ -164,10 +164,11 @@ class CartRotaryEncoder(RotaryEncoder):
         :param midline_mm: Midline mm.
         :param check_delay_seconds: Check delay seconds.
         :param limit_pressed: Function that returns True if limit switch is pressed and False otherwise.
-        :return: True if cart crossed center without hitting a limit switch and False otherwise.
+        :return: True if cart hit limit switch while centering, indicating that the cart was traveling in the wrong
+        direction.
         """
 
-        crossed_center = False
+        hit_limit = True
 
         while CartPole.get_cart_position(
             cart_net_total_degrees=self.get_net_total_degrees(),
@@ -182,9 +183,9 @@ class CartRotaryEncoder(RotaryEncoder):
             time.sleep(check_delay_seconds)
 
         else:
-            crossed_center = True
+            hit_limit = False
 
-        return crossed_center
+        return hit_limit
 
 
 class CartPoleState(MdpState):
@@ -781,10 +782,10 @@ class CartPole(ContinuousMdpEnvironment):
         self.balance_pole_angle = 15.0
         self.lost_balance_timestamp: Optional[float] = None
         self.lost_balance_timer_seconds = 0.0
-        self.cart_rotary_encoder_angle_step_size = 1.0  # smoothing the angle causes run-to-run drift
+        self.cart_rotary_encoder_angle_step_size = 0.9
         self.cart_rotary_encoder_angular_velocity_step_size = 0.5
         self.cart_rotary_encoder_angular_acceleration_step_size = 0.1
-        self.pole_rotary_encoder_angle_step_size = 1.0  # smoothing the angle causes run-to-run drift
+        self.pole_rotary_encoder_angle_step_size = 0.9
         self.pole_rotary_encoder_angular_velocity_step_size = 0.5
         self.pole_rotary_encoder_angular_acceleration_step_size = 0.1
         self.fraction_time_balancing = IncrementalSampleAverager()
@@ -972,7 +973,7 @@ class CartPole(ContinuousMdpEnvironment):
                 angular_acceleration_step_size=self.cart_rotary_encoder_angular_acceleration_step_size,
                 serial=arduino_serial_connection,
                 identifier=0,
-                state_update_hz=round(2.0 * self.timesteps_per_second)
+                state_update_hz=round(1.5 * self.timesteps_per_second)
             )
         )
         cart_rotary_encoder.start()
@@ -988,7 +989,7 @@ class CartPole(ContinuousMdpEnvironment):
                 angular_acceleration_step_size=self.pole_rotary_encoder_angular_acceleration_step_size,
                 serial=arduino_serial_connection,
                 identifier=1,
-                state_update_hz=round(2.0 * self.timesteps_per_second)
+                state_update_hz=round(1.5 * self.timesteps_per_second)
             )
         )
         pole_rotary_encoder.start()
@@ -1471,11 +1472,9 @@ class CartPole(ContinuousMdpEnvironment):
 
         # repeatedly center cart at successively slower speeds
         for centering_speed_factors in [3.0, 2.5, 2.0, 1.5, 1.0]:
-
-            while cart_position != CartPosition.CENTERED:
-
-                # center the cart at the current speed factor
-                cart_position = self.center_cart_from_position(
+            retry_centering = True
+            while retry_centering:
+                cart_position, retry_centering = self.center_cart_from_position(
                     position=cart_position,
                     speed=round(centering_speed_factors * (
                         self.motor_slowest_speed_right if cart_position == CartPosition.LEFT_OF_CENTER
@@ -1485,22 +1484,8 @@ class CartPole(ContinuousMdpEnvironment):
                     check_delay_seconds=0.1,
                     stop_at_center=True
                 )
-
-                # might have had the wrong initial position
-                if cart_position != CartPosition.CENTERED:
-                    logging.info('Failed to center cart (hit limit).')
-
             else:
                 logging.info(f'Cart centered at speed:  {centering_speed_factors}')
-
-            # the cart will be centered, but there will be overrun error because we're monitoring state on the python
-            # side. recalculate the cart position for the next centering at a slower speed.
-            cart_position = CartPole.get_cart_position(
-                self.cart_rotary_encoder.get_net_total_degrees(),
-                self.left_limit_degrees,
-                self.cart_mm_per_degree,
-                self.midline_mm
-            )
 
         if restore_cart_rotary_state_at_center:
             logging.info(
@@ -1533,7 +1518,7 @@ class CartPole(ContinuousMdpEnvironment):
             acceleration_interval: Optional[timedelta],
             check_delay_seconds: float,
             stop_at_center: bool
-    ) -> CartPosition:
+    ) -> Tuple[CartPosition, bool]:
         """
         Center the cart.
 
@@ -1542,7 +1527,8 @@ class CartPole(ContinuousMdpEnvironment):
         :param acceleration_interval: Acceleration interval, or None for immediate.
         :param check_delay_seconds: Check delay (seconds).
         :param stop_at_center: Whether to stop the cart at the center.
-        :return: Resulting position.
+        :return: 2-tuple of resulting position and whether a limit switch was hit, indicating that the provided position
+        was incorrect.
         """
 
         assert self.left_limit_degrees is not None, 'Must calibrate before centering.'
@@ -1550,7 +1536,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         if position == CartPosition.CENTERED:
             logging.info('Cart already centered.')
-            return position
+            return position, False
         elif position == CartPosition.LEFT_OF_CENTER and speed < 0:
             raise ValueError(f'Centering speed must be positive when left of center; got:  {speed}')
         elif position == CartPosition.RIGHT_OF_CENTER and speed > 0:
@@ -1563,7 +1549,7 @@ class CartPole(ContinuousMdpEnvironment):
             acceleration_interval=acceleration_interval
         )
 
-        crossed_center = self.cart_rotary_encoder.wait_for_cart_to_cross_center(
+        hit_limit = self.cart_rotary_encoder.wait_for_cart_to_cross_center(
             original_position=position,
             left_limit_degrees=self.left_limit_degrees,
             cart_mm_per_degree=self.cart_mm_per_degree,
@@ -1571,8 +1557,7 @@ class CartPole(ContinuousMdpEnvironment):
             check_delay_seconds=check_delay_seconds,
             limit_pressed=lambda: self.left_limit_pressed.is_set() or self.right_limit_pressed.is_set()
         )
-
-        if not crossed_center:
+        if hit_limit:
             logging.info('Hit limit switch while centering. Failure.')
 
         if stop_at_center:
@@ -1583,15 +1568,18 @@ class CartPole(ContinuousMdpEnvironment):
         if self.left_limit_pressed.is_set():
             self.move_cart_to_left_limit()
             self.cart_rotary_encoder.set_net_total_degrees(self.left_limit_degrees)
-            centered_position = CartPosition.LEFT_OF_CENTER
         elif self.right_limit_pressed.is_set():
             self.move_cart_to_right_limit()
             self.cart_rotary_encoder.set_net_total_degrees(self.right_limit_degrees)
-            centered_position = CartPosition.RIGHT_OF_CENTER
-        else:
-            centered_position = CartPosition.CENTERED
 
-        return centered_position
+        resulting_position = CartPole.get_cart_position(
+            self.cart_rotary_encoder.get_net_total_degrees(),
+            self.left_limit_degrees,
+            self.cart_mm_per_degree,
+            self.midline_mm
+        )
+
+        return resulting_position, hit_limit
 
     def stop_cart(
             self
@@ -2399,8 +2387,9 @@ class CartPole(ContinuousMdpEnvironment):
         if t is not None and self.T is not None and t >= self.T:
             truncated = True
 
-        # terminate at violation of soft limit, since continuing might cause the cart to physically impact the
-        # limit switch at a high speed. only do this if a termination value isn't being forced by the caller.
+        # terminate at violation of soft limit, since continuing might cause the cart to physically impact the limit
+        # switch at a high speed. only do this if a termination value isn't being forced by the caller. since we're
+        # close to the side, take the opportunity to reset the card state at the limit.
         if terminal is None:
             terminal = self.cart_violates_soft_limit(cart_mm_from_center)
             if terminal:
@@ -2408,6 +2397,7 @@ class CartPole(ContinuousMdpEnvironment):
                     f'Cart distance from center ({abs(cart_mm_from_center):.1f} mm) exceeds soft limit '
                     f'({self.soft_limit_mm_from_midline} mm). Terminating.'
                 )
+                self.restore_cart_limit_state = True
 
         return CartPoleState(
             environment=self,

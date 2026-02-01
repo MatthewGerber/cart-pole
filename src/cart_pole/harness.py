@@ -63,12 +63,12 @@ def main():
         phase_b_pin=4,
         phase_changes_per_rotation=2400,
         phase_change_mode=RotaryEncoder.PhaseChangeMode.TWO_SIGNAL_TWO_EDGE,
-        angle_step_size=1.0,
+        angle_step_size=0.9,
         angular_velocity_step_size=0.5,
-        angular_acceleration_step_size=0.2,
+        angular_acceleration_step_size=0.1,
         serial=locking_serial,
         identifier=0,
-        state_update_hz=80
+        state_update_hz=round(1.5 * 45.0)
     )
     cart_rotary_encoder = RotaryEncoder(
         interface=cart_rotary_interface
@@ -80,12 +80,12 @@ def main():
         phase_b_pin=5,
         phase_changes_per_rotation=2400,
         phase_change_mode=RotaryEncoder.PhaseChangeMode.TWO_SIGNAL_TWO_EDGE,
-        angle_step_size=1.0,
+        angle_step_size=0.9,
         angular_velocity_step_size=0.5,
-        angular_acceleration_step_size=0.2,
+        angular_acceleration_step_size=0.1,
         serial=locking_serial,
         identifier=1,
-        state_update_hz=80
+        state_update_hz=round(1.5 * 45.0)
     )
     pole_rotary_encoder = RotaryEncoder(
         interface=pole_rotary_interface
@@ -143,8 +143,6 @@ def main():
     )
 
     def test_pole_rotary_encoder_state():
-        previous_num_phase_changes = None
-        previous_net_total_degrees = None
         while True:
             time.sleep(1.0 / pole_rotary_interface.state_update_hz)
             pole_rotary_encoder.update_state()
@@ -157,15 +155,6 @@ def main():
                 f'Velocity:  {state.angular_velocity} deg/s\n'
                 f'Acceleration:  {state.angular_acceleration} deg/s^2\n'
             )
-
-            phase_changes_changed = state.num_phase_changes != previous_num_phase_changes
-            net_degrees_changed = state.net_total_degrees != previous_net_total_degrees
-
-            if net_degrees_changed and not phase_changes_changed:
-                raise ValueError('Degrees changed, but phase changes did not. How is this possible?')
-
-            previous_num_phase_changes = state.num_phase_changes
-            previous_net_total_degrees = state.net_total_degrees
 
     def test_plot_pole_rotary_encoder_state():
         print('Will begin recording state in 5 seconds...', end='')
@@ -391,7 +380,7 @@ def main():
         # rotary encoder tests
         # test_pole_rotary_encoder_state()
         # test_pole_set_net_total_degrees()
-        # test_plot_pole_rotary_encoder_state()
+        test_plot_pole_rotary_encoder_state()
         # test_pole_rotary_encoder_wait_for_stationarity()
         # test_servo()
         # test_arduino_soft_limits()
