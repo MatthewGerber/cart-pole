@@ -1,3 +1,5 @@
+#include <PinChangeInterrupt.h>
+
 const size_t FLOAT_BYTES_LEN = 4;
 const size_t LONG_BYTES_LEN = 4;
 
@@ -24,11 +26,16 @@ const size_t CMD_INIT_ROTARY_ARGS_LEN = 18;
 // cart rotary encoder
 const byte CART_ROTARY_ENCODER_ID = 0;
 byte cart_rotary_white_pin;
+volatile bool cart_rotary_white_value;
+volatile bool cart_rotary_waiting_on_white;
 byte cart_rotary_green_pin;
-volatile unsigned long cart_num_phase_changes;
-volatile long cart_rotary_index;
-volatile bool cart_rotary_clockwise;
-unsigned long cart_num_phase_changes_value;  // non-volatile global variable used to store the volatile one
+volatile bool cart_rotary_green_value;
+volatile bool cart_rotary_waiting_on_green;
+volatile unsigned long cart_rotary_num_phase_changes_volatile;
+volatile long cart_rotary_index_volatile;
+volatile bool cart_rotary_clockwise_volatile;
+unsigned long cart_rotary_num_phase_changes;
+bool cart_rotary_clockwise;
 unsigned int cart_rotary_phase_changes_per_rotation;
 float cart_rotary_phase_changes_per_degree;
 floatbytes cart_net_degrees;
@@ -47,26 +54,56 @@ bool cart_violates_soft_limits;
 bool cart_rotary_is_inited = false;
 
 void cart_white_changed() {
-  bool cart_rotary_white_pin_value = digitalRead(cart_rotary_white_pin);
-  bool cart_rotary_green_pin_value = digitalRead(cart_rotary_green_pin);
-  if (cart_rotary_white_pin_value == cart_rotary_green_pin_value) {
-    cart_rotary_index -= 1;
-    cart_rotary_clockwise = false;
-  } else {
-    cart_rotary_index += 1;
-    cart_rotary_clockwise = true;
+  if (cart_rotary_waiting_on_white) {
+    cart_rotary_white_value = !cart_rotary_white_value;
+    bool new_green = digitalRead(cart_rotary_green_pin);
+    bool both_changed = new_green != cart_rotary_green_value;
+    cart_rotary_green_value = new_green;
+    if (both_changed) {
+      cart_rotary_clockwise_volatile = !cart_rotary_clockwise_volatile;
+      cart_rotary_index_volatile += (cart_rotary_clockwise_volatile ? 2 : -2);
+    }
+    else {
+      cart_rotary_index_volatile += (cart_rotary_clockwise_volatile ? 1 : -1);
+    }
+    cart_rotary_waiting_on_white = false;
+    cart_rotary_waiting_on_green = true;
+    cart_rotary_num_phase_changes_volatile += 1;
   }
-  cart_num_phase_changes += 1;
+}
+
+void cart_green_changed() {
+  if (cart_rotary_waiting_on_green) {
+    cart_rotary_green_value = !cart_rotary_green_value;
+    bool new_white = digitalRead(cart_rotary_white_pin);
+    bool both_changed = new_white != cart_rotary_white_value;
+    cart_rotary_white_value = new_white;
+    if (both_changed) {
+      cart_rotary_clockwise_volatile = !cart_rotary_clockwise_volatile;
+      cart_rotary_index_volatile += (cart_rotary_clockwise_volatile ? 2 : -2);
+    }
+    else {
+      cart_rotary_index_volatile += (cart_rotary_clockwise_volatile ? 1 : -1);
+    }
+    cart_rotary_waiting_on_green = false;
+    cart_rotary_waiting_on_white = true;
+    cart_rotary_num_phase_changes_volatile += 1;
+  }
 }
 
 // pole rotary encoder
 const byte POLE_ROTARY_ENCODER_ID = 1;
 byte pole_rotary_white_pin;
+volatile bool pole_rotary_white_value;
+volatile bool pole_rotary_waiting_on_white;
 byte pole_rotary_green_pin;
-volatile unsigned long pole_num_phase_changes;
-volatile long pole_rotary_index;
-volatile bool pole_rotary_clockwise;
-unsigned long pole_num_phase_changes_value;  // non-volatile global variable used to store the volatile one
+volatile bool pole_rotary_green_value;
+volatile bool pole_rotary_waiting_on_green;
+volatile unsigned long pole_rotary_num_phase_changes_volatile;
+volatile long pole_rotary_index_volatile;
+volatile bool pole_rotary_clockwise_volatile;
+unsigned long pole_rotary_num_phase_changes;
+bool pole_rotary_clockwise;
 unsigned int pole_rotary_phase_changes_per_rotation;
 float pole_rotary_phase_changes_per_degree;
 floatbytes pole_net_degrees;
@@ -81,16 +118,41 @@ unsigned long pole_rotary_state_time_ms;
 bool pole_rotary_is_inited = false;
 
 void pole_white_changed() {
-  bool pole_rotary_white_pin_value = digitalRead(pole_rotary_white_pin);
-  bool pole_rotary_green_pin_value = digitalRead(pole_rotary_green_pin);
-  if (pole_rotary_white_pin_value == pole_rotary_green_pin_value) {
-    pole_rotary_index -= 1;
-    pole_rotary_clockwise = false;
-  } else {
-    pole_rotary_index += 1;
-    pole_rotary_clockwise = true;
+  if (pole_rotary_waiting_on_white) {
+    pole_rotary_white_value = !pole_rotary_white_value;
+    bool new_green = digitalRead(pole_rotary_green_pin);
+    bool both_changed = new_green != pole_rotary_green_value;
+    pole_rotary_green_value = new_green;
+    if (both_changed) {
+      pole_rotary_clockwise_volatile = !pole_rotary_clockwise_volatile;
+      pole_rotary_index_volatile += (pole_rotary_clockwise_volatile ? 2 : -2);
+    }
+    else {
+      pole_rotary_index_volatile += (pole_rotary_clockwise_volatile ? 1 : -1); 
+    }
+    pole_rotary_waiting_on_white = false;
+    pole_rotary_waiting_on_green = true;
+    pole_rotary_num_phase_changes_volatile += 1;
   }
-  pole_num_phase_changes += 1;
+}
+
+void pole_green_changed() {
+  if (pole_rotary_waiting_on_green) {
+    pole_rotary_green_value = !pole_rotary_green_value;
+    bool new_white = digitalRead(pole_rotary_white_pin);
+    bool both_changed = new_white != pole_rotary_white_value;
+    pole_rotary_white_value = new_white;
+    if (both_changed) {
+      pole_rotary_clockwise_volatile = !pole_rotary_clockwise_volatile;
+      pole_rotary_index_volatile += (pole_rotary_clockwise_volatile ? 2 : -2);
+    }
+    else {
+      pole_rotary_index_volatile += (pole_rotary_clockwise_volatile ? 1 : -1);
+    }
+    pole_rotary_waiting_on_green = false;
+    pole_rotary_waiting_on_white = true;
+    pole_rotary_num_phase_changes_volatile += 1;
+  }
 }
 
 // motor
@@ -170,8 +232,9 @@ void loop() {
 
         // disable interrupts to read volatile values without corruption from the isr
         noInterrupts();
-        long cart_rotary_index_value = cart_rotary_index;
-        cart_num_phase_changes_value = cart_num_phase_changes;
+        cart_rotary_num_phase_changes = cart_rotary_num_phase_changes_volatile;
+        long cart_rotary_index_value = cart_rotary_index_volatile;
+        cart_rotary_clockwise = cart_rotary_clockwise_volatile;
         interrupts();
 
         // check soft limits. if violated, stop cart and set violation flag, which prevents setting speed until soft limits are disabled.
@@ -215,8 +278,9 @@ void loop() {
 
         // disable interrupts to read volatile values without corruption from the isr
         noInterrupts();
-        long pole_rotary_index_value = pole_rotary_index;
-        pole_num_phase_changes_value = pole_num_phase_changes;
+        pole_rotary_num_phase_changes = pole_rotary_num_phase_changes_volatile;
+        long pole_rotary_index_value = pole_rotary_index_volatile;
+        pole_rotary_clockwise = pole_rotary_clockwise_volatile;
         interrupts();
 
         // smooth net degrees
@@ -259,17 +323,17 @@ void loop() {
     // initialize a component
     if (command == CMD_INIT) {
       if (component_id == CART_ROTARY_ENCODER_ID) {
+
         byte args[CMD_INIT_ROTARY_ARGS_LEN];
         Serial.readBytes(args, CMD_INIT_ROTARY_ARGS_LEN);
+
         cart_rotary_white_pin = args[0];
         pinMode(cart_rotary_white_pin, INPUT_PULLUP);
-        digitalWrite(cart_rotary_white_pin, HIGH);
         cart_rotary_green_pin = args[1];
         pinMode(cart_rotary_green_pin, INPUT_PULLUP);
-        digitalWrite(cart_rotary_green_pin, HIGH);
 
         // todo:  2 bytes for phase changes per rotation
-        cart_rotary_phase_changes_per_rotation = 1200;
+        cart_rotary_phase_changes_per_rotation = 2400;
         cart_rotary_phase_changes_per_degree = float(cart_rotary_phase_changes_per_rotation) / 360.0;
 
         // todo:  1 byte for phase-change mode
@@ -281,34 +345,33 @@ void loop() {
         cart_state_update_hz = args[17];
         cart_state_update_interval_ms = (unsigned long) (1000.0 / float(cart_state_update_hz));
 
-        attachInterrupt(digitalPinToInterrupt(cart_rotary_white_pin), cart_white_changed, CHANGE);
-        delay(1000);  // i forget why this delay is needed...something about letting the interrupt get configured.
-        cart_num_phase_changes = 0;
-        cart_num_phase_changes_value = 0;
-        cart_rotary_index = 0;
+        cart_rotary_white_value = digitalRead(cart_rotary_white_pin);
+        cart_rotary_green_value = digitalRead(cart_rotary_green_pin);
+        cart_rotary_waiting_on_white = cart_rotary_white_value == cart_rotary_green_value;
+        cart_rotary_waiting_on_green = !cart_rotary_waiting_on_white;
+        cart_rotary_num_phase_changes_volatile = cart_rotary_num_phase_changes = 0;
+        cart_rotary_index_volatile = 0;
+        cart_rotary_clockwise_volatile = cart_rotary_clockwise = true;
+        attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(cart_rotary_white_pin), cart_white_changed, CHANGE);
+        attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(cart_rotary_green_pin), cart_green_changed, CHANGE);
         cart_net_degrees.number = 0.0;
         cart_velocity_deg_per_sec.number = 0.0;
         cart_acceleration_deg_per_sec_sq.number = 0.0;
-        cart_rotary_clockwise = false;
         cart_rotary_state_time_ms = millis();
         cart_rotary_is_inited = true;
-
-        // there's some timing issue with using delay above, such that if the sender writes data 
-        // while in the delay then commands from the new data can be lost. use a synchronous 
-        // return value here to prevent further writes during the delay.
-        write_bool(true);
-        Serial.flush();
       }
       else if (component_id == POLE_ROTARY_ENCODER_ID) {
+
         byte args[CMD_INIT_ROTARY_ARGS_LEN];
         Serial.readBytes(args, CMD_INIT_ROTARY_ARGS_LEN);
+
         pole_rotary_white_pin = args[0];
         pinMode(pole_rotary_white_pin, INPUT_PULLUP);
         pole_rotary_green_pin = args[1];
         pinMode(pole_rotary_green_pin, INPUT_PULLUP);
 
         // todo:  2 bytes for phase changes per rotation
-        pole_rotary_phase_changes_per_rotation = 1200;
+        pole_rotary_phase_changes_per_rotation = 2400;
         pole_rotary_phase_changes_per_degree = float(pole_rotary_phase_changes_per_rotation) / 360.0;
 
         // todo:  1 byte for phase-change mode
@@ -320,23 +383,20 @@ void loop() {
         pole_state_update_hz = args[17];
         pole_state_update_interval_ms = (unsigned long) (1000.0 / float(pole_state_update_hz));
 
-        attachInterrupt(digitalPinToInterrupt(pole_rotary_white_pin), pole_white_changed, CHANGE);
-        delay(1000);  // i forget why this delay is needed...something about letting the interrupt get configured.
-        pole_num_phase_changes = 0;
-        pole_num_phase_changes_value = 0;
-        pole_rotary_index = 0;
+        pole_rotary_white_value = digitalRead(pole_rotary_white_pin);
+        pole_rotary_green_value = digitalRead(pole_rotary_green_pin);
+        pole_rotary_waiting_on_white = pole_rotary_white_value == pole_rotary_green_value;
+        pole_rotary_waiting_on_green = !pole_rotary_waiting_on_white;
+        pole_rotary_num_phase_changes_volatile = pole_rotary_num_phase_changes = 0;
+        pole_rotary_index_volatile = 0;
+        pole_rotary_clockwise_volatile = pole_rotary_clockwise = true;
+        attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(pole_rotary_white_pin), pole_white_changed, CHANGE);
+        attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(pole_rotary_green_pin), pole_green_changed, CHANGE);
         pole_net_degrees.number = 0.0;
         pole_velocity_deg_per_sec.number = 0.0;
         pole_acceleration_deg_per_sec_sq.number = 0.0;
-        pole_rotary_clockwise = false;
         pole_rotary_state_time_ms = millis();
         pole_rotary_is_inited = true;
-
-        // there's some timing issue with using delay above, such that if the sender writes data 
-        // while in the delay then commands from the new data can be lost. use a synchronous 
-        // return value here to prevent further writes during the delay.
-        write_bool(true);
-        Serial.flush();
       }
       else if (component_id == MOTOR_ID) {
 
@@ -361,21 +421,31 @@ void loop() {
     }
     else if (command == CMD_GET_ROTARY_STATE) {
       if (component_id == CART_ROTARY_ENCODER_ID) {
-        write_long(cart_num_phase_changes_value);
-        write_float(cart_net_degrees);
-        write_float(cart_velocity_deg_per_sec);
-        write_float(cart_acceleration_deg_per_sec_sq);
-        write_bool(cart_rotary_clockwise);
-        write_long(cart_rotary_state_time_ms);
+        byte response[21];
+        byte four[4];
+        long_to_bytes(cart_rotary_num_phase_changes, four);
+        memcpy(response, four, 4);
+        memcpy(response + 4, cart_net_degrees.bytes, 4);
+        memcpy(response + 8, cart_velocity_deg_per_sec.bytes, 4);
+        memcpy(response + 12, cart_acceleration_deg_per_sec_sq.bytes, 4);
+        response[16] = cart_rotary_clockwise;
+        long_to_bytes(cart_rotary_state_time_ms, four);
+        memcpy(response + 17, four, 4);
+        Serial.write(response, 21);
         Serial.flush();
       }
       else if (component_id == POLE_ROTARY_ENCODER_ID) {
-        write_long(pole_num_phase_changes_value);
-        write_float(pole_net_degrees);
-        write_float(pole_velocity_deg_per_sec);
-        write_float(pole_acceleration_deg_per_sec_sq);
-        write_bool(pole_rotary_clockwise);
-        write_long(pole_rotary_state_time_ms);
+        byte response[21];
+        byte four[4];
+        long_to_bytes(pole_rotary_num_phase_changes, four);
+        memcpy(response, four, 4);
+        memcpy(response + 4, pole_net_degrees.bytes, 4);
+        memcpy(response + 8, pole_velocity_deg_per_sec.bytes, 4);
+        memcpy(response + 12, pole_acceleration_deg_per_sec_sq.bytes, 4);
+        response[16] = pole_rotary_clockwise;
+        long_to_bytes(pole_rotary_state_time_ms, four);
+        memcpy(response + 17, four, 4);
+        Serial.write(response, 21);
         Serial.flush();
       }
     }
@@ -390,15 +460,15 @@ void loop() {
       set_float_bytes(net_total_degrees.bytes, args, 0);
 
       if (component_id == CART_ROTARY_ENCODER_ID) {
-        cart_rotary_index = (long) net_total_degrees.number * cart_rotary_phase_changes_per_degree;
-        cart_net_degrees.number = cart_rotary_index / cart_rotary_phase_changes_per_degree;
+        cart_rotary_index_volatile = (long) net_total_degrees.number * cart_rotary_phase_changes_per_degree;
+        cart_net_degrees.number = cart_rotary_index_volatile / cart_rotary_phase_changes_per_degree;
         cart_velocity_deg_per_sec.number = 0.0;
         cart_acceleration_deg_per_sec_sq.number = 0.0;
         cart_rotary_state_time_ms = millis();
       }
       else if (component_id == POLE_ROTARY_ENCODER_ID) {
-        pole_rotary_index = (long) net_total_degrees.number * pole_rotary_phase_changes_per_degree;
-        pole_net_degrees.number = pole_rotary_index / pole_rotary_phase_changes_per_degree;
+        pole_rotary_index_volatile = (long) net_total_degrees.number * pole_rotary_phase_changes_per_degree;
+        pole_net_degrees.number = pole_rotary_index_volatile / pole_rotary_phase_changes_per_degree;
         pole_velocity_deg_per_sec.number = 0.0;
         pole_acceleration_deg_per_sec_sq.number = 0.0;
         pole_rotary_state_time_ms = millis();
@@ -409,11 +479,13 @@ void loop() {
     }
     else if (command == CMD_STOP_ROTARY) {
       if (component_id == CART_ROTARY_ENCODER_ID) {
-        detachInterrupt(digitalPinToInterrupt(cart_rotary_white_pin));
+        detachPinChangeInterrupt(digitalPinToPinChangeInterrupt(cart_rotary_white_pin));
+        detachPinChangeInterrupt(digitalPinToPinChangeInterrupt(cart_rotary_green_pin));
         cart_rotary_is_inited = false;
       }
       else if (component_id == POLE_ROTARY_ENCODER_ID) {
-        detachInterrupt(digitalPinToInterrupt(pole_rotary_white_pin));
+        detachPinChangeInterrupt(digitalPinToPinChangeInterrupt(pole_rotary_white_pin));
+        detachPinChangeInterrupt(digitalPinToPinChangeInterrupt(pole_rotary_green_pin));
         pole_rotary_is_inited = false;
       }
     }
