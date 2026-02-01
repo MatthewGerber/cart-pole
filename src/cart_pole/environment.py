@@ -965,8 +965,8 @@ class CartPole(ContinuousMdpEnvironment):
             interface=RotaryEncoder.Arduino(
                 phase_a_pin=self.cart_rotary_encoder_phase_a_pin,
                 phase_b_pin=self.cart_rotary_encoder_phase_b_pin,
-                phase_changes_per_rotation=1200,
-                phase_change_mode=RotaryEncoder.PhaseChangeMode.ONE_SIGNAL_TWO_EDGE,
+                phase_changes_per_rotation=2400,
+                phase_change_mode=RotaryEncoder.PhaseChangeMode.TWO_SIGNAL_TWO_EDGE,
                 angle_step_size=self.cart_rotary_encoder_angle_step_size,
                 angular_velocity_step_size=self.cart_rotary_encoder_angular_velocity_step_size,
                 angular_acceleration_step_size=self.cart_rotary_encoder_angular_acceleration_step_size,
@@ -981,8 +981,8 @@ class CartPole(ContinuousMdpEnvironment):
             interface=RotaryEncoder.Arduino(
                 phase_a_pin=self.pole_rotary_encoder_phase_a_pin,
                 phase_b_pin=self.pole_rotary_encoder_phase_b_pin,
-                phase_changes_per_rotation=1200,
-                phase_change_mode=RotaryEncoder.PhaseChangeMode.ONE_SIGNAL_TWO_EDGE,
+                phase_changes_per_rotation=2400,
+                phase_change_mode=RotaryEncoder.PhaseChangeMode.TWO_SIGNAL_TWO_EDGE,
                 angle_step_size=self.pole_rotary_encoder_angle_step_size,
                 angular_velocity_step_size=self.pole_rotary_encoder_angular_velocity_step_size,
                 angular_acceleration_step_size=self.pole_rotary_encoder_angular_acceleration_step_size,
@@ -1470,7 +1470,7 @@ class CartPole(ContinuousMdpEnvironment):
             self.cart_rotary_encoder.update_state()
 
         # repeatedly center cart at successively slower speeds
-        for centering_speed_factors in [3.0, 2.0, 1.0]:
+        for centering_speed_factors in [3.0, 2.5, 2.0, 1.5, 1.0]:
 
             while cart_position != CartPosition.CENTERED:
 
@@ -2110,12 +2110,11 @@ class CartPole(ContinuousMdpEnvironment):
             new_termination = not previous_state.terminal and self.state.terminal
             new_truncation = not previous_state.truncated and self.state.truncated
 
-            # upon new termination, stop the cart and the pole. stopping the pole is important because it can continue
-            # swinging well into the next reset, where it might trigger the centering ultrasonic sensor.
+            # stop the cart upon new termination. apply the pole brake but don't wait for the pole to stop.
             if new_termination:
                 CartPole.set_led(self.termination_led, True)
                 self.stop_cart()
-                self.stop_pole()
+                self.apply_pole_brake()
 
             if new_truncation:
 
@@ -2244,7 +2243,7 @@ class CartPole(ContinuousMdpEnvironment):
         """
 
         self.stop_cart()
-        self.stop_pole()
+        self.apply_pole_brake()
 
         self.metric_value['Fraction Balancing'] = self.fraction_time_balancing.get_value()
 

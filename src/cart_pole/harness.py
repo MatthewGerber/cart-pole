@@ -61,8 +61,8 @@ def main():
     cart_rotary_interface = RotaryEncoder.Arduino(
         phase_a_pin=2,
         phase_b_pin=4,
-        phase_changes_per_rotation=1200,
-        phase_change_mode=RotaryEncoder.PhaseChangeMode.ONE_SIGNAL_TWO_EDGE,
+        phase_changes_per_rotation=2400,
+        phase_change_mode=RotaryEncoder.PhaseChangeMode.TWO_SIGNAL_TWO_EDGE,
         angle_step_size=1.0,
         angular_velocity_step_size=0.5,
         angular_acceleration_step_size=0.2,
@@ -78,8 +78,8 @@ def main():
     pole_rotary_interface = RotaryEncoder.Arduino(
         phase_a_pin=3,
         phase_b_pin=5,
-        phase_changes_per_rotation=1200,
-        phase_change_mode=RotaryEncoder.PhaseChangeMode.ONE_SIGNAL_TWO_EDGE,
+        phase_changes_per_rotation=2400,
+        phase_change_mode=RotaryEncoder.PhaseChangeMode.TWO_SIGNAL_TWO_EDGE,
         angle_step_size=1.0,
         angular_velocity_step_size=0.5,
         angular_acceleration_step_size=0.2,
