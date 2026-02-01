@@ -10,6 +10,58 @@ typedef union
   byte bytes[FLOAT_BYTES_LEN];
 } floatbytes;
 
+void setup() {
+  Serial.begin(115200, SERIAL_8N1);
+}
+
+long bytes_to_long(byte bytes[], size_t start_idx) {
+  uint32_t value = ((uint32_t)bytes[start_idx]) << 24;
+  value |= ((uint32_t)bytes[start_idx + 1]) << 16;
+  value |= ((uint32_t)bytes[start_idx + 2]) << 8;
+  value |= ((uint32_t)bytes[start_idx + 3]);
+  return (int32_t)value;
+}
+
+int bytes_to_int(byte bytes[], size_t start_idx) {
+  uint16_t value = ((uint16_t)bytes[start_idx]) << 8;
+  value |= ((uint16_t)bytes[start_idx + 1]);
+  return (int16_t)value;
+}
+
+unsigned int bytes_to_unsigned_int(byte bytes[], size_t start_idx) {
+  uint16_t value = ((uint16_t)bytes[start_idx]) << 8;
+  value |= ((uint16_t)bytes[start_idx + 1]);
+  return value;
+}
+
+void long_to_bytes(long value, byte bytes[]) {
+  bytes[0] = (byte)(value >> 24);
+  bytes[1] = (byte)(value >> 16);
+  bytes[2] = (byte)(value >> 8);
+  bytes[3] = (byte)value;
+}
+
+void write_long(long value) {
+  byte bytes[LONG_BYTES_LEN];
+  long_to_bytes(value, bytes);
+  Serial.write(bytes, LONG_BYTES_LEN);
+}
+
+void write_float(floatbytes f) {
+  Serial.write(f.bytes, FLOAT_BYTES_LEN);
+}
+
+void write_bool(bool value) {
+  Serial.write(value);
+}
+
+void set_float_bytes(byte dest[], byte src[], size_t src_start_idx) {
+  dest[0] = src[src_start_idx];
+  dest[1] = src[src_start_idx + 1];
+  dest[2] = src[src_start_idx + 2];
+  dest[3] = src[src_start_idx + 3];
+}
+
 // top-level command:  command id and component id
 const size_t CMD_BYTES_LEN = 2;
 const byte CMD_INIT = 1;
@@ -62,13 +114,14 @@ void cart_white_changed() {
     if (both_changed) {
       cart_rotary_clockwise_volatile = !cart_rotary_clockwise_volatile;
       cart_rotary_index_volatile += (cart_rotary_clockwise_volatile ? 2 : -2);
+      cart_rotary_num_phase_changes_volatile += 2;
     }
     else {
       cart_rotary_index_volatile += (cart_rotary_clockwise_volatile ? 1 : -1);
+      cart_rotary_num_phase_changes_volatile += 1;
     }
     cart_rotary_waiting_on_white = false;
     cart_rotary_waiting_on_green = true;
-    cart_rotary_num_phase_changes_volatile += 1;
   }
 }
 
@@ -81,13 +134,14 @@ void cart_green_changed() {
     if (both_changed) {
       cart_rotary_clockwise_volatile = !cart_rotary_clockwise_volatile;
       cart_rotary_index_volatile += (cart_rotary_clockwise_volatile ? 2 : -2);
+      cart_rotary_num_phase_changes_volatile += 2;
     }
     else {
       cart_rotary_index_volatile += (cart_rotary_clockwise_volatile ? 1 : -1);
+      cart_rotary_num_phase_changes_volatile += 1;
     }
     cart_rotary_waiting_on_green = false;
     cart_rotary_waiting_on_white = true;
-    cart_rotary_num_phase_changes_volatile += 1;
   }
 }
 
@@ -126,13 +180,14 @@ void pole_white_changed() {
     if (both_changed) {
       pole_rotary_clockwise_volatile = !pole_rotary_clockwise_volatile;
       pole_rotary_index_volatile += (pole_rotary_clockwise_volatile ? 2 : -2);
+      pole_rotary_num_phase_changes_volatile += 2;
     }
     else {
-      pole_rotary_index_volatile += (pole_rotary_clockwise_volatile ? 1 : -1); 
+      pole_rotary_index_volatile += (pole_rotary_clockwise_volatile ? 1 : -1);
+      pole_rotary_num_phase_changes_volatile += 1;
     }
     pole_rotary_waiting_on_white = false;
     pole_rotary_waiting_on_green = true;
-    pole_rotary_num_phase_changes_volatile += 1;
   }
 }
 
@@ -145,13 +200,14 @@ void pole_green_changed() {
     if (both_changed) {
       pole_rotary_clockwise_volatile = !pole_rotary_clockwise_volatile;
       pole_rotary_index_volatile += (pole_rotary_clockwise_volatile ? 2 : -2);
+      pole_rotary_num_phase_changes_volatile += 2;
     }
     else {
       pole_rotary_index_volatile += (pole_rotary_clockwise_volatile ? 1 : -1);
+      pole_rotary_num_phase_changes_volatile += 1;
     }
     pole_rotary_waiting_on_green = false;
     pole_rotary_waiting_on_white = true;
-    pole_rotary_num_phase_changes_volatile += 1;
   }
 }
 
@@ -165,58 +221,6 @@ byte motor_pwm_pin;
 int motor_current_speed;
 unsigned long motor_next_set_speed_promise_time_ms;
 bool motor_is_inited = false;
- 
-void setup() {
-  Serial.begin(115200, SERIAL_8N1);
-}
-
-long bytes_to_long(byte bytes[], size_t start_idx) {
-  uint32_t value = ((uint32_t)bytes[start_idx]) << 24;
-  value |= ((uint32_t)bytes[start_idx + 1]) << 16;
-  value |= ((uint32_t)bytes[start_idx + 2]) << 8;
-  value |= ((uint32_t)bytes[start_idx + 3]);
-  return (int32_t)value;
-}
-
-int bytes_to_int(byte bytes[], size_t start_idx) {
-  uint16_t value = ((uint16_t)bytes[start_idx]) << 8;
-  value |= ((uint16_t)bytes[start_idx + 1]);
-  return (int16_t)value;
-}
-
-unsigned int bytes_to_unsigned_int(byte bytes[], size_t start_idx) {
-  uint16_t value = ((uint16_t)bytes[start_idx]) << 8;
-  value |= ((uint16_t)bytes[start_idx + 1]);
-  return value;
-}
-
-void long_to_bytes(long value, byte bytes[]) {
-  bytes[0] = (byte)(value >> 24);
-  bytes[1] = (byte)(value >> 16);
-  bytes[2] = (byte)(value >> 8);
-  bytes[3] = (byte)value;
-}
-
-void write_long(long value) {
-  byte bytes[LONG_BYTES_LEN];
-  long_to_bytes(value, bytes);
-  Serial.write(bytes, LONG_BYTES_LEN);
-}
-
-void write_float(floatbytes f) {
-  Serial.write(f.bytes, FLOAT_BYTES_LEN);
-}
-
-void write_bool(bool value) {
-  Serial.write(value);
-}
-
-void set_float_bytes(byte dest[], byte src[], size_t src_start_idx) {
-  dest[0] = src[src_start_idx];
-  dest[1] = src[src_start_idx + 1];
-  dest[2] = src[src_start_idx + 2];
-  dest[3] = src[src_start_idx + 3];
-}
 
 void loop() {
 
@@ -454,11 +458,10 @@ void loop() {
       byte args[FLOAT_BYTES_LEN];
       Serial.readBytes(args, FLOAT_BYTES_LEN);
 
-      noInterrupts();
-
       floatbytes net_total_degrees;
       set_float_bytes(net_total_degrees.bytes, args, 0);
 
+      noInterrupts();
       if (component_id == CART_ROTARY_ENCODER_ID) {
         cart_rotary_index_volatile = (long) net_total_degrees.number * cart_rotary_phase_changes_per_degree;
         cart_net_degrees.number = cart_rotary_index_volatile / cart_rotary_phase_changes_per_degree;
@@ -473,7 +476,6 @@ void loop() {
         pole_acceleration_deg_per_sec_sq.number = 0.0;
         pole_rotary_state_time_ms = millis();
       }
-
       interrupts();
 
     }
