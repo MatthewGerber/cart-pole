@@ -776,7 +776,6 @@ class CartPole(ContinuousMdpEnvironment):
         self.timestep_sleep_seconds = 1.0 / self.timesteps_per_second
         self.original_agent_gamma: Optional[float] = None
         self.truncation_gamma: Optional[float] = None  # unused. unclear if this is effective.
-        self.episode_phase = EpisodePhase.SWING_UP
         self.progressive_upright_pole_angle = 175.0
         self.achieved_progressive_upright = False
         self.balance_pole_angle = 15.0
@@ -1404,7 +1403,8 @@ class CartPole(ContinuousMdpEnvironment):
                 # the soft limits should prevent hitting the center, but they failed, likely due to missed rotary
                 # signals. end the episode and restore the limit state when centering.
                 if self.state is not None and not self.state.terminal:
-                    self.state = self.get_state(t=None, terminal=True)
+                    assert isinstance(self.state, CartPoleState)
+                    self.state = self.get_state(t=None, terminal=True, previous_state=self.state)
                     self.restore_cart_limit_state = True
 
             # another thread may attempt to wait for the switch to be released immediately upon the pressed event being
@@ -1903,7 +1903,6 @@ class CartPole(ContinuousMdpEnvironment):
                     f'Reduced progressive upright pole angle to {self.progressive_upright_pole_angle} degrees.'
                 )
 
-        self.episode_phase = EpisodePhase.SWING_UP
         self.lost_balance_timestamp = None
 
         # ensure that the environment referenced by the policy's feature extractor is the current one
@@ -2022,7 +2021,7 @@ class CartPole(ContinuousMdpEnvironment):
         )
         self.restore_cart_limit_state = False
 
-        self.state = self.get_state(t=None, terminal=False)
+        self.state = self.get_state(t=None, terminal=False, previous_state=None)
         self.previous_timestep_epoch = None
 
         # we're about to enter the episode and begin sending speed-change commands to the arduino. begin sending
@@ -2090,7 +2089,7 @@ class CartPole(ContinuousMdpEnvironment):
 
             # update the current state if we haven't yet terminated
             if not previous_state.terminal:
-                self.state = self.get_state(t=t, terminal=None)
+                self.state = self.get_state(t=t, terminal=None, previous_state=previous_state)
                 assert isinstance(self.state, CartPoleState)
                 CartPole.set_led(self.falling_led, self.state.pole_is_falling)
                 CartPole.set_led(self.cart_moving_right_led, self.state.cart_velocity_mm_per_second > 0.0)
@@ -2165,7 +2164,7 @@ class CartPole(ContinuousMdpEnvironment):
                 self.timestep_sleep_seconds * 1000.0
             )
 
-            self.fraction_time_balancing.update(float(self.episode_phase == EpisodePhase.BALANCE))
+            self.fraction_time_balancing.update(float(self.state.episode_phase == EpisodePhase.BALANCE))
             if self.state.terminal:
                 self.metric_value['Fraction Balancing'] = self.fraction_time_balancing.get_value()
 
@@ -2211,9 +2210,19 @@ class CartPole(ContinuousMdpEnvironment):
         if state.terminal:
             reward = -1.0
 
-        # reward according to pole angle
-        else:
+        elif state.episode_phase == EpisodePhase.PROGRESSIVE_UPRIGHT or state.episode_phase == EpisodePhase.BALANCE:
+
+            # reward according to pole angle if we're balancing or above the progressive threshold
             reward = state.zero_to_one_pole_angle
+
+            # add a +2 bonus for transitioning into the current phase. this offsets the -1.0 for losing the current
+            # phase, encouraging whatever action got us here.
+            if previous_state.episode_phase == EpisodePhase.SWING_UP:
+                reward += 2.0
+
+        # reward is zero everywhere else
+        else:
+            reward = 0.0
 
         return reward
 
@@ -2271,13 +2280,15 @@ class CartPole(ContinuousMdpEnvironment):
     def get_state(
             self,
             t: Optional[int],
-            terminal: Optional[bool]
+            terminal: Optional[bool],
+            previous_state: Optional[CartPoleState]
     ) -> CartPoleState:
         """
         Get the current state.
 
         :param t: Time step to consider for episode truncation, or None if not in an episode.
         :param terminal: Whether to force a specific terminal state, or None for natural assessment.
+        :param previous_state: Previous state.
         :return: State.
         """
 
@@ -2312,12 +2323,10 @@ class CartPole(ContinuousMdpEnvironment):
 
         # check whether the episode phase has changed
         episode_phase = self.get_episode_phase(pole_angle_deg_from_upright, pole_state.angular_velocity)
-        if self.episode_phase != episode_phase:
-
-            self.episode_phase = episode_phase
+        if previous_state is not None and episode_phase != previous_state.episode_phase:
 
             # we begin each episode in the swing-up phase, so this will only apply if we've fallen below upright.
-            if self.episode_phase == EpisodePhase.SWING_UP:
+            if episode_phase == EpisodePhase.SWING_UP:
 
                 # if this is the first time we went back to swing-up, then start the lost-balance timer.
                 if self.lost_balance_timestamp is None:
@@ -2337,7 +2346,8 @@ class CartPole(ContinuousMdpEnvironment):
                 for led in [self.progressive_upright_led, self.balance_led]:
                     CartPole.set_led(led, False)
 
-            elif self.episode_phase == EpisodePhase.PROGRESSIVE_UPRIGHT:
+            elif episode_phase == EpisodePhase.PROGRESSIVE_UPRIGHT:
+
                 self.achieved_progressive_upright = True
                 logging.info(f'Progressive upright @ {pole_angle_deg_from_upright:.1f} degrees.')
                 self.time_step_axv_lines[t] = {
@@ -2348,56 +2358,50 @@ class CartPole(ContinuousMdpEnvironment):
                 CartPole.set_led(self.progressive_upright_led, True)
                 CartPole.set_led(self.balance_led, False)
 
-            elif self.episode_phase == EpisodePhase.BALANCE:
+            elif episode_phase == EpisodePhase.BALANCE:
 
-                # only transition to the balance phase once. after balance is lost, the episode is truncated and cannot
-                # thereafter return to balancing. this ensures a properly structured episode, which always ends when
-                # balance is lost. it also prevents the discount (agent.gamma) from returning to large values after it
-                # has been set to a lower post-truncation value for faster convergence.
-                if self.lost_balance_timestamp is None:
-                    logging.info(
-                        f'Balancing @ {pole_angle_deg_from_upright:.1f} deg @ {pole_state.angular_velocity:.1f} deg/sec.'
-                    )
-                    self.time_step_axv_lines[t] = {
-                        'color': 'blue',
-                        'label': 'Balance',
-                        'linewidth': 0.5
-                    }
-                    CartPole.set_led(self.balance_led, True)
-                    CartPole.set_led(self.progressive_upright_led, False)
-                    if self.balance_gamma != self.agent.gamma:
-                        self.agent.gamma = self.balance_gamma
-                        logging.info(f'Set agent.gamma={self.agent.gamma}.')
-                else:
-                    logging.info('Refusing to transition back to balancing after initial loss of balance.')
+                logging.info(
+                    f'Balancing @ {pole_angle_deg_from_upright:.1f} deg @ {pole_state.angular_velocity:.1f} deg/sec.'
+                )
+                self.time_step_axv_lines[t] = {
+                    'color': 'blue',
+                    'label': 'Balance',
+                    'linewidth': 0.5
+                }
+                CartPole.set_led(self.balance_led, True)
+                CartPole.set_led(self.progressive_upright_led, False)
+                if self.balance_gamma != self.agent.gamma:
+                    self.agent.gamma = self.balance_gamma
+                    logging.info(f'Set agent.gamma={self.agent.gamma}.')
 
             else:
-                raise ValueError(f'Unknown episode phase:  {self.episode_phase}')
-
-        truncated = False
-
-        # truncate due to lost-balance timer
-        if (
-            self.lost_balance_timestamp is not None and
-            (time.time() - self.lost_balance_timestamp) >= self.lost_balance_timer_seconds
-        ):
-            truncated = True
+                raise ValueError(f'Unknown episode phase:  {episode_phase}')
 
         # truncate due to time steps
-        if t is not None and self.T is not None and t >= self.T:
-            truncated = True
+        truncated = t is not None and self.T is not None and t >= self.T
 
-        # terminate at violation of soft limit, since continuing might cause the cart to physically impact the limit
-        # switch at a high speed. only do this if a termination value isn't being forced by the caller. since we're
-        # close to the side, take the opportunity to reset the card state at the limit.
+        # only check termination if a value isn't being forced by the caller
         if terminal is None:
-            terminal = self.cart_violates_soft_limit(cart_mm_from_center)
-            if terminal:
+
+            terminal = False
+
+            # terminate at violation of soft limit, since continuing might cause the cart to physically impact the limit
+            # switch at a high speed. also, since we're close to the side, take the opportunity to reset the cart state
+            # at the limit.
+            if self.cart_violates_soft_limit(cart_mm_from_center):
                 logging.info(
                     f'Cart distance from center ({abs(cart_mm_from_center):.1f} mm) exceeds soft limit '
                     f'({self.soft_limit_mm_from_midline} mm). Terminating.'
                 )
+                terminal = True
                 self.restore_cart_limit_state = True
+
+            # terminate due to lost-balance timer
+            elif (
+                self.lost_balance_timestamp is not None and
+                (time.time() - self.lost_balance_timestamp) >= self.lost_balance_timer_seconds
+            ):
+                terminal = True
 
         return CartPoleState(
             environment=self,
