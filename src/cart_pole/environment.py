@@ -2330,13 +2330,17 @@ class CartPole(ContinuousMdpEnvironment):
 
                 # if this is the first time we went back to swing-up, then start the lost-balance timer.
                 if self.lost_balance_timestamp is None:
+
                     self.lost_balance_timestamp = time.time()
-                    self.time_step_axv_lines[t] = {
-                        'color': 'purple',
-                        'linestyle': '--',
-                        'linewidth': 0.5,
-                        'label': f'Started lost-balance timer @ {t}'
-                    }
+
+                    if t is not None:
+                        self.time_step_axv_lines[t] = {
+                            'color': 'purple',
+                            'linestyle': '--',
+                            'linewidth': 0.5,
+                            'label': f'Started lost-balance timer @ {t}'
+                        }
+
                     logging.info(
                         f'Pole has lost its upright position. Angle {pole_angle_deg_from_upright:.2f} exceeds the '
                         f'maximum allowable of {self.progressive_upright_pole_angle:.1f}. Starting lost-balance timer '
@@ -2350,11 +2354,14 @@ class CartPole(ContinuousMdpEnvironment):
 
                 self.achieved_progressive_upright = True
                 logging.info(f'Progressive upright @ {pole_angle_deg_from_upright:.1f} degrees.')
-                self.time_step_axv_lines[t] = {
-                    'color': 'purple',
-                    'linewidth': 0.5,
-                    'label': 'Progressive upright'
-                }
+
+                if t is not None:
+                    self.time_step_axv_lines[t] = {
+                        'color': 'purple',
+                        'linewidth': 0.5,
+                        'label': 'Progressive upright'
+                    }
+
                 CartPole.set_led(self.progressive_upright_led, True)
                 CartPole.set_led(self.balance_led, False)
 
@@ -2363,11 +2370,14 @@ class CartPole(ContinuousMdpEnvironment):
                 logging.info(
                     f'Balancing @ {pole_angle_deg_from_upright:.1f} deg @ {pole_state.angular_velocity:.1f} deg/sec.'
                 )
-                self.time_step_axv_lines[t] = {
-                    'color': 'blue',
-                    'label': 'Balance',
-                    'linewidth': 0.5
-                }
+
+                if t is not None:
+                    self.time_step_axv_lines[t] = {
+                        'color': 'blue',
+                        'label': 'Balance',
+                        'linewidth': 0.5
+                    }
+
                 CartPole.set_led(self.balance_led, True)
                 CartPole.set_led(self.progressive_upright_led, False)
                 if self.balance_gamma != self.agent.gamma:
