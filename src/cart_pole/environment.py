@@ -2246,28 +2246,22 @@ class CartPole(ContinuousMdpEnvironment):
 
     def get_episode_phase(
             self,
-            pole_angle_deg_from_upright: float,
-            pole_angular_velocity: float
+            pole_angle_deg_from_upright: float
     ) -> EpisodePhase:
         """
         Get the episode phase.
 
         :param pole_angle_deg_from_upright: Pole's angle in degrees from upright.
-        :param pole_angular_velocity: Pole's angular velocity.
         :return: Episode phase.
         """
 
         abs_pole_angle_deg_from_upright = abs(pole_angle_deg_from_upright)
-        abs_pole_angular_velocity = abs(pole_angular_velocity)
 
-        # balancing:  pole is above the balance threshold and moving slowly
-        if (
-            abs_pole_angle_deg_from_upright <= self.balance_pole_angle and
-            abs_pole_angular_velocity <= 6.0 * self.balance_pole_angle
-        ):
+        # balancing:  pole is above the balance threshold
+        if abs_pole_angle_deg_from_upright <= self.balance_pole_angle:
             episode_phase = EpisodePhase.BALANCE
 
-        # progressive upright:  pole is above the progressively increasing threshold
+        # progressive upright:  pole is below the balance threshold but above the progressively increasing threshold
         elif abs_pole_angle_deg_from_upright <= self.progressive_upright_pole_angle:
             episode_phase = EpisodePhase.PROGRESSIVE_UPRIGHT
 
@@ -2322,7 +2316,7 @@ class CartPole(ContinuousMdpEnvironment):
             pole_angle_deg_from_upright = -np.sign(pole_angle_deg_from_bottom) * 180.0 + pole_angle_deg_from_bottom
 
         # check whether the episode phase has changed
-        episode_phase = self.get_episode_phase(pole_angle_deg_from_upright, pole_state.angular_velocity)
+        episode_phase = self.get_episode_phase(pole_angle_deg_from_upright)
         if previous_state is not None and episode_phase != previous_state.episode_phase:
 
             # we begin each episode in the swing-up phase, so this will only apply if we've fallen below upright.
