@@ -245,8 +245,7 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
             # appropriately in this position, so we use a separate policy for this phase.
             StateLambdaIndicator(
                 lambda feature_vector: self.environment.get_episode_phase(
-                    math.degrees(feature_vector[2]),
-                    math.degrees(feature_vector[3])
+                    math.degrees(feature_vector[2])
                 ) == EpisodePhase.BALANCE,
                 [False, True]
             )
