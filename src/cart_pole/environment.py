@@ -1399,9 +1399,10 @@ class CartPole(ContinuousMdpEnvironment):
 
                 # it's important to stop the cart any time the limit switch is pressed
                 self.stop_cart()
+                self.apply_pole_brake()
 
-                # the soft limits should prevent hitting the center, but they failed, likely due to missed rotary
-                # signals. end the episode and restore the limit state when centering.
+                # the soft limits should prevent hitting the limit, but they failed, likely due to missed rotary
+                # signals. end the episode and restore the limit state when centering next.
                 if self.state is not None and not self.state.terminal:
                     assert isinstance(self.state, CartPoleState)
                     self.state = self.get_state(t=None, terminal=True, previous_state=self.state)
@@ -2055,15 +2056,18 @@ class CartPole(ContinuousMdpEnvironment):
 
     def cart_violates_soft_limit(
             self,
-            cart_mm_from_center: float
+            cart_mm_from_center: float,
+            soft_limit_fraction: float
     ) -> bool:
         """
         Get whether a distance from center is terminal.
 
         :param cart_mm_from_center: Distance (mm) from center.
+        :param soft_limit_fraction: Factor of soft limit, where 1.0 is exactly the soft limit, 0.5 is half the soft
+        limit, and 0.0 is always violating.
         """
 
-        return abs(cart_mm_from_center) >= self.soft_limit_mm_from_midline
+        return abs(cart_mm_from_center) >= (self.soft_limit_mm_from_midline * soft_limit_fraction)
 
     def advance(
             self,
@@ -2392,7 +2396,7 @@ class CartPole(ContinuousMdpEnvironment):
             # terminate at violation of soft limit, since continuing might cause the cart to physically impact the limit
             # switch at a high speed. also, since we're close to the side, take the opportunity to reset the cart state
             # at the limit.
-            if self.cart_violates_soft_limit(cart_mm_from_center):
+            if self.cart_violates_soft_limit(cart_mm_from_center, 1.0):
                 logging.info(
                     f'Cart distance from center ({abs(cart_mm_from_center):.1f} mm) exceeds soft limit '
                     f'({self.soft_limit_mm_from_midline} mm). Terminating.'
@@ -2406,6 +2410,9 @@ class CartPole(ContinuousMdpEnvironment):
                 (time.time() - self.lost_balance_timestamp) >= self.lost_balance_timer_seconds
             ):
                 terminal = True
+
+                # go ahead and reset the cart limit state if we're pretty close to the end
+                self.restore_cart_limit_state = self.cart_violates_soft_limit(cart_mm_from_center, 0.5)
 
         return CartPoleState(
             environment=self,
