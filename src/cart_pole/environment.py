@@ -1260,9 +1260,10 @@ class CartPole(ContinuousMdpEnvironment):
         :return: Motor speed that cause the cart to begin moving in the given direction.
         """
 
-        # stop cart and pole. need to stop pole so that it's momentum doesn't pull the cart when detecting deadzone.
+        # stop cart and pole. need to stop/hole pole so that its momentum doesn't pull the cart when detecting deadzone.
         self.stop_cart()
         self.stop_pole()
+        self.apply_pole_brake()
 
         if direction == CartDirection.LEFT:
             increment = -1
@@ -1300,6 +1301,7 @@ class CartPole(ContinuousMdpEnvironment):
                 moving_ticks_remaining -= 1
 
         self.stop_cart()
+        self.release_pole_brake()
 
         deadzone_speed = speed - increment
 
@@ -1399,7 +1401,6 @@ class CartPole(ContinuousMdpEnvironment):
 
                 # it's important to stop the cart any time the limit switch is pressed
                 self.stop_cart()
-                self.apply_pole_brake()
 
                 # the soft limits should prevent hitting the limit, but they failed, likely due to missed rotary
                 # signals. end the episode and restore the limit state when centering next.
@@ -2101,11 +2102,10 @@ class CartPole(ContinuousMdpEnvironment):
             new_termination = not previous_state.terminal and self.state.terminal
             new_truncation = not previous_state.truncated and self.state.truncated
 
-            # stop the cart upon new termination. apply the pole brake but don't wait for the pole to stop.
+            # stop the cart upon new termination
             if new_termination:
                 CartPole.set_led(self.termination_led, True)
                 self.stop_cart()
-                self.apply_pole_brake()
 
             if new_truncation:
 
@@ -2244,7 +2244,6 @@ class CartPole(ContinuousMdpEnvironment):
         """
 
         self.stop_cart()
-        self.apply_pole_brake()
 
         self.metric_value['Fraction Balancing'] = self.fraction_time_balancing.get_value()
 
