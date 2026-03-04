@@ -1546,6 +1546,8 @@ class CartPole(ContinuousMdpEnvironment):
         else:
             logging.info(f'Centering cart from {position.name} at speed {speed}.')
 
+        self.apply_pole_brake()
+
         self.set_motor_speed(
             speed=speed,
             acceleration_interval=acceleration_interval
@@ -1564,6 +1566,8 @@ class CartPole(ContinuousMdpEnvironment):
 
         if stop_at_center:
             self.stop_cart()
+
+        self.release_pole_brake()
 
         # if we hit a limit switch, then we must not know where we are. move away from the limit switch and restore the
         # limit state.
@@ -1600,12 +1604,14 @@ class CartPole(ContinuousMdpEnvironment):
 
         # noinspection PyBroadException
         try:
+
             self.set_motor_speed(0)
 
             # a swinging pole can create movement at the cart rotary encoder. apply the pole brake to reduce this.
             self.apply_pole_brake()
 
             self.cart_rotary_encoder.wait_for_stationarity(0.1)
+
         except Exception as e:
 
             logging.critical(f'Failed to stop cart. Leaving the motor PWM disabled. Exception {e}')
@@ -1924,6 +1930,8 @@ class CartPole(ContinuousMdpEnvironment):
         # track policy coefficients over episodes
         if self.policy.action_theta_a is not None and self.policy.action_theta_b is not None:
 
+            logging.info(f'Capturing theta-a and theta-b values for iteration:  {self.num_resets}')
+
             # theta-a
             assert self.policy.action_theta_a.shape[0] == 1
             if 'a' not in self.beta_shape_param_iter_coef:
@@ -1988,6 +1996,8 @@ class CartPole(ContinuousMdpEnvironment):
 
         # dump get-item calls to csv for analysis
         if len(self.policy_get_item_calls) > 0:
+            get_items_path = os.path.join(self.policy_get_item_calls_dir, f'{self.num_resets}-policy-get-items.csv')
+            logging.info(f'Writing policy get-item file:  {get_items_path}')
             pd.DataFrame.from_records([
                 {
                     'episode': self.num_resets,
@@ -2002,10 +2012,13 @@ class CartPole(ContinuousMdpEnvironment):
                     action_b,
                     action
                 ) in enumerate(self.policy_get_item_calls)
-            ]).to_csv(os.path.join(self.policy_get_item_calls_dir, f'{self.num_resets}-policy-get-items.csv'))
+            ]).to_csv(get_items_path)
             self.policy_get_item_calls.clear()
+            logging.info('Done.')
 
+        logging.info('Starting motor.')
         self.motor.start()
+        logging.info('Done.')
 
         # the arduino needs to ignore its soft limits while we calibrate and center
         self.disable_arduino_cart_soft_limits()
