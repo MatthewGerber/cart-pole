@@ -295,7 +295,7 @@ def main():
         except KeyboardInterrupt:
             motor.stop()
 
-    def test_servo():
+    def test_pole_brake():
         release_degrees = 20.0
         braking_degrees = 12.0
         servo.disable()
@@ -380,9 +380,9 @@ def main():
         # rotary encoder tests
         # test_pole_rotary_encoder_state()
         # test_pole_set_net_total_degrees()
-        test_plot_pole_rotary_encoder_state()
+        # test_plot_pole_rotary_encoder_state()
         # test_pole_rotary_encoder_wait_for_stationarity()
-        # test_servo()
+        # test_pole_brake()
         # test_arduino_soft_limits()
 
     except KeyboardInterrupt:
