@@ -307,14 +307,18 @@ def main():
             if i == 5:
                 print('Disabling servo.')
                 servo.disable()
-            servo.set_degrees(braking_degrees)
-            time.sleep(0.5)
             servo.set_degrees(release_degrees)
+            time.sleep(0.5)
+            servo.set_degrees(braking_degrees)
             time.sleep(0.5)
             if i == 5:
                 print('Enabling servo.')
                 servo.enable()
         servo.stop()
+        print(
+            f'Brake is down at {braking_degrees} degrees. Attach brake shoe. The cart pole environment should brake at'
+            f'fewer degrees, ensuring proper force upon the brake wheel.'
+        )
 
     def test_arduino_soft_limits():
 
@@ -382,7 +386,7 @@ def main():
         # test_pole_set_net_total_degrees()
         # test_plot_pole_rotary_encoder_state()
         # test_pole_rotary_encoder_wait_for_stationarity()
-        # test_pole_brake()
+        test_pole_brake()
         # test_arduino_soft_limits()
 
     except KeyboardInterrupt:
