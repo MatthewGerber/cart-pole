@@ -26,10 +26,14 @@ poetry install
 # To Do/Try
 * Add target tolerance to reinforce.
 * Rotary encoder losses.
-* Add time series database/dashboard.
-* Add serial read/write throughput.
 * Add I2C and serial devices to CLI args.
 * Pass phase-change mode and phase-changes per rotation to Arduino rotary encoder.
 * Resume latest checkpoint if file not specified.
 * Shouldn't need "--save-agent-path" in resume.
 * Check state-action tuple equality in reinforce first-visit check.
+
+# References
+
+## SPI
+* https://docs.arduino.cc/tutorials/generic/introduction-to-the-serial-peripheral-interface/
+* http://robotics.hobbizine.com/raspiduino.html
