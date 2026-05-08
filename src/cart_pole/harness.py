@@ -60,7 +60,7 @@ def main():
 
     cart_rotary_interface = RotaryEncoder.Arduino(
         phase_a_pin=2,
-        phase_b_pin=4,
+        phase_b_pin=12,
         phase_changes_per_rotation=2400,
         phase_change_mode=RotaryEncoder.PhaseChangeMode.TWO_SIGNAL_TWO_EDGE,
         angle_step_size=0.9,
@@ -77,7 +77,7 @@ def main():
 
     pole_rotary_interface = RotaryEncoder.Arduino(
         phase_a_pin=3,
-        phase_b_pin=5,
+        phase_b_pin=8,
         phase_changes_per_rotation=2400,
         phase_change_mode=RotaryEncoder.PhaseChangeMode.TWO_SIGNAL_TWO_EDGE,
         angle_step_size=0.9,
@@ -95,7 +95,7 @@ def main():
     motor_driver = DcMotorDriverIndirectArduino(
         identifier=2,
         serial=locking_serial,
-        arduino_direction_pin=12,
+        arduino_direction_pin=4,
         arduino_pwm_pin=9,
         next_set_speed_promise_ms=100,
         reverse=True
@@ -141,6 +141,20 @@ def main():
         min_degree=0.0,
         max_degree=180.0
     )
+
+    def test_cart_rotary_encoder_state():
+        while True:
+            time.sleep(1.0 / cart_rotary_interface.state_update_hz)
+            cart_rotary_encoder.update_state()
+            state: RotaryEncoder.State = cart_rotary_encoder.get_state()
+            print(
+                f'Num phase changes:  {state.num_phase_changes}\n'
+                f'Net total degrees:  {state.net_total_degrees}\n'
+                f'Degrees:  {state.degrees}\n'
+                f'Clockwise:  {state.clockwise}\n'
+                f'Velocity:  {state.angular_velocity} deg/s\n'
+                f'Acceleration:  {state.angular_acceleration} deg/s^2\n'
+            )
 
     def test_pole_rotary_encoder_state():
         while True:
@@ -382,11 +396,12 @@ def main():
         # test_motor_failsafe()
 
         # rotary encoder tests
+        # test_cart_rotary_encoder_state()
         # test_pole_rotary_encoder_state()
         # test_pole_set_net_total_degrees()
         # test_plot_pole_rotary_encoder_state()
         # test_pole_rotary_encoder_wait_for_stationarity()
-        test_pole_brake()
+        # test_pole_brake()
         # test_arduino_soft_limits()
 
     except KeyboardInterrupt:

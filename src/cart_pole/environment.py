@@ -891,6 +891,12 @@ class CartPole(ContinuousMdpEnvironment):
 
         self.__dict__ = state
 
+        self.cart_rotary_encoder_phase_a_pin = 2
+        self.cart_rotary_encoder_phase_b_pin = 12
+
+        self.pole_rotary_encoder_phase_a_pin = 3
+        self.pole_rotary_encoder_phase_b_pin = 8
+
         (
             self.state_lock,
             self.motor_driver,
@@ -1039,7 +1045,7 @@ class CartPole(ContinuousMdpEnvironment):
         motor_driver = DcMotorDriverIndirectArduino(
             identifier=2,
             serial=arduino_serial_connection,
-            arduino_direction_pin=12,
+            arduino_direction_pin=4,
             arduino_pwm_pin=9,
             next_set_speed_promise_ms=500,
             reverse=self.motor_negative_speed_is_right

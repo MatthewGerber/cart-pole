@@ -1,4 +1,8 @@
-#include <PinChangeInterrupt.h>
+// SerialUSB writes to the arduino IDE serial monitor. _UART1_ writes to the serial tx/rx gpio pins.
+// define a nicer variable to refer to serial tx/rx.
+#define SerialUART _UART1_
+
+bool DEBUG = false;
 
 const size_t FLOAT_BYTES_LEN = 4;
 const size_t LONG_BYTES_LEN = 4;
@@ -11,7 +15,13 @@ typedef union
 } floatbytes;
 
 void setup() {
-  Serial.begin(115200, SERIAL_8N1);
+
+  if (DEBUG) {
+    SerialUSB.begin(9600);
+  }
+
+  SerialUART.begin(115200, SERIAL_8N1);
+
 }
 
 long bytes_to_long(byte bytes[], size_t start_idx) {
@@ -44,15 +54,15 @@ void long_to_bytes(long value, byte bytes[]) {
 void write_long(long value) {
   byte bytes[LONG_BYTES_LEN];
   long_to_bytes(value, bytes);
-  Serial.write(bytes, LONG_BYTES_LEN);
+  SerialUART.write(bytes, LONG_BYTES_LEN);
 }
 
 void write_float(floatbytes f) {
-  Serial.write(f.bytes, FLOAT_BYTES_LEN);
+  SerialUART.write(f.bytes, FLOAT_BYTES_LEN);
 }
 
 void write_bool(bool value) {
-  Serial.write(value);
+  SerialUART.write(value);
 }
 
 void set_float_bytes(byte dest[], byte src[], size_t src_start_idx) {
@@ -317,10 +327,10 @@ void loop() {
   }
 
   // process a command sent over the serial connection
-  if (Serial.available()) {
+  if (SerialUART.available()) {
 
     byte command_bytes[CMD_BYTES_LEN];
-    Serial.readBytes(command_bytes, CMD_BYTES_LEN);
+    SerialUART.readBytes(command_bytes, CMD_BYTES_LEN);
     byte command = command_bytes[0];
     byte component_id = command_bytes[1];
 
@@ -329,7 +339,7 @@ void loop() {
       if (component_id == CART_ROTARY_ENCODER_ID) {
 
         byte args[CMD_INIT_ROTARY_ARGS_LEN];
-        Serial.readBytes(args, CMD_INIT_ROTARY_ARGS_LEN);
+        SerialUART.readBytes(args, CMD_INIT_ROTARY_ARGS_LEN);
 
         cart_rotary_white_pin = args[0];
         pinMode(cart_rotary_white_pin, INPUT_PULLUP);
@@ -356,8 +366,8 @@ void loop() {
         cart_rotary_num_phase_changes_volatile = cart_rotary_num_phase_changes = 0;
         cart_rotary_index_volatile = 0;
         cart_rotary_clockwise_volatile = cart_rotary_clockwise = true;
-        attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(cart_rotary_white_pin), cart_white_changed, CHANGE);
-        attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(cart_rotary_green_pin), cart_green_changed, CHANGE);
+        attachInterrupt(digitalPinToInterrupt(cart_rotary_white_pin), cart_white_changed, CHANGE);
+        attachInterrupt(digitalPinToInterrupt(cart_rotary_green_pin), cart_green_changed, CHANGE);
         cart_net_degrees.number = 0.0;
         cart_velocity_deg_per_sec.number = 0.0;
         cart_acceleration_deg_per_sec_sq.number = 0.0;
@@ -367,7 +377,7 @@ void loop() {
       else if (component_id == POLE_ROTARY_ENCODER_ID) {
 
         byte args[CMD_INIT_ROTARY_ARGS_LEN];
-        Serial.readBytes(args, CMD_INIT_ROTARY_ARGS_LEN);
+        SerialUART.readBytes(args, CMD_INIT_ROTARY_ARGS_LEN);
 
         pole_rotary_white_pin = args[0];
         pinMode(pole_rotary_white_pin, INPUT_PULLUP);
@@ -394,8 +404,8 @@ void loop() {
         pole_rotary_num_phase_changes_volatile = pole_rotary_num_phase_changes = 0;
         pole_rotary_index_volatile = 0;
         pole_rotary_clockwise_volatile = pole_rotary_clockwise = true;
-        attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(pole_rotary_white_pin), pole_white_changed, CHANGE);
-        attachPinChangeInterrupt(digitalPinToPinChangeInterrupt(pole_rotary_green_pin), pole_green_changed, CHANGE);
+        attachInterrupt(digitalPinToInterrupt(pole_rotary_white_pin), pole_white_changed, CHANGE);
+        attachInterrupt(digitalPinToInterrupt(pole_rotary_green_pin), pole_green_changed, CHANGE);
         pole_net_degrees.number = 0.0;
         pole_velocity_deg_per_sec.number = 0.0;
         pole_acceleration_deg_per_sec_sq.number = 0.0;
@@ -408,7 +418,7 @@ void loop() {
         motor_next_set_speed_promise_time_ms = 0;
 
         byte args[CMD_INIT_MOTOR_ARGS_LEN];
-        Serial.readBytes(args, CMD_INIT_MOTOR_ARGS_LEN);
+        SerialUART.readBytes(args, CMD_INIT_MOTOR_ARGS_LEN);
 
         motor_dir_pin = args[0];
         pinMode(motor_dir_pin, OUTPUT);
@@ -435,8 +445,8 @@ void loop() {
         response[16] = cart_rotary_clockwise;
         long_to_bytes(cart_rotary_state_time_ms, four);
         memcpy(response + 17, four, 4);
-        Serial.write(response, 21);
-        Serial.flush();
+        SerialUART.write(response, 21);
+        SerialUART.flush();
       }
       else if (component_id == POLE_ROTARY_ENCODER_ID) {
         byte response[21];
@@ -449,14 +459,14 @@ void loop() {
         response[16] = pole_rotary_clockwise;
         long_to_bytes(pole_rotary_state_time_ms, four);
         memcpy(response + 17, four, 4);
-        Serial.write(response, 21);
-        Serial.flush();
+        SerialUART.write(response, 21);
+        SerialUART.flush();
       }
     }
     else if (command == CMD_SET_ROTARY_NET_TOTAL_DEGREES) {
 
       byte args[FLOAT_BYTES_LEN];
-      Serial.readBytes(args, FLOAT_BYTES_LEN);
+      SerialUART.readBytes(args, FLOAT_BYTES_LEN);
 
       floatbytes net_total_degrees;
       set_float_bytes(net_total_degrees.bytes, args, 0);
@@ -481,13 +491,13 @@ void loop() {
     }
     else if (command == CMD_STOP_ROTARY) {
       if (component_id == CART_ROTARY_ENCODER_ID) {
-        detachPinChangeInterrupt(digitalPinToPinChangeInterrupt(cart_rotary_white_pin));
-        detachPinChangeInterrupt(digitalPinToPinChangeInterrupt(cart_rotary_green_pin));
+        detachInterrupt(digitalPinToInterrupt(cart_rotary_white_pin));
+        detachInterrupt(digitalPinToInterrupt(cart_rotary_green_pin));
         cart_rotary_is_inited = false;
       }
       else if (component_id == POLE_ROTARY_ENCODER_ID) {
-        detachPinChangeInterrupt(digitalPinToPinChangeInterrupt(pole_rotary_white_pin));
-        detachPinChangeInterrupt(digitalPinToPinChangeInterrupt(pole_rotary_green_pin));
+        detachInterrupt(digitalPinToInterrupt(pole_rotary_white_pin));
+        detachInterrupt(digitalPinToInterrupt(pole_rotary_green_pin));
         pole_rotary_is_inited = false;
       }
     }
@@ -496,7 +506,7 @@ void loop() {
       if (component_id == MOTOR_ID) {
                 
         byte args[CMD_SET_MOTOR_SPEED_ARGS_LEN];
-        Serial.readBytes(args, CMD_SET_MOTOR_SPEED_ARGS_LEN);
+        SerialUART.readBytes(args, CMD_SET_MOTOR_SPEED_ARGS_LEN);
 
         // only set speed if cart doesn't violate soft limits
         if (!cart_soft_limits_enabled || !cart_violates_soft_limits) {
@@ -542,7 +552,7 @@ void loop() {
     else if (command == CMD_ENABLE_CART_SOFT_LIMITS) {
 
       byte args[CMD_ENABLE_CART_SOFT_LIMITS_ARGS_LEN];
-      Serial.readBytes(args, CMD_ENABLE_CART_SOFT_LIMITS_ARGS_LEN);
+      SerialUART.readBytes(args, CMD_ENABLE_CART_SOFT_LIMITS_ARGS_LEN);
 
       floatbytes left_soft_limit_degrees;
       set_float_bytes(left_soft_limit_degrees.bytes, args, 0);
