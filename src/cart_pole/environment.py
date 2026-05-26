@@ -2231,7 +2231,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         # penalize end of episode
         if state.terminal:
-            reward = -1.0
+            reward = -5.0
 
         elif state.episode_phase == EpisodePhase.PROGRESSIVE_UPRIGHT or state.episode_phase == EpisodePhase.BALANCE:
 
