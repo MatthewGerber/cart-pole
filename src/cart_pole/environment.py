@@ -232,7 +232,9 @@ class CartPoleState(MdpState):
             agent: MdpAgent,
             terminal: bool,
             truncated: bool,
-            episode_phase: EpisodePhase
+            episode_phase: EpisodePhase,
+            previous_zero_to_one_pole_peak: Optional[float],
+            previous_state: Optional['CartPoleState']
     ):
         """
         Initialize the state.
@@ -254,6 +256,9 @@ class CartPoleState(MdpState):
         natural dynamics of the environment. For example, imposing an artificial time limit on an episode might cause
         the episode to end without the agent in a terminal state.
         :param episode_phase: Episode phase.
+        :param previous_zero_to_one_pole_peak: Previous zero-to-one pole peak angle at any point in the episode, or None
+        if the pole has not previously peaked.
+        :param previous_state: Previous state, or None for the first state.
         """
 
         self.cart_mm_from_center = cart_mm_from_center
@@ -264,6 +269,7 @@ class CartPoleState(MdpState):
         self.pole_angular_acceleration_deg_per_sec_squared = pole_angular_acceleration_deg_per_sec_squared
         self.step = step
         self.episode_phase = episode_phase
+        self.previous_zero_to_one_pole_peak = previous_zero_to_one_pole_peak
 
         self.observation = np.array([
             self.cart_mm_from_center,
@@ -301,6 +307,17 @@ class CartPoleState(MdpState):
         self.pole_is_falling = self.zero_to_one_pole_angle > self.zero_to_one_pole_angle_from_degrees(
             self.pole_angle_deg_from_upright + (self.pole_angular_velocity_deg_per_sec * 0.00001)
         )
+
+        # determine whether the pole is at a peak during the swing-up phase, indicated by change in angular direction.
+        self.at_swing_up_peak = (
+            self.episode_phase == EpisodePhase.SWING_UP and
+            previous_state is not None and
+            np.sign(self.pole_angular_velocity_deg_per_sec) != np.sign(previous_state.pole_angular_velocity_deg_per_sec)
+        )
+
+        # set the previous peak value to be the new one
+        if self.at_swing_up_peak:
+            self.previous_zero_to_one_pole_peak = self.zero_to_one_pole_angle
 
         # cart distance from center in [0.0, 1.0] where 0.0 is either side's soft limit, and 1.0 is centered.
         self.zero_to_one_cart_distance_from_center = 1.0 - min(
@@ -778,7 +795,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.truncation_gamma: Optional[float] = None  # unused. unclear if this is effective.
         self.progressive_upright_pole_angle = 175.0
         self.achieved_progressive_upright = False
-        self.balance_pole_angle = 15.0
+        self.balance_pole_angle = 20.0
         self.lost_balance_timestamp: Optional[float] = None
         self.lost_balance_timer_seconds = 0.0
         self.cart_rotary_encoder_angle_step_size = 0.9
@@ -2229,23 +2246,16 @@ class CartPole(ContinuousMdpEnvironment):
         :return: Reward.
         """
 
-        # penalize end of episode
-        if state.terminal:
-            reward = -5.0
+        reward = 0.0
 
-        elif state.episode_phase == EpisodePhase.PROGRESSIVE_UPRIGHT or state.episode_phase == EpisodePhase.BALANCE:
-
-            # reward according to pole angle if we're balancing or above the progressive threshold
-            reward = state.zero_to_one_pole_angle
-
-            # add a +2 bonus for transitioning into the current phase. this offsets the -1.0 for losing the current
-            # phase, encouraging whatever action got us here.
-            if previous_state.episode_phase == EpisodePhase.SWING_UP:
-                reward += 2.0
-
-        # reward is zero everywhere else
-        else:
-            reward = 0.0
+        if state.episode_phase == EpisodePhase.SWING_UP:
+            if state.at_swing_up_peak:
+                reward = state.zero_to_one_pole_angle - previous_state.previous_zero_to_one_pole_peak
+        elif state.episode_phase == EpisodePhase.BALANCE:
+            if previous_state.pole_is_falling and not state.pole_is_falling:
+                reward = 1.0
+            elif not previous_state.pole_is_falling and state.pole_is_falling:
+                reward = -1.0
 
         return reward
 
@@ -2444,7 +2454,9 @@ class CartPole(ContinuousMdpEnvironment):
             agent=self.agent,
             terminal=terminal,
             truncated=truncated,
-            episode_phase=episode_phase
+            episode_phase=episode_phase,
+            previous_zero_to_one_pole_peak=previous_state.previous_zero_to_one_pole_peak,
+            previous_state=previous_state
         )
 
     def close(

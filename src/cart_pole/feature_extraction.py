@@ -12,8 +12,7 @@ from rlai.state_value.function_approximation.models.feature_extraction import (
     StateFeatureExtractor,
     OneHotStateIndicatorFeatureInteracter,
     StateLambdaIndicator,
-    StateIndicator,
-    StateDimensionSegment
+    StateIndicator
 )
 from rlai.utils import parse_arguments
 
@@ -84,13 +83,10 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
 
         indicators = self.get_state_indicators()
 
-        # it's important to scale features independently within each state segment, since we'll make many observations
-        # in certain segments early in the learning before ever getting to the other segments (e.g., for balancing). we
-        # don't want the early zero-valued features for unobserved segments (due to one-hot segment encoding) to pollute
-        # the scalers used for segments observed later in learning.
+        # use separate interacters in case we want to use feature scaling in the future. we don't currently scale, but
+        # if we did then it would be important to avoid scaling the intercept terms. hence a separate interacter would
+        # be needed for the intercept terms.
         self.state_category_feature_interacter = OneHotStateIndicatorFeatureInteracter(indicators, False)
-
-        # do not scale intercepts when encoding them
         self.state_category_intercept_interacter = OneHotStateIndicatorFeatureInteracter(indicators, False)
 
     def __getstate__(
@@ -228,18 +224,6 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         """
 
         indicators = [
-
-            # segment policy per pole position on either side of vertical. we haven't yet found a feature that
-            # quantifies the correct policy response for pole angle. the feature would need to have similar values near
-            # either side of vertical downward and similar values near either side of vertical upward, with opposing
-            # values depending on whether the pole is on the left half or right half. this segmentation approach splits
-            # the policy on left/right half, such that the pole angle feature can reflect the appropriate policy
-            # response.
-            StateDimensionSegment(
-                2,
-                None,
-                0.0
-            ),
 
             # segment policy for when the pole is balancing. it is difficult for the swing-up policy to react
             # appropriately in this position, so we use a separate policy for this phase.
