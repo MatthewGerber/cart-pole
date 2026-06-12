@@ -800,10 +800,10 @@ class CartPole(ContinuousMdpEnvironment):
         self.lost_balance_timer_seconds = 0.0
         self.cart_rotary_encoder_angle_step_size = 0.9
         self.cart_rotary_encoder_angular_velocity_step_size = 0.5
-        self.cart_rotary_encoder_angular_acceleration_step_size = 0.1
+        self.cart_rotary_encoder_angular_acceleration_step_size = 0.2
         self.pole_rotary_encoder_angle_step_size = 0.9
         self.pole_rotary_encoder_angular_velocity_step_size = 0.5
-        self.pole_rotary_encoder_angular_acceleration_step_size = 0.1
+        self.pole_rotary_encoder_angular_acceleration_step_size = 0.2
         self.fraction_time_balancing = IncrementalSampleAverager()
         self.beta_shape_param_iter_coef = {}
         self.policy_get_item_calls = []
@@ -2248,14 +2248,32 @@ class CartPole(ContinuousMdpEnvironment):
 
         reward = 0.0
 
+        # if we're in swing up and the pole has peaked, then reward peak increases (gaining momentum) and punish peak
+        # decreases (losing momentum).
         if state.episode_phase == EpisodePhase.SWING_UP:
             if state.at_swing_up_peak:
-                reward = state.zero_to_one_pole_angle - previous_state.previous_zero_to_one_pole_peak
+                reward = (
+                    state.previous_zero_to_one_pole_peak -
+                    (
+                        0.0 if previous_state.previous_zero_to_one_pole_peak is None else
+                        previous_state.previous_zero_to_one_pole_peak
+                    )
+                )
+
+        # if we're in balance, then reward catches and punish falls.
         elif state.episode_phase == EpisodePhase.BALANCE:
             if previous_state.pole_is_falling and not state.pole_is_falling:
                 reward = 1.0
             elif not previous_state.pole_is_falling and state.pole_is_falling:
                 reward = -1.0
+
+        # scale rewards down by distance from center (higher reward in center)
+        if reward > 0.0:
+            reward *= state.zero_to_one_cart_distance_from_center
+
+        # scale punishments down by distance from side (lower punishment in center)
+        elif reward < 0.0:
+            reward *= (1.0 - state.zero_to_one_cart_distance_from_center)
 
         return reward
 
@@ -2455,7 +2473,9 @@ class CartPole(ContinuousMdpEnvironment):
             terminal=terminal,
             truncated=truncated,
             episode_phase=episode_phase,
-            previous_zero_to_one_pole_peak=previous_state.previous_zero_to_one_pole_peak,
+            previous_zero_to_one_pole_peak=(
+                None if previous_state is None else previous_state.previous_zero_to_one_pole_peak
+            ),
             previous_state=previous_state
         )
 

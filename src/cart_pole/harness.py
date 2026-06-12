@@ -65,7 +65,7 @@ def main():
         phase_change_mode=RotaryEncoder.PhaseChangeMode.TWO_SIGNAL_TWO_EDGE,
         angle_step_size=0.9,
         angular_velocity_step_size=0.5,
-        angular_acceleration_step_size=0.1,
+        angular_acceleration_step_size=0.2,
         serial=locking_serial,
         identifier=0,
         state_update_hz=round(1.5 * 45.0)
@@ -82,7 +82,7 @@ def main():
         phase_change_mode=RotaryEncoder.PhaseChangeMode.TWO_SIGNAL_TWO_EDGE,
         angle_step_size=0.9,
         angular_velocity_step_size=0.5,
-        angular_acceleration_step_size=0.1,
+        angular_acceleration_step_size=0.2,
         serial=locking_serial,
         identifier=1,
         state_update_hz=round(1.5 * 45.0)
