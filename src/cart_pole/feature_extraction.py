@@ -169,14 +169,19 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
             ]
 
         # get the raw state matrix, with one row per observation. this is used for feature-space segmentation. scale
-        # the cart pos/vel (pos ranges [-400,400]) to be similar in magnitude to pole radians (-pi,+pi).
+        # the cart pos/vel and pole angle/vel to be in [-1.0, 1.0] (approximately).
         state_matrix = np.array([
             cast(CartPoleState, state).observation[[
                 CartPoleState.Dimension.CartPosition,
                 CartPoleState.Dimension.CartVelocity,
                 CartPoleState.Dimension.PoleAngle,
                 CartPoleState.Dimension.PoleVelocity,
-            ]] * [0.01, 0.01, math.pi / 180.0, math.pi / 180.0]
+            ]] / [
+                self.environment.midline_mm,  # position ranges [-midline_mm, midline_mm]
+                self.environment.max_cart_speed_mm_per_second,  # cart speed ranges [-max speed, max speed]
+                180.0,  # pole angle ranges [-180, 180]
+                self.environment.max_pole_angular_speed_deg_per_second  # pole angle velocity is unbounded, but we've estimated it.
+            ]
             for state in states
         ])
 

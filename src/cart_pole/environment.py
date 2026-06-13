@@ -810,8 +810,8 @@ class CartPole(ContinuousMdpEnvironment):
         self.min_motor_speed_full_reverse_seconds = 0.25
         self.max_motor_speed_change_per_second = 200.0 / self.min_motor_speed_full_reverse_seconds
         self.max_motor_speed_change_per_timestep = self.max_motor_speed_change_per_second / self.timesteps_per_second
-        self.max_pole_angular_speed_deg_per_second = 1080.0
-        self.max_pole_angular_acceleration_deg_per_second_squared = 8000.0
+        self.max_pole_angular_speed_deg_per_second = 1080.0  # 3 revolutions/sec.
+        self.max_pole_angular_acceleration_deg_per_second_squared = 8000.0  # wild guess
 
         # configure the continuous action with a single dimension for acceleration, range across the maximum.
         self.actions = [
