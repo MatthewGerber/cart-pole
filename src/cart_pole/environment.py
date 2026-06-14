@@ -2248,9 +2248,13 @@ class CartPole(ContinuousMdpEnvironment):
 
         reward = 0.0
 
+        # penalize end of episode
+        if state.terminal:
+            reward = -1.0
+
         # if we're in swing up and the pole has peaked, then reward peak increases (gaining momentum) and punish peak
         # decreases (losing momentum).
-        if state.episode_phase == EpisodePhase.SWING_UP:
+        elif state.episode_phase == EpisodePhase.SWING_UP:
             if state.at_swing_up_peak:
                 reward = (
                     state.previous_zero_to_one_pole_peak -
