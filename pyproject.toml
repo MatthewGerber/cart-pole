@@ -17,11 +17,12 @@ repository = 'https://github.com/MatthewGerber/cart-pole'
 
 [tool.poetry.dependencies]
 python = '^3.11'
-matplotlib = '~=3.8'
-pandas = '~=2.1'
+matplotlib = "^3.11.0"
+pandas = "^3.0.3"
 raspberry-py = { path = 'submodules/raspberry-py', develop = true }
 rlai = { path = 'submodules/rlai', develop = true}
 pyserial = "^3.5"
+box2d = {git = "https://github.com/pybox2d/pybox2d.git", rev = "2.3.10"}
 
 [tool.poetry.group.dev]
 optional = true
