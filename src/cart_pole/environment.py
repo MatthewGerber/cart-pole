@@ -35,6 +35,9 @@ from serial import Serial
 from smbus2 import SMBus
 
 
+logger = logging.getLogger(__name__)
+
+
 class ArduinoCommand(IntEnum):
     """
     Arduino commands.
@@ -1128,13 +1131,13 @@ class CartPole(ContinuousMdpEnvironment):
         loaded = False
 
         if os.path.exists(self.calibration_path):
-            logging.info(f'Loading calibration values stored at {self.calibration_path}')
+            logger.info(f'Loading calibration values stored at {self.calibration_path}')
             try:
                 with open(self.calibration_path, 'rb') as f:
                     self.__dict__.update(pickle.load(f))
                 loaded = True
             except ValueError as e:
-                logging.error(f'Error loading calibration values {e}')
+                logger.error(f'Error loading calibration values {e}')
 
         return loaded
 
@@ -1194,16 +1197,16 @@ class CartPole(ContinuousMdpEnvironment):
         Calibrate the cart-pole apparatus, leaving the cart centered.
         """
 
-        logging.info('Calibrating.')
+        logger.info('Calibrating.')
 
         # create some space to do deadzone identification
-        logging.info('Moving cart to right limit to create space for deadzone identification.')
+        logger.info('Moving cart to right limit to create space for deadzone identification.')
         self.set_motor_speed(30)
         self.right_limit_pressed.wait()
         self.set_motor_speed(-30)
         time.sleep(3.0)
         self.set_motor_speed(0)
-        logging.info('Deadzone space created.')
+        logger.info('Deadzone space created.')
 
         # identify the minimum motor speeds that will get the cart to move left and right. there's a deadzone in the
         # middle that depends on the logic of the motor circuitry, mass and friction of the assembly, etc. this
@@ -1231,7 +1234,7 @@ class CartPole(ContinuousMdpEnvironment):
         self.midline_degrees = (self.left_limit_degrees + self.right_limit_degrees) / 2.0
 
         # identify maximum cart speed
-        logging.info('Identifying maximum cart speed.')
+        logger.info('Identifying maximum cart speed.')
         self.center_cart_from_position(
             cart_position,
             -100,
@@ -1262,15 +1265,15 @@ class CartPole(ContinuousMdpEnvironment):
             'pole_degrees_at_bottom': self.pole_degrees_at_bottom
         }
 
-        logging.info(f'Calibration:  {calibration}')
+        logger.info(f'Calibration:  {calibration}')
 
         if self.calibration_path != '':
-            logging.info(f'Saving calibration at {self.calibration_path}')
+            logger.info(f'Saving calibration at {self.calibration_path}')
             try:
                 with open(self.calibration_path, 'wb') as f:
                     pickle.dump(calibration, f)  # type: ignore
             except ValueError as e:
-                logging.error(f'Error saving calibration:  {e}')
+                logger.error(f'Error saving calibration:  {e}')
 
     def identify_motor_speed_deadzone_limit(
             self,
@@ -1328,7 +1331,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         deadzone_speed = speed - increment
 
-        logging.info(f'Deadzone speed in the {direction.name} direction:  {deadzone_speed}.')
+        logger.info(f'Deadzone speed in the {direction.name} direction:  {deadzone_speed}.')
 
         return deadzone_speed
 
@@ -1340,11 +1343,11 @@ class CartPole(ContinuousMdpEnvironment):
         """
 
         if not self.left_limit_pressed.is_set():
-            logging.info('Moving cart to the left and waiting for limit switch.')
+            logger.info('Moving cart to the left and waiting for limit switch.')
             self.set_motor_speed(2 * self.motor_slowest_speed_left)
             self.left_limit_pressed.wait()
 
-        logging.info('Moving cart away from left limit switch.')
+        logger.info('Moving cart away from left limit switch.')
         self.set_motor_speed(self.motor_slowest_speed_right)
         self.left_limit_released.wait()
         self.stop_cart()
@@ -1374,11 +1377,11 @@ class CartPole(ContinuousMdpEnvironment):
         """
 
         if not self.right_limit_pressed.is_set():
-            logging.info('Moving cart to the right and waiting for limit switch.')
+            logger.info('Moving cart to the right and waiting for limit switch.')
             self.set_motor_speed(2 * self.motor_slowest_speed_right)
             self.right_limit_pressed.wait()
 
-        logging.info('Moving cart away from right limit switch.')
+        logger.info('Moving cart away from right limit switch.')
         self.set_motor_speed(self.motor_slowest_speed_left)
         self.right_limit_released.wait()
         self.stop_cart()
@@ -1418,7 +1421,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         if is_pressed:
 
-            logging.info(f'{descriptor} limit pressed.')
+            logger.info(f'{descriptor} limit pressed.')
 
             with self.state_lock:
 
@@ -1439,7 +1442,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         else:
 
-            logging.info(f'{descriptor} limit released.')
+            logger.info(f'{descriptor} limit released.')
 
             # another thread may attempt to wait for the switch to be pressed immediately upon the released event being
             # set. prevent a race condition by first clearing the pressed event before setting the released event.
@@ -1478,14 +1481,14 @@ class CartPole(ContinuousMdpEnvironment):
         )
 
         if cart_position == CartPosition.CENTERED:
-            logging.info('Cart already centered.')
+            logger.info('Cart already centered.')
             return
 
         # restore the limit state by physically positioning the cart at the limit and restoring the state to what it
         # was when we calibrated. this corrects any loss of calibration that occurred while moving the cart. do this in
         # whatever order is the most efficient given the cart's current position.
         if restore_cart_rotary_state_at_limit:
-            logging.info('Restoring cart rotary state at limit state before centering.')
+            logger.info('Restoring cart rotary state at limit state before centering.')
             if cart_position == CartPosition.LEFT_OF_CENTER:
                 self.move_cart_to_left_limit()
                 self.cart_rotary_encoder.set_net_total_degrees(self.left_limit_degrees)
@@ -1510,29 +1513,29 @@ class CartPole(ContinuousMdpEnvironment):
                     stop_at_center=True
                 )
             else:
-                logging.info(f'Cart centered at speed:  {centering_speed_factors}')
+                logger.info(f'Cart centered at speed:  {centering_speed_factors}')
 
         if restore_cart_rotary_state_at_center:
-            logging.info(
+            logger.info(
                 f'Pre-restoration cart degrees at center={self.cart_rotary_encoder.get_net_total_degrees():.1f}; '
                 f'nominal degrees at center={self.midline_degrees:.1f}.'
             )
             self.cart_rotary_encoder.set_net_total_degrees(self.midline_degrees)
             self.cart_rotary_encoder.update_state()
-            logging.info(
+            logger.info(
                 f'Post-restoration cart degrees at center={self.cart_rotary_encoder.get_net_total_degrees():.1f}.'
             )
 
-        logging.info('Waiting for stationary pole.')
+        logger.info('Waiting for stationary pole.')
         self.stop_pole()
         if restore_pole_rotary_state_at_center:
-            logging.info(
+            logger.info(
                 f'Pre-restoration pole degrees at bottom={self.pole_rotary_encoder.get_net_total_degrees():.1f}; '
                 f'nominal degrees at bottom={self.pole_degrees_at_bottom:.1f}.'
             )
             self.pole_rotary_encoder.set_net_total_degrees(self.pole_degrees_at_bottom)
             self.pole_rotary_encoder.update_state()
-            logging.info(
+            logger.info(
                 f'Post-restoration pole degrees at bottom={self.pole_rotary_encoder.get_net_total_degrees():.1f}.'
             )
 
@@ -1560,14 +1563,14 @@ class CartPole(ContinuousMdpEnvironment):
         assert self.cart_mm_per_degree is not None, 'Must calibrate before centering.'
 
         if position == CartPosition.CENTERED:
-            logging.info('Cart already centered.')
+            logger.info('Cart already centered.')
             return position, False
         elif position == CartPosition.LEFT_OF_CENTER and speed < 0:
             raise ValueError(f'Centering speed must be positive when left of center; got:  {speed}')
         elif position == CartPosition.RIGHT_OF_CENTER and speed > 0:
             raise ValueError(f'Centering speed must be negative when right of center; got:  {speed}')
         else:
-            logging.info(f'Centering cart from {position.name} at speed {speed}.')
+            logger.info(f'Centering cart from {position.name} at speed {speed}.')
 
         self.apply_pole_brake()
 
@@ -1585,7 +1588,7 @@ class CartPole(ContinuousMdpEnvironment):
             limit_pressed=lambda: self.left_limit_pressed.is_set() or self.right_limit_pressed.is_set()
         )
         if hit_limit:
-            logging.info('Hit limit switch while centering. Failure.')
+            logger.info('Hit limit switch while centering. Failure.')
 
         if stop_at_center:
             self.stop_cart()
@@ -1617,7 +1620,7 @@ class CartPole(ContinuousMdpEnvironment):
         Stop the cart and do not return until it is stationary.
         """
 
-        logging.info('Stopping cart.')
+        logger.info('Stopping cart.')
 
         # we've observed cases in which setting the motor speed fails, or it does not fail but the subsequent wait
         # fails due to interprocess communication failure. in either case, the present process faults without stopping
@@ -1637,7 +1640,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         except Exception as e:
 
-            logging.critical(f'Failed to stop cart. Leaving the motor PWM disabled. Exception {e}')
+            logger.critical(f'Failed to stop cart. Leaving the motor PWM disabled. Exception {e}')
 
             # reraise the error. this will leave the pwm disabled forever, which is precisely what we want since we've
             # experienced a critical failure.
@@ -1645,7 +1648,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         else:
 
-            logging.info('Cart stopped.')
+            logger.info('Cart stopped.')
 
             # enable the failsafe pwm now that we've set the motor speed to zero and the cart has stopped
             self.enable_motor_pwm()
@@ -1677,7 +1680,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         self.pole_rotary_encoder.wait_for_stationarity()
 
-        logging.info(f'Pole is stationary at degrees:  {self.pole_rotary_encoder.get_net_total_degrees():.1f}')
+        logger.info(f'Pole is stationary at degrees:  {self.pole_rotary_encoder.get_net_total_degrees():.1f}')
 
     def release_pole_brake(
             self
@@ -1705,7 +1708,7 @@ class CartPole(ContinuousMdpEnvironment):
         """
 
         gpio.output(self.failsafe_pwm_off_pin, gpio.HIGH)
-        logging.info('Motor PWM disabled.')
+        logger.info('Motor PWM disabled.')
 
     def enable_motor_pwm(
             self
@@ -1715,7 +1718,7 @@ class CartPole(ContinuousMdpEnvironment):
         """
 
         gpio.output(self.failsafe_pwm_off_pin, gpio.LOW)
-        logging.info('Motor PWM enabled.')
+        logger.info('Motor PWM enabled.')
 
     def set_motor_speed(
             self,
@@ -1731,9 +1734,9 @@ class CartPole(ContinuousMdpEnvironment):
         """
 
         if speed < 0 and self.left_limit_switch.is_pressed():
-            logging.info('Left limit is pressed. Cannot set motor speed negative.')
+            logger.info('Left limit is pressed. Cannot set motor speed negative.')
         elif speed > 0 and self.right_limit_switch.is_pressed():
-            logging.info('Right limit is pressed. Cannot set motor speed positive.')
+            logger.info('Right limit is pressed. Cannot set motor speed positive.')
         else:
 
             if acceleration_interval is None:
@@ -1763,7 +1766,7 @@ class CartPole(ContinuousMdpEnvironment):
                         self.motor.set_speed(intermediate_speed)
                         break
                     except OSError as e:
-                        logging.error(f'Error while setting speed:  {e}')
+                        logger.error(f'Error while setting speed:  {e}')
                         time.sleep(0.1)
 
                     attempt += 1
@@ -1781,7 +1784,7 @@ class CartPole(ContinuousMdpEnvironment):
         Enable the Arduino's cart soft limits.
         """
 
-        logging.info('Enabling Arduino cart soft limits.')
+        logger.info('Enabling Arduino cart soft limits.')
 
         # allow arduino to run wider than python, as the former is faster.
         standoff_degrees = (self.soft_limit_standoff_mm - 10.0) / self.cart_mm_per_degree
@@ -1796,7 +1799,7 @@ class CartPole(ContinuousMdpEnvironment):
             False
         )
 
-        logging.info('Enabled.')
+        logger.info('Enabled.')
 
     def disable_arduino_cart_soft_limits(
             self
@@ -1805,7 +1808,7 @@ class CartPole(ContinuousMdpEnvironment):
         Disable the Arduino's cart soft limits.
         """
 
-        logging.info('Disabling Arduino cart soft limits.')
+        logger.info('Disabling Arduino cart soft limits.')
 
         self.arduino_serial_connection.write_then_read(
             ArduinoCommand.DISABLE_CART_SOFT_LIMITS.to_bytes(1) +
@@ -1815,7 +1818,7 @@ class CartPole(ContinuousMdpEnvironment):
             False
         )
 
-        logging.info('Disabled.')
+        logger.info('Disabled.')
 
     def turn_off_leds(
             self
@@ -1870,7 +1873,7 @@ class CartPole(ContinuousMdpEnvironment):
         :return: Initial state.
         """
 
-        logging.info(f'Reset {self.num_resets + 1}.')
+        logger.info(f'Reset {self.num_resets + 1}.')
 
         super().reset_for_new_run(self.agent)
         self.agent = agent
@@ -1916,13 +1919,13 @@ class CartPole(ContinuousMdpEnvironment):
         # convergence.
         if self.agent.gamma != self.original_agent_gamma:
             self.agent.gamma = self.original_agent_gamma
-            logging.info(f'Restored agent.gamma to {self.agent.gamma}.')
+            logger.info(f'Restored agent.gamma to {self.agent.gamma}.')
 
         # if the previous episode achieved progressive upright, then reduce the angle down to the balance angle.
         if self.achieved_progressive_upright:
             self.achieved_progressive_upright = False
             if self.progressive_upright_pole_angle == self.balance_pole_angle:
-                logging.info(
+                logger.info(
                     f'Progressive upright pole angle is already {self.progressive_upright_pole_angle}. Not reducing.'
                 )
             else:
@@ -1930,7 +1933,7 @@ class CartPole(ContinuousMdpEnvironment):
                     self.balance_pole_angle,
                     self.progressive_upright_pole_angle - 1.0
                 )
-                logging.info(
+                logger.info(
                     f'Reduced progressive upright pole angle to {self.progressive_upright_pole_angle} degrees.'
                 )
 
@@ -1953,7 +1956,7 @@ class CartPole(ContinuousMdpEnvironment):
         # track policy coefficients over episodes
         if self.policy.action_theta_a is not None and self.policy.action_theta_b is not None:
 
-            logging.info(f'Capturing theta-a and theta-b values for iteration:  {self.num_resets}')
+            logger.info(f'Capturing theta-a and theta-b values for iteration:  {self.num_resets}')
 
             # theta-a
             assert self.policy.action_theta_a.shape[0] == 1
@@ -1977,7 +1980,7 @@ class CartPole(ContinuousMdpEnvironment):
 
             if self.num_resets % 10 == 0:
 
-                logging.info('Plotting policy coefficients for beta-a.')
+                logger.info('Plotting policy coefficients for beta-a.')
                 n_row_col = math.floor(math.sqrt(self.policy.action_theta_a.shape[1]) + 1)
                 fig, axes = plt.subplots(nrows=n_row_col, ncols=n_row_col, figsize=(30, 30))
                 for dim in range(self.policy.action_theta_a.shape[1]):
@@ -1993,9 +1996,9 @@ class CartPole(ContinuousMdpEnvironment):
                 pdf.savefig()
                 plt.close()
                 pdf.close()
-                logging.info('Done.')
+                logger.info('Done.')
 
-                logging.info('Plotting policy coefficients for beta-b.')
+                logger.info('Plotting policy coefficients for beta-b.')
                 n_row_col = math.floor(math.sqrt(self.policy.action_theta_b.shape[1]) + 1)
                 fig, axes = plt.subplots(nrows=n_row_col, ncols=n_row_col, figsize=(30, 30))
                 for dim in range(self.policy.action_theta_b.shape[1]):
@@ -2011,7 +2014,7 @@ class CartPole(ContinuousMdpEnvironment):
                 pdf.savefig()
                 plt.close()
                 pdf.close()
-                logging.info('Done.')
+                logger.info('Done.')
 
         # set the hook to receive the get-item calls
         if self.policy.get_item_hook is None:
@@ -2020,7 +2023,7 @@ class CartPole(ContinuousMdpEnvironment):
         # dump get-item calls to csv for analysis
         if len(self.policy_get_item_calls) > 0:
             get_items_path = os.path.join(self.policy_get_item_calls_dir, f'{self.num_resets}-policy-get-items.csv')
-            logging.info(f'Writing policy get-item file:  {get_items_path}')
+            logger.info(f'Writing policy get-item file:  {get_items_path}')
             pd.DataFrame.from_records([
                 {
                     'episode': self.num_resets,
@@ -2037,11 +2040,11 @@ class CartPole(ContinuousMdpEnvironment):
                 ) in enumerate(self.policy_get_item_calls)
             ]).to_csv(get_items_path)
             self.policy_get_item_calls.clear()
-            logging.info('Done.')
+            logger.info('Done.')
 
-        logging.info('Starting motor.')
+        logger.info('Starting motor.')
         self.motor.start()
-        logging.info('Done.')
+        logger.info('Done.')
 
         # the arduino needs to ignore its soft limits while we calibrate and center
         self.disable_arduino_cart_soft_limits()
@@ -2069,7 +2072,7 @@ class CartPole(ContinuousMdpEnvironment):
         # enable soft limits in the arduino, as we measure them more quickly/accurately there
         self.enable_arduino_cart_soft_limits()
 
-        logging.info(f'State after reset:  {self.state}')
+        logger.info(f'State after reset:  {self.state}')
 
         return self.state
 
@@ -2145,7 +2148,7 @@ class CartPole(ContinuousMdpEnvironment):
 
             if new_truncation:
 
-                logging.info('Truncated.')
+                logger.info('Truncated.')
                 self.time_step_axv_lines[t] = {
                     'color': 'yellow',
                     'label': 'Truncated',
@@ -2156,7 +2159,7 @@ class CartPole(ContinuousMdpEnvironment):
                 # system. allow alternative gamma to obtain faster convergence to zero.
                 if self.truncation_gamma is not None and self.truncation_gamma != self.agent.gamma:
                     self.agent.gamma = self.truncation_gamma
-                    logging.info(f'Set agent.gamma to {self.agent.gamma} to obtain faster convergence to zero.')
+                    logger.info(f'Set agent.gamma to {self.agent.gamma} to obtain faster convergence to zero.')
 
             # perform nominal environment advancement if we haven't terminated. we continue to do this after truncation,
             # since we're waiting for the learning procedure to exit the episode.
@@ -2174,17 +2177,25 @@ class CartPole(ContinuousMdpEnvironment):
                 elif requested_next_speed < self.motor_deadzone_speed_right <= curr_speed:
                     requested_next_speed = requested_next_speed - self.motor_deadzone_speed_width
 
-                self.set_motor_speed(round(requested_next_speed))
+                requested_next_speed_int = round(requested_next_speed)
+                self.set_motor_speed(requested_next_speed_int)
+
+                # adjust the action value (acceleration) to reflect what was actually performed, accounting for rounding
+                # and speed limits imposed by the motor driver. this ensures that the action and reward reflect actual
+                # system behavior.
+                actual_next_speed = float(self.motor.get_speed())
+                acceleration_adjustment = actual_next_speed - requested_next_speed
+                a.value[0] += acceleration_adjustment
 
                 self.plot_title_label_data_kwargs['Motor']['Policy Acc'][0][t] = acceleration
                 self.plot_title_label_data_kwargs['Motor']['Desired Speed'][0][t] = desired_next_speed
-                self.plot_title_label_data_kwargs['Motor']['Actual Speed'][0][t] = float(self.motor.get_speed())
+                self.plot_title_label_data_kwargs['Motor']['Actual Speed'][0][t] = actual_next_speed
 
             # calculate reward
             reward_value = self.get_reward(self.state, previous_state)
 
-            logging.debug(f'State {t}:  {self.state}')
-            logging.debug(f'Reward {t}:  {reward_value}')
+            logger.debug(f'State {t}:  {self.state}')
+            logger.debug(f'Reward {t}:  {reward_value}')
 
             # add plotting data
             self.plot_title_label_data_kwargs['Cart']['Pos'][0][t] = self.state.cart_mm_from_center
@@ -2225,7 +2236,7 @@ class CartPole(ContinuousMdpEnvironment):
                 elif self.current_timesteps_per_second < self.timesteps_per_second:
                     self.timestep_sleep_seconds = max(0.0, self.timestep_sleep_seconds - 0.001)
 
-                logging.debug(f'Running at {self.current_timesteps_per_second:.1f} steps/sec')
+                logger.debug(f'Running at {self.current_timesteps_per_second:.1f} steps/sec')
 
             # only sleep if it's for more than a millisecond
             if self.timestep_sleep_seconds > 0.001:
@@ -2389,7 +2400,7 @@ class CartPole(ContinuousMdpEnvironment):
                             'label': f'Started lost-balance timer @ {t}'
                         }
 
-                    logging.info(
+                    logger.info(
                         f'Pole has lost its upright position. Angle {pole_angle_deg_from_upright:.2f} exceeds the '
                         f'maximum allowable of {self.progressive_upright_pole_angle:.1f}. Starting lost-balance timer '
                         f'of {self.lost_balance_timer_seconds} seconds.'
@@ -2401,7 +2412,7 @@ class CartPole(ContinuousMdpEnvironment):
             elif episode_phase == EpisodePhase.PROGRESSIVE_UPRIGHT:
 
                 self.achieved_progressive_upright = True
-                logging.info(f'Progressive upright @ {pole_angle_deg_from_upright:.1f} degrees.')
+                logger.info(f'Progressive upright @ {pole_angle_deg_from_upright:.1f} degrees.')
 
                 if t is not None:
                     self.time_step_axv_lines[t] = {
@@ -2415,7 +2426,7 @@ class CartPole(ContinuousMdpEnvironment):
 
             elif episode_phase == EpisodePhase.BALANCE:
 
-                logging.info(
+                logger.info(
                     f'Balancing @ {pole_angle_deg_from_upright:.1f} deg @ {pole_state.angular_velocity:.1f} deg/sec.'
                 )
 
@@ -2430,7 +2441,7 @@ class CartPole(ContinuousMdpEnvironment):
                 CartPole.set_led(self.progressive_upright_led, False)
                 if self.balance_gamma != self.agent.gamma:
                     self.agent.gamma = self.balance_gamma
-                    logging.info(f'Set agent.gamma={self.agent.gamma}.')
+                    logger.info(f'Set agent.gamma={self.agent.gamma}.')
 
             else:
                 raise ValueError(f'Unknown episode phase:  {episode_phase}')
@@ -2447,7 +2458,7 @@ class CartPole(ContinuousMdpEnvironment):
             # switch at a high speed. also, since we're close to the side, take the opportunity to reset the cart state
             # at the limit.
             if self.cart_violates_soft_limit(cart_mm_from_center, 1.0):
-                logging.info(
+                logger.info(
                     f'Cart distance from center ({abs(cart_mm_from_center):.1f} mm) exceeds soft limit '
                     f'({self.soft_limit_mm_from_midline} mm). Terminating.'
                 )
