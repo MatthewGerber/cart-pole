@@ -1344,7 +1344,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         if not self.left_limit_pressed.is_set():
             logger.info('Moving cart to the left and waiting for limit switch.')
-            self.set_motor_speed(2 * self.motor_slowest_speed_left)
+            self.set_motor_speed(int(1.5 * self.motor_slowest_speed_left))
             self.left_limit_pressed.wait()
 
         logger.info('Moving cart away from left limit switch.')
@@ -1378,7 +1378,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         if not self.right_limit_pressed.is_set():
             logger.info('Moving cart to the right and waiting for limit switch.')
-            self.set_motor_speed(2 * self.motor_slowest_speed_right)
+            self.set_motor_speed(int(1.5 * self.motor_slowest_speed_right))
             self.right_limit_pressed.wait()
 
         logger.info('Moving cart away from right limit switch.')
