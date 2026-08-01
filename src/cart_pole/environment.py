@@ -1499,21 +1499,22 @@ class CartPole(ContinuousMdpEnvironment):
             self.cart_rotary_encoder.update_state()
 
         # repeatedly center cart at successively slower speeds
-        for centering_speed_factors in [3.0, 2.5, 2.0, 1.5, 1.0]:
+        for centering_speed_multiplier in [3.0, 2.5, 2.0, 1.5, 1.0]:
             retry_centering = True
             while retry_centering:
+                centering_speed = round(centering_speed_multiplier * (
+                    self.motor_slowest_speed_right if cart_position == CartPosition.LEFT_OF_CENTER
+                    else self.motor_slowest_speed_left
+                ))
                 cart_position, retry_centering = self.center_cart_from_position(
                     position=cart_position,
-                    speed=round(centering_speed_factors * (
-                        self.motor_slowest_speed_right if cart_position == CartPosition.LEFT_OF_CENTER
-                        else self.motor_slowest_speed_left
-                    )),
+                    speed=centering_speed,
                     acceleration_interval=None,
                     check_delay_seconds=0.1,
                     stop_at_center=True
                 )
             else:
-                logger.info(f'Cart centered at speed:  {centering_speed_factors}')
+                logger.info('Cart centered.')
 
         if restore_cart_rotary_state_at_center:
             logger.info(
@@ -2259,13 +2260,9 @@ class CartPole(ContinuousMdpEnvironment):
 
         reward = 0.0
 
-        # penalize end of episode
-        if state.terminal:
-            reward = -1.0
-
         # if we're in swing up and the pole has peaked, then reward peak increases (gaining momentum) and punish peak
         # decreases (losing momentum).
-        elif state.episode_phase == EpisodePhase.SWING_UP:
+        if state.episode_phase == EpisodePhase.SWING_UP:
             if state.at_swing_up_peak:
                 reward = (
                     state.previous_zero_to_one_pole_peak -

@@ -157,10 +157,11 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         :return: State-feature matrix (#states, #features).
         """
 
+        num_state_dims = 4
+
         # obtain the list of term indices that comprise the fully-interacted model. this includes all combinations of
         # terms of each order (e.g., single terms, two-way interactions, three-way, etc.).
         if self.interaction_term_indices is None:
-            num_state_dims = 4
             term_indices = list(range(num_state_dims))
             self.interaction_term_indices = [
                 list(term_indices_tuple)
@@ -185,10 +186,14 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
             for state in states
         ])
 
-        # create the full feature matrix of multiplicative interaction terms
+        # create the full feature matrix of multiplicative interaction terms. the interaction terms will have different
+        # numbers of factors, which will cause them to be different orders of magnitude. rescale each based on how many
+        # factors is has. for example, a term with one factor will be rescaled by 10.0^-3 = 0.001, a term with two
+        # factors will be rescaled by 10.0^-2 = 0.01, and a term with all factors will be rescaled by 10.0^-0 = 1.0 (it
+        # will not be rescaled).
         state_feature_matrix = np.array([
             [
-                np.prod(state_row[term_indices])
+                np.prod(state_row[term_indices]) * (10.0 ** (len(term_indices) - num_state_dims))
                 for term_indices in self.interaction_term_indices
             ]
             for state_row in state_matrix
@@ -203,10 +208,11 @@ class CartPolePolicyFeatureExtractor(StateFeatureExtractor):
         )
 
         # obtain a vector of intercept terms for each row according to the state segment. we do this here, after
-        # scaling, so that the constant intercept terms are not scaled to zero.
+        # scaling, so that the constant intercept terms are not scaled to zero. use the same rescaling here as above,
+        # where the intercept has no terms.
         state_indicator_intercepts = self.state_category_intercept_interacter.interact(
             state_matrix,
-            np.ones((scaled_state_indicator_feature_matrix.shape[0], 1)),
+            (10.0 ** -num_state_dims) * np.ones((scaled_state_indicator_feature_matrix.shape[0], 1)),
             False
         )
 
