@@ -208,6 +208,20 @@ class CartPoleState(MdpState):
         PoleVelocity = 4
         PoleAcceleration = 5
 
+    class TerminalReason(Enum):
+        """
+        Termination reason.
+        """
+
+        # Cart went past the soft limit on an end.
+        VIOLATED_SOFT_LIMITS = auto()
+
+        # Lost balance, either from the progressive upright position or the balance position.
+        LOST_BALANCE_TIMER_EXPIRED = auto()
+
+        # Hit a limit switch, which should never happen.
+        FORCED = auto()
+
     @staticmethod
     def zero_to_one_pole_angle_from_degrees(
             degrees_from_upright: float
@@ -234,6 +248,7 @@ class CartPoleState(MdpState):
             step: Optional[int],
             agent: MdpAgent,
             terminal: bool,
+            terminal_reason: Optional['CartPoleState.TerminalReason'],
             truncated: bool,
             episode_phase: EpisodePhase,
             previous_zero_to_one_pole_peak: Optional[float],
@@ -255,6 +270,7 @@ class CartPoleState(MdpState):
         :param terminal: Whether the state is terminal, meaning the episode has terminated naturally due to the
         dynamics of the environment. For example, the natural dynamics of the environment terminate when the cart goes
         beyond the permitted limits of the track.
+        :param terminal_reason: Reason for termination.
         :param truncated: Whether the state is truncated, meaning the episode has ended for some reason other than the
         natural dynamics of the environment. For example, imposing an artificial time limit on an episode might cause
         the episode to end without the agent in a terminal state.
@@ -271,6 +287,7 @@ class CartPoleState(MdpState):
         self.pole_angular_velocity_deg_per_sec = pole_angular_velocity_deg_per_sec
         self.pole_angular_acceleration_deg_per_sec_squared = pole_angular_acceleration_deg_per_sec_squared
         self.step = step
+        self.terminal_reason = terminal_reason
         self.episode_phase = episode_phase
         self.previous_zero_to_one_pole_peak = previous_zero_to_one_pole_peak
 
@@ -1428,8 +1445,9 @@ class CartPole(ContinuousMdpEnvironment):
                 # it's important to stop the cart any time the limit switch is pressed
                 self.stop_cart()
 
-                # the soft limits should prevent hitting the limit, but they failed, likely due to missed rotary
-                # signals. end the episode and restore the limit state when centering next.
+                # the soft limits should prevent hitting the limit, but they failed, likely due to missed rotary signals
+                # or some other mechanical or wiring issue. end the episode and restore the limit state when centering
+                # next episode.
                 if self.state is not None and not self.state.terminal:
                     assert isinstance(self.state, CartPoleState)
                     self.state = self.get_state(t=None, terminal=True, previous_state=self.state)
@@ -1522,10 +1540,8 @@ class CartPole(ContinuousMdpEnvironment):
                 f'nominal degrees at center={self.midline_degrees:.1f}.'
             )
             self.cart_rotary_encoder.set_net_total_degrees(self.midline_degrees)
-            self.cart_rotary_encoder.update_state()
-            logger.info(
-                f'Post-restoration cart degrees at center={self.cart_rotary_encoder.get_net_total_degrees():.1f}.'
-            )
+            cart_restored_degrees = self.cart_rotary_encoder.update_state().net_total_degrees
+            logger.info(f'Post-restoration cart degrees at center={cart_restored_degrees:.1f}.')
 
         logger.info('Waiting for stationary pole.')
         self.stop_pole()
@@ -1535,10 +1551,8 @@ class CartPole(ContinuousMdpEnvironment):
                 f'nominal degrees at bottom={self.pole_degrees_at_bottom:.1f}.'
             )
             self.pole_rotary_encoder.set_net_total_degrees(self.pole_degrees_at_bottom)
-            self.pole_rotary_encoder.update_state()
-            logger.info(
-                f'Post-restoration pole degrees at bottom={self.pole_rotary_encoder.get_net_total_degrees():.1f}.'
-            )
+            pole_restored_degrees = self.pole_rotary_encoder.update_state().net_total_degrees
+            logger.info(f'Post-restoration pole degrees at bottom={pole_restored_degrees:.1f}.')
 
     def center_cart_from_position(
             self,
@@ -2260,9 +2274,24 @@ class CartPole(ContinuousMdpEnvironment):
 
         reward = 0.0
 
+        # punish terminal state if we violated a soft limit or lost balance from an immediately preceding balance phase.
+        # this means we don't punish termination when losing balance after losing progressive upright orientation. we
+        # terminate after losing progressive upright orientation, but the agent didn't do anything obviously incorrect.
+        if (
+            state.terminal and
+            (
+                state.terminal_reason == CartPoleState.TerminalReason.VIOLATED_SOFT_LIMITS or
+                (
+                    state.terminal_reason == CartPoleState.TerminalReason.LOST_BALANCE_TIMER_EXPIRED and
+                    previous_state.episode_phase == EpisodePhase.BALANCE
+                )
+            )
+        ):
+            reward = -1.0
+
         # if we're in swing up and the pole has peaked, then reward peak increases (gaining momentum) and punish peak
         # decreases (losing momentum).
-        if state.episode_phase == EpisodePhase.SWING_UP:
+        elif state.episode_phase == EpisodePhase.SWING_UP:
             if state.at_swing_up_peak:
                 reward = (
                     state.previous_zero_to_one_pole_peak -
@@ -2350,11 +2379,8 @@ class CartPole(ContinuousMdpEnvironment):
 
         assert self.agent is not None
 
-        self.cart_rotary_encoder.update_state()
-        cart_state: RotaryEncoder.State = self.cart_rotary_encoder.state
-
-        self.pole_rotary_encoder.update_state()
-        pole_state: RotaryEncoder.State = self.pole_rotary_encoder.state
+        cart_state = self.cart_rotary_encoder.update_state()
+        pole_state = self.pole_rotary_encoder.update_state()
 
         cart_mm_from_left_limit = abs(
             cart_state.net_total_degrees - self.left_limit_degrees
@@ -2446,6 +2472,8 @@ class CartPole(ContinuousMdpEnvironment):
         # truncate due to time steps
         truncated = t is not None and self.T is not None and t >= self.T
 
+        terminal_reason: Optional[CartPoleState.TerminalReason] = None
+
         # only check termination if a value isn't being forced by the caller
         if terminal is None:
 
@@ -2460,17 +2488,22 @@ class CartPole(ContinuousMdpEnvironment):
                     f'({self.soft_limit_mm_from_midline} mm). Terminating.'
                 )
                 terminal = True
+                terminal_reason = CartPoleState.TerminalReason.VIOLATED_SOFT_LIMITS
                 self.restore_cart_limit_state = True
 
-            # terminate due to lost-balance timer
+            # terminate due to lost-balance timer expiration
             elif (
                 self.lost_balance_timestamp is not None and
                 (time.time() - self.lost_balance_timestamp) >= self.lost_balance_timer_seconds
             ):
                 terminal = True
+                terminal_reason = CartPoleState.TerminalReason.LOST_BALANCE_TIMER_EXPIRED
 
                 # go ahead and reset the cart limit state if we're pretty close to the end
                 self.restore_cart_limit_state = self.cart_violates_soft_limit(cart_mm_from_center, 0.5)
+
+        elif terminal:
+            terminal_reason = CartPoleState.TerminalReason.FORCED
 
         return CartPoleState(
             environment=self,
@@ -2483,6 +2516,7 @@ class CartPole(ContinuousMdpEnvironment):
             step=t,
             agent=self.agent,
             terminal=terminal,
+            terminal_reason=terminal_reason,
             truncated=truncated,
             episode_phase=episode_phase,
             previous_zero_to_one_pole_peak=(
