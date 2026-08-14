@@ -330,7 +330,7 @@ def main():
                 servo.enable()
         servo.stop()
         print(
-            f'Brake is down at {braking_degrees} degrees. Attach brake shoe. The cart pole environment should brake at'
+            f'Brake is down at {braking_degrees} degrees. Attach brake shoe. The cart pole environment should brake at '
             f'fewer degrees, ensuring proper force upon the brake wheel.'
         )
 
