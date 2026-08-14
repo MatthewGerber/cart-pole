@@ -7,9 +7,8 @@ bool DEBUG = false;
 const size_t FLOAT_BYTES_LEN = 4;
 const size_t DOUBLE_BYTES_LEN = 8;
 const size_t LONG_BYTES_LEN = 4;
-const size_t ROTARY_STATE_RESPONSE_LEN = 21;
-byte CART_ROTARY_ENCODER_ID = 0;
-byte POLE_ROTARY_ENCODER_ID = 1;
+const byte CART_ROTARY_ENCODER_ID = 0;
+const byte POLE_ROTARY_ENCODER_ID = 1;
 
 // structure that gives simultaneous access to single-precision floating-point numbers and their underlying bytes
 typedef union {
@@ -25,34 +24,43 @@ typedef union {
 
 // reusable structure for rotary encoder configuration and state
 struct rotary_encoder {
+
+  // configuration
   byte identifier;
+  unsigned int phase_changes_per_rotation = 2400;
+  float phase_changes_per_degree = 2400.0 / 360.0;
   byte white_pin;
+  byte green_pin;
+
+  // volatile values updated in interrupt service routine
   volatile bool white_value;
   volatile bool waiting_on_white;
-  byte green_pin;
   volatile bool green_value;
   volatile bool waiting_on_green;
   volatile unsigned long num_phase_changes_volatile;
-  unsigned long num_phase_changes;
   volatile long index_volatile;
-  long index;
   volatile bool clockwise_volatile;
+
+  // state values that are updated periodically
+  unsigned int state_update_hz;
+  unsigned long state_update_interval_ms;
+  unsigned long state_time_ms;
+  unsigned long num_phase_changes;
+  long index;
   bool clockwise;
-  unsigned int phase_changes_per_rotation;
-  float phase_changes_per_degree;
   floatbytes net_degrees;
   floatbytes net_degrees_step_size;
   floatbytes velocity_deg_per_sec;
   floatbytes velocity_step_size;
   floatbytes acceleration_deg_per_sec_sq;
   floatbytes acceleration_step_size;
-  unsigned int state_update_hz;
-  unsigned long state_update_interval_ms;
-  unsigned long state_time_ms;
+
+  // soft limits -- violation flag is set if a limit is reached
+  bool soft_limits_enabled;
   long left_soft_limit_rotary_index;
   long right_soft_limit_rotary_index;
-  bool soft_limits_enabled;
   bool violates_soft_limits;
+
   bool is_inited = false;
 };
 
@@ -110,24 +118,26 @@ void write_bool(bool value) {
 
 // top-level command:  command id and component id
 const size_t CMD_BYTES_LEN = 2;
-const byte CMD_INIT = 1;
-const byte CMD_GET_ROTARY_STATE = 2;
+const byte CMD_INIT = 1; const size_t CMD_INIT_ROTARY_ARGS_LEN = 15;
+const byte CMD_GET_ROTARY_STATE = 2; const size_t ROTARY_STATE_RESPONSE_LEN = 21;
 const byte CMD_SET_ROTARY_NET_TOTAL_DEGREES = 3;
 const byte CMD_STOP_ROTARY = 4;
 const byte CMD_SET_MOTOR_SPEED = 5;
-const byte CMD_ENABLE_CART_SOFT_LIMITS = 6;
-const size_t CMD_ENABLE_CART_SOFT_LIMITS_ARGS_LEN = DOUBLE_BYTES_LEN * 2;
+const byte CMD_ENABLE_CART_SOFT_LIMITS = 6; const size_t CMD_ENABLE_CART_SOFT_LIMITS_ARGS_LEN = DOUBLE_BYTES_LEN * 2;
 const byte CMD_DISABLE_CART_SOFT_LIMITS = 7;
 
-const size_t CMD_INIT_ROTARY_ARGS_LEN = 18;
-
+/**
+ * ISR called when the white-wire signal changes.
+ *
+ * @param rotary Rotary encoder.
+*/
 void white_changed(rotary_encoder* rotary) {
   if (rotary->waiting_on_white) {
     rotary->white_value = !rotary->white_value;
     bool new_green = digitalRead(rotary->green_pin);
-    bool both_changed = new_green != rotary->green_value;
+    bool changed_direction = new_green != rotary->green_value;
     rotary->green_value = new_green;
-    if (both_changed) {
+    if (changed_direction) {
       rotary->clockwise_volatile = !rotary->clockwise_volatile;
       rotary->index_volatile += rotary->clockwise_volatile ? 2 : -2;
       rotary->num_phase_changes_volatile += 2;
@@ -141,13 +151,18 @@ void white_changed(rotary_encoder* rotary) {
   }
 }
 
+/**
+ * ISR called when the green-wire signal changes.
+ *
+ * @param rotary Rotary encoder.
+*/
 void green_changed(rotary_encoder* rotary) {
   if (rotary->waiting_on_green) {
     rotary->green_value = !rotary->green_value;
     bool new_white = digitalRead(rotary->white_pin);
-    bool both_changed = new_white != rotary->white_value;
+    bool changed_direction = new_white != rotary->white_value;
     rotary->white_value = new_white;
-    if (both_changed) {
+    if (changed_direction) {
       rotary->clockwise_volatile = !rotary->clockwise_volatile;
       rotary->index_volatile += rotary->clockwise_volatile ? 2 : -2;
       rotary->num_phase_changes_volatile += 2;
@@ -161,6 +176,7 @@ void green_changed(rotary_encoder* rotary) {
   }
 }
 
+// cart rotary encoder and isrs
 rotary_encoder cart_rotary;
 void cart_white_changed() {
   white_changed(&cart_rotary);
@@ -169,6 +185,7 @@ void cart_green_changed() {
   green_changed(&cart_rotary);
 }
 
+// pole rotary encoder and isrs
 rotary_encoder pole_rotary;
 void pole_white_changed() {
   white_changed(&pole_rotary);
@@ -179,8 +196,8 @@ void pole_green_changed() {
 
 void setup() {
 
-  cart_rotary.identifier = 0;
-  pole_rotary.identifier = 1;
+  cart_rotary.identifier = CART_ROTARY_ENCODER_ID;
+  pole_rotary.identifier = POLE_ROTARY_ENCODER_ID;
 
   if (DEBUG) {
     SerialUSB.begin(9600);
@@ -205,7 +222,7 @@ bool motor_is_inited = false;
  * Initialize a rotary encoder.
  *
  * @param rotary Pointer to a rotary encoder structure.
- * @param args Initialization arguments.
+ * @param args Initialization arguments sent by client.
 */
 void init_rotary_encoder(rotary_encoder* rotary, byte args[]) {
 
@@ -214,15 +231,11 @@ void init_rotary_encoder(rotary_encoder* rotary, byte args[]) {
   rotary->green_pin = args[1];
   pinMode(rotary->green_pin, INPUT_PULLUP);
 
-  // todo:  2 bytes for phase changes per rotation
-  rotary->phase_changes_per_rotation = 2400;
-  rotary->phase_changes_per_degree = float(rotary->phase_changes_per_rotation) / 360.0f;
+  set_float_bytes(rotary->net_degrees_step_size.bytes, args, 2);
+  set_float_bytes(rotary->velocity_step_size.bytes, args, 6);
+  set_float_bytes(rotary->acceleration_step_size.bytes, args, 10);
 
-  set_float_bytes(rotary->net_degrees_step_size.bytes, args, 5);
-  set_float_bytes(rotary->velocity_step_size.bytes, args, 9);
-  set_float_bytes(rotary->acceleration_step_size.bytes, args, 13);
-
-  rotary->state_update_hz = args[17];
+  rotary->state_update_hz = args[14];
   rotary->state_update_interval_ms = (unsigned long) (1000.0f / float(rotary->state_update_hz));
 
   rotary->white_value = digitalRead(rotary->white_pin);
@@ -236,11 +249,15 @@ void init_rotary_encoder(rotary_encoder* rotary, byte args[]) {
   rotary->velocity_deg_per_sec.number = 0.0;
   rotary->acceleration_deg_per_sec_sq.number = 0.0;
   rotary->state_time_ms = millis();
+  rotary->soft_limits_enabled = false;
+  rotary->left_soft_limit_rotary_index = 0;
+  rotary->right_soft_limit_rotary_index = 0;
+  rotary->violates_soft_limits = false;
   rotary->is_inited = true;
 
   if (DEBUG) {
     SerialUSB.println(
-      "Rotary encoder " + String(rotary->identifier) + "\n" + 
+      "Initialized rotary encoder " + String(rotary->identifier) + "\n" + 
       "\tNet degrees step size:  " + String(rotary->net_degrees_step_size.number) + "\n" + 
       "\tVelocity step size:  " + String(rotary->velocity_step_size.number) + "\n" + 
       "\tAcceleration step size:  " + String(rotary->acceleration_step_size.number) + "\n" + 
@@ -255,42 +272,36 @@ void init_rotary_encoder(rotary_encoder* rotary, byte args[]) {
  * @param rotary Rotary encoder.
 */
 void update_rotary_encoder_state(rotary_encoder* rotary) {
-
   if (rotary->is_inited) {
     unsigned long curr_time_ms = millis();
-    if (curr_time_ms <= rotary->state_time_ms) {
+    unsigned long elapsed_ms = curr_time_ms - rotary->state_time_ms;
+    if (elapsed_ms >= rotary->state_update_interval_ms) {
+
+      float elapsed_seconds = elapsed_ms / 1000.0;
+
+      // disable interrupts to read volatile values without corruption from the isr
+      noInterrupts();
+      rotary->num_phase_changes = rotary->num_phase_changes_volatile;
+      rotary->index = rotary->index_volatile;
+      rotary->clockwise = rotary->clockwise_volatile;
+      interrupts();
+
+      // smooth net degrees
+      float previous_net_degrees = rotary->net_degrees.number;
+      float current_net_degrees = rotary->index / rotary->phase_changes_per_degree;
+      rotary->net_degrees.number = (1.0 - rotary->net_degrees_step_size.number) * previous_net_degrees + rotary->net_degrees_step_size.number * current_net_degrees;        
+
+      // smooth velocity        
+      float previous_velocity = rotary->velocity_deg_per_sec.number;
+      float current_velocity = (rotary->net_degrees.number - previous_net_degrees) / elapsed_seconds;
+      rotary->velocity_deg_per_sec.number = (1.0 - rotary->velocity_step_size.number) * previous_velocity + rotary->velocity_step_size.number * current_velocity;
+
+      // smooth acceleration
+      float previous_acceleration = rotary->acceleration_deg_per_sec_sq.number;
+      float current_acceleration = (rotary->velocity_deg_per_sec.number - previous_velocity) / elapsed_seconds;
+      rotary->acceleration_deg_per_sec_sq.number = (1.0 - rotary->acceleration_step_size.number) * previous_acceleration + rotary->acceleration_step_size.number * current_acceleration;
+
       rotary->state_time_ms = curr_time_ms;
-    }
-    else {
-      unsigned long elapsed_ms = curr_time_ms - rotary->state_time_ms;
-      if (elapsed_ms >= rotary->state_update_interval_ms) {
-
-        float elapsed_seconds = float(elapsed_ms) / 1000.0f;
-
-        // disable interrupts to read volatile values without corruption from the isr
-        noInterrupts();
-        rotary->num_phase_changes = rotary->num_phase_changes_volatile;
-        rotary->index = rotary->index_volatile;
-        rotary->clockwise = rotary->clockwise_volatile;
-        interrupts();
-
-        // smooth net degrees
-        float previous_net_degrees = rotary->net_degrees.number;
-        float current_net_degrees = rotary->index / rotary->phase_changes_per_degree;
-        rotary->net_degrees.number = (1.0 - rotary->net_degrees_step_size.number) * previous_net_degrees + rotary->net_degrees_step_size.number * current_net_degrees;        
-
-        // smooth velocity        
-        float previous_velocity = rotary->velocity_deg_per_sec.number;
-        float current_velocity = (rotary->net_degrees.number - previous_net_degrees) / elapsed_seconds;
-        rotary->velocity_deg_per_sec.number = (1.0 - rotary->velocity_step_size.number) * previous_velocity + rotary->velocity_step_size.number * current_velocity;
-
-        // smooth acceleration
-        float previous_acceleration = rotary->acceleration_deg_per_sec_sq.number;
-        float current_acceleration = (rotary->velocity_deg_per_sec.number - previous_velocity) / elapsed_seconds;
-        rotary->acceleration_deg_per_sec_sq.number = (1.0 - rotary->acceleration_step_size.number) * previous_acceleration + rotary->acceleration_step_size.number * current_acceleration;
-
-        rotary->state_time_ms = curr_time_ms;
-      }
     }
   }
 }
@@ -313,9 +324,9 @@ void write_rotary_state(rotary_encoder* rotary) {
 void set_net_total_degrees(rotary_encoder* rotary, float net_total_degrees) {
   noInterrupts();
   rotary->index = rotary->index_volatile = (long) net_total_degrees * rotary->phase_changes_per_degree;
-  rotary->net_degrees.number = rotary->index_volatile / rotary->phase_changes_per_degree;
-  rotary->velocity_deg_per_sec.number = 0.0f;
-  rotary->acceleration_deg_per_sec_sq.number = 0.0f;
+  rotary->net_degrees.number = rotary->index / rotary->phase_changes_per_degree;
+  rotary->velocity_deg_per_sec.number = 0.0;
+  rotary->acceleration_deg_per_sec_sq.number = 0.0;
   rotary->state_time_ms = millis();
   interrupts();
 }
