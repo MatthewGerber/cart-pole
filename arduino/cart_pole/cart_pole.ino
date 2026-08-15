@@ -5,7 +5,7 @@
 bool DEBUG = false;
 
 const size_t FLOAT_BYTES_LEN = 4;
-const size_t DOUBLE_BYTES_LEN = 8;
+const float FLOAT_SCALE = 0.001;
 const size_t LONG_BYTES_LEN = 4;
 const byte CART_ROTARY_ENCODER_ID = 0;
 const byte POLE_ROTARY_ENCODER_ID = 1;
@@ -15,12 +15,6 @@ typedef union {
   float number;
   byte bytes[FLOAT_BYTES_LEN];
 } floatbytes;
-
-// structure that gives simultaneous access to double-precision floating-point numbers and their underlying bytes
-typedef union {
-  double number;
-  byte bytes[DOUBLE_BYTES_LEN];
-} doublebytes;
 
 // reusable structure for rotary encoder configuration and state
 struct rotary_encoder {
@@ -108,10 +102,6 @@ void write_float(floatbytes f) {
   SerialUART.write(f.bytes, FLOAT_BYTES_LEN);
 }
 
-void write_double(doublebytes d) {
-  SerialUART.write(d.bytes, DOUBLE_BYTES_LEN);
-}
-
 void write_bool(bool value) {
   SerialUART.write(value);
 }
@@ -123,7 +113,7 @@ const byte CMD_GET_ROTARY_STATE = 2; const size_t ROTARY_STATE_RESPONSE_LEN = 21
 const byte CMD_SET_ROTARY_NET_TOTAL_DEGREES = 3;
 const byte CMD_STOP_ROTARY = 4;
 const byte CMD_SET_MOTOR_SPEED = 5;
-const byte CMD_ENABLE_CART_SOFT_LIMITS = 6; const size_t CMD_ENABLE_CART_SOFT_LIMITS_ARGS_LEN = DOUBLE_BYTES_LEN * 2;
+const byte CMD_ENABLE_CART_SOFT_LIMITS = 6; const size_t CMD_ENABLE_CART_SOFT_LIMITS_ARGS_LEN = FLOAT_BYTES_LEN * 2;
 const byte CMD_DISABLE_CART_SOFT_LIMITS = 7;
 
 /**
@@ -311,9 +301,12 @@ void write_rotary_state(rotary_encoder* rotary) {
   byte four[4];
   long_to_bytes(rotary->num_phase_changes, four);
   memcpy(response, four, 4);
-  memcpy(response + 4, rotary->net_degrees.bytes, 4);
-  memcpy(response + 8, rotary->velocity_deg_per_sec.bytes, 4);
-  memcpy(response + 12, rotary->acceleration_deg_per_sec_sq.bytes, 4);
+  long_to_bytes((long)rotary->net_degrees.number / FLOAT_SCALE, four);
+  memcpy(response + 4, four, 4);
+  long_to_bytes((long)rotary->velocity_deg_per_sec.number / FLOAT_SCALE, four);
+  memcpy(response + 8, four, 4);
+  long_to_bytes((long)rotary->acceleration_deg_per_sec_sq.number / FLOAT_SCALE, four);
+  memcpy(response + 12, four, 4);
   response[16] = rotary->clockwise;
   long_to_bytes(rotary->state_time_ms, four);
   memcpy(response + 17, four, 4);
@@ -401,15 +394,15 @@ void loop() {
       }
     }
     else if (command == CMD_SET_ROTARY_NET_TOTAL_DEGREES) {
-      byte args[FLOAT_BYTES_LEN];
-      SerialUART.readBytes(args, FLOAT_BYTES_LEN);
-      floatbytes net_total_degrees;
-      set_float_bytes(net_total_degrees.bytes, args, 0);
+      byte args[LONG_BYTES_LEN];
+      SerialUART.readBytes(args, LONG_BYTES_LEN);
+      long net_total_degrees_long = bytes_to_long(args, 0);
+      float net_total_degrees = net_total_degrees_long * FLOAT_SCALE;
       if (component_id == CART_ROTARY_ENCODER_ID) {
-        set_net_total_degrees(&cart_rotary, net_total_degrees.number);
+        set_net_total_degrees(&cart_rotary, net_total_degrees);
       }
       else if (component_id == POLE_ROTARY_ENCODER_ID) {
-        set_net_total_degrees(&pole_rotary, net_total_degrees.number);
+        set_net_total_degrees(&pole_rotary, net_total_degrees);
       }
     }
     else if (command == CMD_STOP_ROTARY) {
@@ -437,8 +430,8 @@ void loop() {
           int new_speed = bytes_to_int(args, 0);
           unsigned int next_set_promise_ms = bytes_to_unsigned_int(args, 2);
 
-          // if we're changing direction, set speed to zero so that changing the direction next does not then output the 
-          // current speed in the opposite direction.
+          // if we're changing direction, set speed to zero so that changing the direction 
+          // next does not then output the current speed in the opposite direction.
           if (
             ((motor_current_speed > 0) && (new_speed <= 0)) ||
             ((motor_current_speed < 0) && (new_speed >= 0))

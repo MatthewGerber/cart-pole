@@ -3,11 +3,8 @@ import time
 
 import RPi.GPIO as gpio
 import serial
+from cart_pole.environment import ArduinoCommand
 from matplotlib import pyplot as plt
-from raspberry_py.utils import get_bytes
-from serial import Serial
-from smbus2 import SMBus
-
 from raspberry_py.gpio import setup, cleanup, CkPin
 from raspberry_py.gpio.communication import LockingSerial
 from raspberry_py.gpio.controls import LimitSwitch
@@ -15,8 +12,9 @@ from raspberry_py.gpio.integrated_circuits import PulseWaveModulatorPCA9685PW
 from raspberry_py.gpio.lights import LED
 from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectArduino, Servo, Sg90DriverPCA9685PW
 from raspberry_py.gpio.sensors import RotaryEncoder, UltrasonicRangeFinder
-
-from cart_pole.environment import ArduinoCommand
+from raspberry_py.utils import get_single_bytes
+from serial import Serial
+from smbus2 import SMBus
 
 
 def main():
@@ -342,8 +340,8 @@ def main():
             locking_serial.write_then_read(
                 ArduinoCommand.ENABLE_CART_SOFT_LIMITS.to_bytes(1) +
                 (0).to_bytes(1) +  # ignored
-                get_bytes(-360.0) +
-                get_bytes(360.0),
+                get_single_bytes(-360.0) +
+                get_single_bytes(360.0),
                 True,
                 0,
                 False
