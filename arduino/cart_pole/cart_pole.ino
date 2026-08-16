@@ -241,7 +241,7 @@ void init_rotary_encoder(rotary_encoder* rotary, byte args[]) {
   pinMode(rotary->white_pin, INPUT_PULLUP);
   rotary->green_pin = args[1];
   pinMode(rotary->green_pin, INPUT_PULLUP);
-  
+
   set_float_bytes(f.bytes, args, 2);
   rotary->net_degrees_step_size = f.number;
 
@@ -407,6 +407,9 @@ void set_net_total_degrees(rotary_encoder* rotary, long net_total_degrees_long) 
  * @param rotary Rotary encoder to stop.
 */
 void stop_rotary(rotary_encoder* rotary) {
+  if (DEBUG) {
+    SerialUSB.println("Stopping rotary encoder " + String(rotary->identifier) + ".");
+  }
   detachInterrupt(digitalPinToInterrupt(rotary->white_pin));
   detachInterrupt(digitalPinToInterrupt(rotary->green_pin));
   rotary->is_inited = false;
@@ -419,9 +422,14 @@ void loop() {
 
   // check soft limits. if violated, stop cart and set violation flag, which prevents setting speed until soft limits are disabled.
   if (cart_rotary.soft_limits_enabled && (cart_rotary.index <= cart_rotary.left_soft_limit_rotary_index || cart_rotary.index >= cart_rotary.right_soft_limit_rotary_index)) {
-    motor_current_speed = 0;
-    analogWrite(motor_pwm_pin, motor_current_speed);
     cart_rotary.violates_soft_limits = true;
+    if (motor_current_speed != 0) {
+      motor_current_speed = 0;
+      analogWrite(motor_pwm_pin, motor_current_speed);
+      if (DEBUG) {
+        SerialUSB.println("Cart violated soft limits. Stopped cart.");
+      }
+    }
   }
   
   // check for a broken promise about setting the motor speed. stop motor if promise is broken.
@@ -438,6 +446,10 @@ void loop() {
     SerialUART.readBytes(command_bytes, CMD_BYTES_LEN);
     byte command = command_bytes[0];
     byte component_id = command_bytes[1];
+
+    if (DEBUG) {
+      SerialUSB.println("Processing new command " + String(command) + " for component " + String(component_id) + ".");
+    }
 
     // initialize a component
     if (command == CMD_INIT) {
@@ -556,10 +568,20 @@ void loop() {
       float right_soft_limit_degrees = bytes_to_long(args, 4) / cart_rotary.float_scale;
       cart_rotary.right_soft_limit_rotary_index = (long) right_soft_limit_degrees * cart_rotary.phase_changes_per_degree; 
       cart_rotary.soft_limits_enabled = true;
+      if (DEBUG) {
+        SerialUSB.println(
+          "Enabled cart soft limits:\n"
+          "\tLeft:  " + String(left_soft_limit_degrees) + " deg; index " + String(cart_rotary.left_soft_limit_rotary_index) + "\n" + 
+          "\tRight:  " + String(right_soft_limit_degrees) + " deg; index " + String(cart_rotary.right_soft_limit_rotary_index)
+        );
+      }
     }
     else if (command == CMD_DISABLE_CART_SOFT_LIMITS) {
       cart_rotary.soft_limits_enabled = false;
       cart_rotary.violates_soft_limits = false;
+      if (DEBUG) {
+        SerialUSB.println("Disabled cart soft limits.");
+      }
     }
   }
 }

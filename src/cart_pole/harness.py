@@ -12,7 +12,6 @@ from raspberry_py.gpio.integrated_circuits import PulseWaveModulatorPCA9685PW
 from raspberry_py.gpio.lights import LED
 from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectArduino, Servo, Sg90DriverPCA9685PW
 from raspberry_py.gpio.sensors import RotaryEncoder, UltrasonicRangeFinder
-from raspberry_py.utils import get_single_bytes
 from serial import Serial
 from smbus2 import SMBus
 
@@ -205,7 +204,7 @@ def main():
             time.sleep(1.0 / pole_rotary_interface.state_update_hz)
             pole_rotary_encoder.update_state()
             state: RotaryEncoder.State = pole_rotary_encoder.get_state()
-            if state.angular_velocity > 0.0:
+            if state.angular_velocity != 0.0:
                 print(f'Angular velocity is {state.angular_velocity}. Waiting for stationarity...')
                 pole_rotary_encoder.wait_for_stationarity()
             else:
@@ -342,8 +341,8 @@ def main():
             locking_serial.write_then_read(
                 ArduinoCommand.ENABLE_CART_SOFT_LIMITS.to_bytes(1, signed=False) +
                 (0).to_bytes(1, signed=False) +  # ignored
-                get_single_bytes(-360.0) +
-                get_single_bytes(360.0),
+                int(-360.0 * cart_rotary_interface.float_scale).to_bytes(4, signed=True) +
+                int(360.0 * cart_rotary_interface.float_scale).to_bytes(4, signed=True),
                 True,
                 0,
                 False
@@ -368,18 +367,22 @@ def main():
         motor.start()
         enable_cart_soft_limits()
 
-        print('Setting motor speed to 20 for 10 seconds...', end='')
+        print(
+            'Setting motor speed to 20 for 10 seconds. Turning the rotary encoder once in either direction should stop '
+            'the motor.'
+        )
         motor.set_speed(20)
         time.sleep(10.0)
-        print('done. Turning the rotary encoder once in either direction should have stopped the motor.')
 
         disable_cart_soft_limits()
         enable_cart_soft_limits()
 
-        print('Setting motor speed to -20 for 10 seconds...', end='')
+        print(
+            'Setting motor speed to -20 for 10 seconds. Turning the rotary encoder once in either direction should '
+            'stop the motor.'
+        )
         motor.set_speed(-20)
         time.sleep(10.0)
-        print('done. Turning the rotary encoder once in either direction should have stopped the motor.')
 
         disable_cart_soft_limits()
         motor.stop()
