@@ -23,7 +23,6 @@ from raspberry_py.gpio.integrated_circuits import PulseWaveModulatorPCA9685PW
 from raspberry_py.gpio.lights import LED
 from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectArduino, Servo, Sg90DriverPCA9685PW
 from raspberry_py.gpio.sensors import RotaryEncoder
-from raspberry_py.utils import get_bytes
 from rlai.core import MdpState, Action, Agent, Reward, Environment, MdpAgent, ContinuousMultiDimensionalAction
 from rlai.core.environments.mdp import ContinuousMdpEnvironment
 from rlai.policy_gradient import ParameterizedMdpAgent
@@ -33,7 +32,6 @@ from rlai.state_value.function_approximation.models.feature_extraction import St
 from rlai.utils import parse_arguments, IncrementalSampleAverager
 from serial import Serial
 from smbus2 import SMBus
-
 
 logger = logging.getLogger(__name__)
 
@@ -848,7 +846,9 @@ class CartPole(ContinuousMdpEnvironment):
             self.motor_driver,
             self.motor,
             self.cart_rotary_encoder,
+            self.cart_rotary_encoder_interface,
             self.pole_rotary_encoder,
+            self.pole_rotary_encoder_interface,
             self.left_limit_switch,
             self.left_limit_pressed,
             self.left_limit_released,
@@ -939,7 +939,9 @@ class CartPole(ContinuousMdpEnvironment):
             self.motor_driver,
             self.motor,
             self.cart_rotary_encoder,
+            self.cart_rotary_encoder_interface,
             self.pole_rotary_encoder,
+            self.pole_rotary_encoder_interface,
             self.left_limit_switch,
             self.left_limit_pressed,
             self.left_limit_released,
@@ -966,7 +968,9 @@ class CartPole(ContinuousMdpEnvironment):
         DcMotorDriverIndirectArduino,
         DcMotor,
         CartRotaryEncoder,
+        RotaryEncoder.Arduino,
         RotaryEncoder,
+        RotaryEncoder.Arduino,
         LimitSwitch,
         Event,
         Event,
@@ -1015,9 +1019,12 @@ class CartPole(ContinuousMdpEnvironment):
                 angular_acceleration_step_size=self.cart_rotary_encoder_angular_acceleration_step_size,
                 serial=arduino_serial_connection,
                 identifier=0,
+                float_scale=1000,
                 state_update_hz=round(1.5 * self.timesteps_per_second)
             )
         )
+        cart_rotary_encoder_interface = cart_rotary_encoder.interface
+        assert isinstance(cart_rotary_encoder_interface, RotaryEncoder.Arduino)
         cart_rotary_encoder.start()
 
         pole_rotary_encoder = RotaryEncoder(
@@ -1031,9 +1038,12 @@ class CartPole(ContinuousMdpEnvironment):
                 angular_acceleration_step_size=self.pole_rotary_encoder_angular_acceleration_step_size,
                 serial=arduino_serial_connection,
                 identifier=1,
+                float_scale=1000,
                 state_update_hz=round(1.5 * self.timesteps_per_second)
             )
         )
+        pole_rotary_encoder_interface = pole_rotary_encoder.interface
+        assert isinstance(pole_rotary_encoder_interface, RotaryEncoder.Arduino)
         pole_rotary_encoder.start()
 
         left_limit_switch = LimitSwitch(
@@ -1118,7 +1128,9 @@ class CartPole(ContinuousMdpEnvironment):
             motor_driver,
             motor,
             cart_rotary_encoder,
+            cart_rotary_encoder_interface,
             pole_rotary_encoder,
+            pole_rotary_encoder_interface,
             left_limit_switch,
             left_limit_pressed,
             left_limit_released,
@@ -1799,16 +1811,22 @@ class CartPole(ContinuousMdpEnvironment):
         Enable the Arduino's cart soft limits.
         """
 
-        logger.info('Enabling Arduino cart soft limits.')
-
         # allow arduino to run wider than python, as the former is faster.
         standoff_degrees = (self.soft_limit_standoff_mm - 10.0) / self.cart_mm_per_degree
+        left_limit_degrees = self.left_limit_degrees + standoff_degrees
+        right_limit_degrees = self.right_limit_degrees - standoff_degrees
+
+        logger.info(
+            'Enabling Arduino cart soft limits:\n'
+            f'\tLeft limit degrees:  {left_limit_degrees}\n'
+            f'\tRight limit degrees:  {right_limit_degrees}'
+        )
 
         self.arduino_serial_connection.write_then_read(
-            ArduinoCommand.ENABLE_CART_SOFT_LIMITS.to_bytes(1) +
-            (0).to_bytes(1) +  # ignored
-            get_bytes(self.left_limit_degrees + standoff_degrees) +
-            get_bytes(self.right_limit_degrees - standoff_degrees),
+            ArduinoCommand.ENABLE_CART_SOFT_LIMITS.to_bytes(1, signed=False) +
+            (0).to_bytes(1, signed=False) +  # ignored
+            int(left_limit_degrees * self.cart_rotary_encoder_interface.float_scale).to_bytes(4, signed=True) +
+            int(right_limit_degrees * self.cart_rotary_encoder_interface.float_scale).to_bytes(4, signed=True),
             True,
             0,
             False
@@ -1826,8 +1844,8 @@ class CartPole(ContinuousMdpEnvironment):
         logger.info('Disabling Arduino cart soft limits.')
 
         self.arduino_serial_connection.write_then_read(
-            ArduinoCommand.DISABLE_CART_SOFT_LIMITS.to_bytes(1) +
-            (0).to_bytes(1),
+            ArduinoCommand.DISABLE_CART_SOFT_LIMITS.to_bytes(1, signed=False) +
+            (0).to_bytes(1, signed=False),
             True,
             0,
             False

@@ -98,7 +98,7 @@ class TestAgent(MdpAgent):
                 data=self.motor_speed_state_speeds,
                 columns=['motor_speed', 'cart_velocity']
             )
-            df.boxplot('cart_velocity', by='motor_speed', figsize=(8.0, 8.0))
+            df.boxplot('cart_velocity', by='motor_speed', figsize=(8.0, 8.0))  # type: ignore
             ticks, labels = plt.xticks()
             plt.xticks(
                 ticks,  # type: ignore[arg-type]
@@ -165,10 +165,10 @@ def main():
         motor_pwm_channel=0,
         motor_pwm_direction_pin=CkPin.GPIO21,
         motor_negative_speed_is_right=True,
-        cart_rotary_encoder_phase_a_pin=CkPin.GPIO22,
-        pole_rotary_encoder_speed_phase_a_pin=CkPin.GPIO5,
-        pole_rotary_encoder_direction_phase_a_pin=CkPin.GPIO17,
-        pole_rotary_encoder_direction_phase_b_pin=CkPin.GPIO27,
+        cart_rotary_encoder_phase_a_pin=2,
+        cart_rotary_encoder_phase_b_pin=12,
+        pole_rotary_encoder_phase_a_pin=3,
+        pole_rotary_encoder_phase_b_pin=8,
         left_limit_switch_input_pin=CkPin.GPIO20,
         right_limit_switch_input_pin=CkPin.GPIO16,
         timesteps_per_second=10.0,
@@ -179,9 +179,7 @@ def main():
         balance_led_pin=CkPin.MOSI,
         termination_led_pin=CkPin.GPIO13,
         balance_gamma=0.5,
-        failsafe_pwm_off_pin=CkPin.GPIO6,
-        centering_range_finder_trigger_pin=CkPin.GPIO23,
-        centering_range_finder_echo_pin=CkPin.GPIO24
+        failsafe_pwm_off_pin=CkPin.GPIO6
     )
 
     agent = TestAgent()

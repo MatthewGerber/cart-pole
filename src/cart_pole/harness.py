@@ -66,6 +66,7 @@ def main():
         angular_acceleration_step_size=0.2,
         serial=locking_serial,
         identifier=0,
+        float_scale=1000,
         state_update_hz=round(1.5 * 45.0)
     )
     cart_rotary_encoder = RotaryEncoder(
@@ -83,6 +84,7 @@ def main():
         angular_acceleration_step_size=0.2,
         serial=locking_serial,
         identifier=1,
+        float_scale=1000,
         state_update_hz=round(1.5 * 45.0)
     )
     pole_rotary_encoder = RotaryEncoder(
@@ -338,8 +340,8 @@ def main():
             print('Setting degrees to 0 and limiting...', end='')
             cart_rotary_encoder.set_net_total_degrees(0.0)
             locking_serial.write_then_read(
-                ArduinoCommand.ENABLE_CART_SOFT_LIMITS.to_bytes(1) +
-                (0).to_bytes(1) +  # ignored
+                ArduinoCommand.ENABLE_CART_SOFT_LIMITS.to_bytes(1, signed=False) +
+                (0).to_bytes(1, signed=False) +  # ignored
                 get_single_bytes(-360.0) +
                 get_single_bytes(360.0),
                 True,
@@ -351,8 +353,8 @@ def main():
         def disable_cart_soft_limits():
             print('Disabling soft limits...', end='')
             locking_serial.write_then_read(
-                ArduinoCommand.DISABLE_CART_SOFT_LIMITS.to_bytes(1) +
-                (0).to_bytes(1),  # ignored
+                ArduinoCommand.DISABLE_CART_SOFT_LIMITS.to_bytes(1, signed=False) +
+                (0).to_bytes(1, signed=False),  # ignored
                 True,
                 0,
                 False
@@ -369,7 +371,7 @@ def main():
         print('Setting motor speed to 20 for 10 seconds...', end='')
         motor.set_speed(20)
         time.sleep(10.0)
-        print('done. It should have turned once.')
+        print('done. Turning the rotary encoder once in either direction should have stopped the motor.')
 
         disable_cart_soft_limits()
         enable_cart_soft_limits()
@@ -377,7 +379,7 @@ def main():
         print('Setting motor speed to -20 for 10 seconds...', end='')
         motor.set_speed(-20)
         time.sleep(10.0)
-        print('done. It should have turned once.')
+        print('done. Turning the rotary encoder once in either direction should have stopped the motor.')
 
         disable_cart_soft_limits()
         motor.stop()

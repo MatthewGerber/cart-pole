@@ -30,8 +30,8 @@ def main():
     i = 0
     while True:
         start = time.time()
-        ser.write(x.to_bytes(4))
-        x = int.from_bytes(ser.read(4))
+        ser.write(x.to_bytes(4, signed=False))
+        x = int.from_bytes(ser.read(4), signed=False)
         end = time.time()
         avg_time.update(end - start)
         i += 1
