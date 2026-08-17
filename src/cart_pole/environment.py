@@ -1725,7 +1725,7 @@ class CartPole(ContinuousMdpEnvironment):
         Apply the pole brake.
         """
 
-        self.brake_servo.set_degrees(10.0)
+        self.brake_servo.set_degrees(11.0)
 
     def disable_motor_pwm(
             self

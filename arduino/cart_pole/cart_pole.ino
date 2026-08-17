@@ -2,7 +2,7 @@
 // define a nicer variable to refer to serial tx/rx.
 #define SerialUART _UART1_
 
-bool DEBUG = true;
+bool DEBUG = false;
 
 const size_t FLOAT_BYTES_LEN = 4;
 const size_t LONG_BYTES_LEN = 4;
@@ -353,13 +353,13 @@ void write_rotary_state(rotary_encoder* rotary) {
   unsigned_long_to_bytes(rotary->num_phase_changes, four_bytes);
   data_idx = memcpy_wrap(data, data_idx, four_bytes, 4);
 
-  long_to_bytes((long)rotary->net_degrees * rotary->float_scale, four_bytes);
+  long_to_bytes(long(rotary->net_degrees * rotary->float_scale), four_bytes);
   data_idx = memcpy_wrap(data, data_idx, four_bytes, 4);
 
-  long_to_bytes((long)rotary->velocity_deg_per_sec * rotary->float_scale, four_bytes);
+  long_to_bytes(long(rotary->velocity_deg_per_sec * rotary->float_scale), four_bytes);
   data_idx = memcpy_wrap(data, data_idx, four_bytes, 4);
 
-  long_to_bytes((long)rotary->acceleration_deg_per_sec_sq * rotary->float_scale, four_bytes);
+  long_to_bytes(long(rotary->acceleration_deg_per_sec_sq * rotary->float_scale), four_bytes);
   data_idx = memcpy_wrap(data, data_idx, four_bytes, 4);
 
   data[data_idx] = rotary->clockwise;
