@@ -12,6 +12,7 @@ from raspberry_py.gpio.integrated_circuits import PulseWaveModulatorPCA9685PW
 from raspberry_py.gpio.lights import LED
 from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectArduino, Servo, Sg90DriverPCA9685PW
 from raspberry_py.gpio.sensors import RotaryEncoder, UltrasonicRangeFinder
+from raspberry_py.utils import get_fixed_point_long_bytes_from_python_float
 from serial import Serial
 from smbus2 import SMBus
 
@@ -341,8 +342,8 @@ def main():
             locking_serial.write_then_read(
                 ArduinoCommand.ENABLE_CART_SOFT_LIMITS.to_bytes(1, signed=False) +
                 (0).to_bytes(1, signed=False) +  # ignored
-                int(-360.0 * cart_rotary_interface.float_scale).to_bytes(4, signed=True) +
-                int(360.0 * cart_rotary_interface.float_scale).to_bytes(4, signed=True),
+                get_fixed_point_long_bytes_from_python_float(-360.0, cart_rotary_interface.float_scale) +
+                get_fixed_point_long_bytes_from_python_float(360.0, cart_rotary_interface.float_scale),
                 True,
                 0,
                 False

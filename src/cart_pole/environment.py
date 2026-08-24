@@ -23,6 +23,7 @@ from raspberry_py.gpio.integrated_circuits import PulseWaveModulatorPCA9685PW
 from raspberry_py.gpio.lights import LED
 from raspberry_py.gpio.motors import DcMotor, DcMotorDriverIndirectArduino, Servo, Sg90DriverPCA9685PW
 from raspberry_py.gpio.sensors import RotaryEncoder
+from raspberry_py.utils import get_fixed_point_long_bytes_from_python_float
 from rlai.core import MdpState, Action, Agent, Reward, Environment, MdpAgent, ContinuousMultiDimensionalAction
 from rlai.core.environments.mdp import ContinuousMdpEnvironment
 from rlai.policy_gradient import ParameterizedMdpAgent
@@ -898,7 +899,9 @@ class CartPole(ContinuousMdpEnvironment):
         state['motor_driver'] = None
         state['motor'] = None
         state['cart_rotary_encoder'] = None
+        state['cart_rotary_encoder_interface'] = None
         state['pole_rotary_encoder'] = None
+        state['pole_rotary_encoder_interface'] = None
         state['left_limit_switch'] = None
         state['left_limit_pressed'] = None
         state['left_limit_released'] = None
@@ -1825,8 +1828,14 @@ class CartPole(ContinuousMdpEnvironment):
         self.arduino_serial_connection.write_then_read(
             ArduinoCommand.ENABLE_CART_SOFT_LIMITS.to_bytes(1, signed=False) +
             (0).to_bytes(1, signed=False) +  # ignored
-            int(left_limit_degrees * self.cart_rotary_encoder_interface.float_scale).to_bytes(4, signed=True) +
-            int(right_limit_degrees * self.cart_rotary_encoder_interface.float_scale).to_bytes(4, signed=True),
+            get_fixed_point_long_bytes_from_python_float(
+                left_limit_degrees,
+                self.cart_rotary_encoder_interface.float_scale
+            ) +
+            get_fixed_point_long_bytes_from_python_float(
+                right_limit_degrees,
+                self.cart_rotary_encoder_interface.float_scale
+            ),
             True,
             0,
             False
