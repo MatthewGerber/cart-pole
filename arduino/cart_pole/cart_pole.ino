@@ -371,6 +371,9 @@ void write_rotary_state(rotary_encoder* rotary) {
   if (data_idx == ROTARY_STATE_RESPONSE_LEN) {
     SerialUART.write(data, ROTARY_STATE_RESPONSE_LEN);
     SerialUART.flush();
+    if (DEBUG) {
+      SerialUSB.println("Wrote rotary state " + String(rotary->identifier) + ":  net degrees=" + String(rotary->net_degrees));
+    }
   }
   else if (DEBUG) {
     SerialUSB.println("Rotary state data index/length mismatch.");
