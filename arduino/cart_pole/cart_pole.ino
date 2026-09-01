@@ -24,7 +24,7 @@ struct rotary_encoder {
   byte green_pin;
   float float_scale;
 
-  // volatile values updated in interrupt service routine
+  // rotary encoder state machine and volatile values updated in interrupt service routine
   volatile bool white_value;
   volatile bool waiting_on_white;
   volatile bool green_value;
@@ -388,13 +388,15 @@ void write_rotary_state(rotary_encoder* rotary) {
 */
 void set_net_total_degrees(rotary_encoder* rotary, long net_total_degrees_long) {
   float net_total_degrees = net_total_degrees_long / rotary->float_scale;
+  long new_index = (long) net_total_degrees * rotary->phase_changes_per_degree;
   noInterrupts();
-  rotary->index = rotary->index_volatile = (long) net_total_degrees * rotary->phase_changes_per_degree;
+  rotary->index_volatile = new_index;
+  interrupts();
+  rotary->index = new_index;
   rotary->net_degrees = rotary->index / rotary->phase_changes_per_degree;
   rotary->velocity_deg_per_sec = 0.0;
   rotary->acceleration_deg_per_sec_sq = 0.0;
   rotary->state_time_ms = millis();
-  interrupts();
   if (DEBUG) {
     SerialUSB.println(
       "Set net total degrees on rotary " + String(rotary->identifier) + ":\n" +
