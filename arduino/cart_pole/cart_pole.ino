@@ -24,11 +24,7 @@ struct rotary_encoder {
   byte green_pin;
   float float_scale;
 
-  // rotary encoder state machine and volatile values updated in interrupt service routine
-  volatile bool white_value;
-  volatile bool waiting_on_white;
-  volatile bool green_value;
-  volatile bool waiting_on_green;
+  // rotary encoder volatile values updated in interrupt service routine
   volatile unsigned long num_phase_changes_volatile;
   volatile long index_volatile;
   volatile bool clockwise_volatile;
@@ -149,23 +145,17 @@ const byte CMD_DISABLE_CART_SOFT_LIMITS = 7;
  * @param rotary Rotary encoder.
 */
 void white_changed(rotary_encoder* rotary) {
-  if (rotary->waiting_on_white) {
-    rotary->white_value = !rotary->white_value;
-    bool new_green = digitalRead(rotary->green_pin);
-    bool changed_direction = new_green != rotary->green_value;
-    rotary->green_value = new_green;
-    if (changed_direction) {
-      rotary->clockwise_volatile = !rotary->clockwise_volatile;
-      rotary->index_volatile += rotary->clockwise_volatile ? 2 : -2;
-      rotary->num_phase_changes_volatile += 2;
-    }
-    else {
-      rotary->index_volatile += rotary->clockwise_volatile ? 1 : -1;
-      rotary->num_phase_changes_volatile += 1;
-    }
-    rotary->waiting_on_white = false;
-    rotary->waiting_on_green = true;
+  bool white_value = digitalRead(rotary->white_pin);
+  bool green_value = digitalRead(rotary->green_pin);
+  if (white_value == green_value) {
+    rotary->clockwise_volatile = false;
+    rotary->index_volatile -= 1;
   }
+  else {
+    rotary->clockwise_volatile = true;
+    rotary->index_volatile += 1;
+  }
+  rotary->num_phase_changes_volatile += 1;
 }
 
 /**
@@ -174,23 +164,17 @@ void white_changed(rotary_encoder* rotary) {
  * @param rotary Rotary encoder.
 */
 void green_changed(rotary_encoder* rotary) {
-  if (rotary->waiting_on_green) {
-    rotary->green_value = !rotary->green_value;
-    bool new_white = digitalRead(rotary->white_pin);
-    bool changed_direction = new_white != rotary->white_value;
-    rotary->white_value = new_white;
-    if (changed_direction) {
-      rotary->clockwise_volatile = !rotary->clockwise_volatile;
-      rotary->index_volatile += rotary->clockwise_volatile ? 2 : -2;
-      rotary->num_phase_changes_volatile += 2;
-    }
-    else {
-      rotary->index_volatile += rotary->clockwise_volatile ? 1 : -1;
-      rotary->num_phase_changes_volatile += 1;
-    }
-    rotary->waiting_on_green = false;
-    rotary->waiting_on_white = true;
+  bool white_value = digitalRead(rotary->white_pin);
+  bool green_value = digitalRead(rotary->green_pin);
+  if (white_value == green_value) {
+    rotary->clockwise_volatile = true;
+    rotary->index_volatile += 1;
   }
+  else {
+    rotary->clockwise_volatile = false;
+    rotary->index_volatile -= 1;
+  }
+  rotary->num_phase_changes_volatile += 1;
 }
 
 // cart rotary encoder and isrs
@@ -256,10 +240,6 @@ void init_rotary_encoder(rotary_encoder* rotary, byte args[]) {
 
   // initialize the rotary encoder
   rotary->state_update_interval_ms = (unsigned long) (1000.0f / float(rotary->state_update_hz));
-  rotary->white_value = digitalRead(rotary->white_pin);
-  rotary->green_value = digitalRead(rotary->green_pin);
-  rotary->waiting_on_white = rotary->white_value == rotary->green_value;
-  rotary->waiting_on_green = !rotary->waiting_on_white;
   rotary->num_phase_changes_volatile = rotary->num_phase_changes = 0;
   rotary->index_volatile = rotary->index = 0;
   rotary->clockwise_volatile = rotary->clockwise = true;
@@ -370,7 +350,6 @@ void write_rotary_state(rotary_encoder* rotary) {
 
   if (data_idx == ROTARY_STATE_RESPONSE_LEN) {
     SerialUART.write(data, ROTARY_STATE_RESPONSE_LEN);
-    SerialUART.flush();
     if (DEBUG) {
       SerialUSB.println("Wrote rotary state " + String(rotary->identifier) + ":  net degrees=" + String(rotary->net_degrees));
     }
