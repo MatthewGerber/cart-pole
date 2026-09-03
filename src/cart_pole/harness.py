@@ -3,7 +3,7 @@ import time
 
 import RPi.GPIO as gpio
 import serial
-from cart_pole.environment import ArduinoCommand
+from cart_pole.environment import ArduinoCommand, CartPole
 from matplotlib import pyplot as plt
 from raspberry_py.gpio import setup, cleanup, CkPin
 from raspberry_py.gpio.communication import LockingSerial
@@ -61,9 +61,9 @@ def main():
         phase_b_pin=12,
         phase_changes_per_rotation=2400,
         phase_change_mode=RotaryEncoder.PhaseChangeMode.TWO_SIGNAL_TWO_EDGE,
-        angle_step_size=0.9,
-        angular_velocity_step_size=0.5,
-        angular_acceleration_step_size=0.2,
+        angle_step_size=CartPole.ANGLE_STEP_SIZE,
+        angular_velocity_step_size=CartPole.VELOCITY_STEP_SIZE,
+        angular_acceleration_step_size=CartPole.ACCELERATION_STEP_SIZE,
         serial=locking_serial,
         identifier=0,
         float_scale=1000,
@@ -79,9 +79,9 @@ def main():
         phase_b_pin=8,
         phase_changes_per_rotation=2400,
         phase_change_mode=RotaryEncoder.PhaseChangeMode.TWO_SIGNAL_TWO_EDGE,
-        angle_step_size=0.9,
-        angular_velocity_step_size=0.5,
-        angular_acceleration_step_size=0.2,
+        angle_step_size=CartPole.ANGLE_STEP_SIZE,
+        angular_velocity_step_size=CartPole.VELOCITY_STEP_SIZE,
+        angular_acceleration_step_size=CartPole.ACCELERATION_STEP_SIZE,
         serial=locking_serial,
         identifier=1,
         float_scale=1000,

@@ -393,6 +393,10 @@ class CartPole(ContinuousMdpEnvironment):
     Cart-pole environment for the Raspberry Pi.
     """
 
+    ANGLE_STEP_SIZE = 0.9
+    VELOCITY_STEP_SIZE = 0.5
+    ACCELERATION_STEP_SIZE = 0.2
+
     @classmethod
     def get_argument_parser(
             cls,
@@ -817,20 +821,23 @@ class CartPole(ContinuousMdpEnvironment):
         self.balance_pole_angle = 20.0
         self.lost_balance_timestamp: Optional[float] = None
         self.lost_balance_timer_seconds = 0.0
-        self.cart_rotary_encoder_angle_step_size = 0.9
-        self.cart_rotary_encoder_angular_velocity_step_size = 0.5
-        self.cart_rotary_encoder_angular_acceleration_step_size = 0.2
-        self.pole_rotary_encoder_angle_step_size = 0.9
-        self.pole_rotary_encoder_angular_velocity_step_size = 0.5
-        self.pole_rotary_encoder_angular_acceleration_step_size = 0.2
+        self.cart_rotary_encoder_angle_step_size = CartPole.ANGLE_STEP_SIZE
+        self.cart_rotary_encoder_angular_velocity_step_size = CartPole.VELOCITY_STEP_SIZE
+        self.cart_rotary_encoder_angular_acceleration_step_size = CartPole.ACCELERATION_STEP_SIZE
+        self.cart_moved_during_episode = False
+        self.pole_rotary_encoder_angle_step_size = CartPole.ANGLE_STEP_SIZE
+        self.pole_rotary_encoder_angular_velocity_step_size = CartPole.VELOCITY_STEP_SIZE
+        self.pole_rotary_encoder_angular_acceleration_step_size = CartPole.ACCELERATION_STEP_SIZE
+        self.pole_moved_during_episode = False
         self.fraction_time_balancing = IncrementalSampleAverager()
         self.beta_shape_param_iter_coef = {}
         self.policy_get_item_calls = []
-        self.min_motor_speed_full_reverse_seconds = 0.25
+        self.min_motor_speed_full_reverse_seconds = 0.15
         self.max_motor_speed_change_per_second = 200.0 / self.min_motor_speed_full_reverse_seconds
         self.max_motor_speed_change_per_timestep = self.max_motor_speed_change_per_second / self.timesteps_per_second
         self.max_pole_angular_speed_deg_per_second = 1080.0  # 3 revolutions/sec.
         self.max_pole_angular_acceleration_deg_per_second_squared = 8000.0  # wild guess
+        self.restore_cart_limit_state = True
 
         # configure the continuous action with a single dimension for acceleration, range across the maximum.
         self.actions = [
@@ -841,6 +848,21 @@ class CartPole(ContinuousMdpEnvironment):
                 name='motor-acc'
             )
         ]
+
+        # calibrated attributes, which are loaded from the calibration file if available.
+        self.motor_deadzone_speed_left: Optional[int] = None
+        self.motor_deadzone_speed_right: Optional[int] = None
+        self.motor_deadzone_speed_width: Optional[int] = None
+        self.motor_slowest_speed_left: Optional[int] = None
+        self.motor_slowest_speed_right: Optional[int] = None
+        self.left_limit_degrees: Optional[float] = None
+        self.right_limit_degrees: Optional[float] = None
+        self.limit_to_limit_degrees: Optional[float] = None
+        self.cart_mm_per_degree: Optional[float] = None
+        self.midline_degrees: Optional[float] = None
+        self.max_cart_speed_mm_per_second: Optional[float] = None
+        self.pole_degrees_at_bottom: Optional[float] = None
+        self.calibrate_on_next_reset = True
 
         (
             self.state_lock,
@@ -866,23 +888,6 @@ class CartPole(ContinuousMdpEnvironment):
             self.arduino_serial_connection,
             self.brake_servo
         ) = self.get_components()
-
-        if self.calibrate_on_next_reset:
-            self.motor_deadzone_speed_left: Optional[int] = None
-            self.motor_deadzone_speed_right: Optional[int] = None
-            self.motor_deadzone_speed_width: Optional[int] = None
-            self.motor_slowest_speed_left: Optional[int] = None
-            self.motor_slowest_speed_right: Optional[int] = None
-            self.left_limit_degrees: Optional[float] = None
-            self.right_limit_degrees: Optional[float] = None
-            self.limit_to_limit_degrees: Optional[float] = None
-            self.cart_mm_per_degree: Optional[float] = None
-            self.midline_degrees: Optional[float] = None
-            self.max_cart_speed_mm_per_second: Optional[float] = None
-            self.pole_degrees_at_bottom: Optional[float] = None
-            self.calibrate_on_next_reset = True
-
-        self.restore_cart_limit_state = True
 
     def __getstate__(
             self
@@ -931,11 +936,7 @@ class CartPole(ContinuousMdpEnvironment):
 
         self.__dict__ = state
 
-        self.cart_rotary_encoder_phase_a_pin = 2
-        self.cart_rotary_encoder_phase_b_pin = 12
-
-        self.pole_rotary_encoder_phase_a_pin = 3
-        self.pole_rotary_encoder_phase_b_pin = 8
+        self.restore_cart_limit_state = True
 
         (
             self.state_lock,
@@ -961,8 +962,6 @@ class CartPole(ContinuousMdpEnvironment):
             self.arduino_serial_connection,
             self.brake_servo
         ) = self.get_components()
-
-        self.restore_cart_limit_state = True
 
     def get_components(
             self
@@ -2114,6 +2113,9 @@ class CartPole(ContinuousMdpEnvironment):
         # enable soft limits in the arduino, as we measure them more quickly/accurately there
         self.enable_arduino_cart_soft_limits()
 
+        # track whether cart and pole move to catch any failures in the arduino-side ISR routines
+        self.cart_moved_during_episode = self.pole_moved_during_episode = False
+
         logger.info(f'State after reset:  {self.state}')
 
         return self.state
@@ -2180,8 +2182,16 @@ class CartPole(ContinuousMdpEnvironment):
                 CartPole.set_led(self.falling_led, self.state.pole_is_falling)
                 CartPole.set_led(self.cart_moving_right_led, self.state.cart_velocity_mm_per_second > 0.0)
 
+                if not self.cart_moved_during_episode and self.state.cart_velocity_mm_per_second != 0.0:
+                    self.cart_moved_during_episode = True
+                if not self.pole_moved_during_episode and self.state.pole_angular_velocity_deg_per_sec != 0.0:
+                    self.pole_moved_during_episode = True
+
+            self.fraction_time_balancing.update(float(self.state.episode_phase == EpisodePhase.BALANCE))
+
             new_termination = not previous_state.terminal and self.state.terminal
             new_truncation = not previous_state.truncated and self.state.truncated
+            new_episode_ended = new_termination or new_truncation
 
             # stop the cart upon new termination
             if new_termination:
@@ -2202,6 +2212,13 @@ class CartPole(ContinuousMdpEnvironment):
                 if self.truncation_gamma is not None and self.truncation_gamma != self.agent.gamma:
                     self.agent.gamma = self.truncation_gamma
                     logger.info(f'Set agent.gamma to {self.agent.gamma} to obtain faster convergence to zero.')
+
+            if new_episode_ended:
+                self.metric_value['Fraction Balancing'] = self.fraction_time_balancing.get_value()
+                if not self.cart_moved_during_episode:
+                    logging.error(f'Cart did not move during episode:  {self.num_resets}')
+                if not self.pole_moved_during_episode:
+                    logging.error(f'Pole did not move during episode:  {self.num_resets}')
 
             # perform nominal environment advancement if we haven't terminated. we continue to do this after truncation,
             # since we're waiting for the learning procedure to exit the episode.
@@ -2256,10 +2273,6 @@ class CartPole(ContinuousMdpEnvironment):
             self.plot_title_label_data_kwargs['Environment']['Sleep MS/Step'][0][t] = (
                 self.timestep_sleep_seconds * 1000.0
             )
-
-            self.fraction_time_balancing.update(float(self.state.episode_phase == EpisodePhase.BALANCE))
-            if self.state.terminal:
-                self.metric_value['Fraction Balancing'] = self.fraction_time_balancing.get_value()
 
             # adapt the sleep time to obtain the desired steps per second
             if self.previous_timestep_epoch is None:
@@ -2334,14 +2347,6 @@ class CartPole(ContinuousMdpEnvironment):
                 reward = 1.0
             elif not previous_state.pole_is_falling and state.pole_is_falling:
                 reward = -1.0
-
-        # scale rewards down by distance from center (higher reward in center)
-        if reward > 0.0:
-            reward *= state.zero_to_one_cart_distance_from_center
-
-        # scale punishments down by distance from side (lower punishment in center)
-        elif reward < 0.0:
-            reward *= (1.0 - state.zero_to_one_cart_distance_from_center)
 
         return reward
 
